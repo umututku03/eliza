@@ -970,10 +970,18 @@ export abstract class BaseDrizzleAdapter extends DatabaseAdapter<any> {
   async updateComponent(component: Component): Promise<void> {
     return this.withDatabase(async () => {
       try {
+        // A component is updated BY id, so its identity/ownership columns are immutable. Only the
+        // `data` payload legitimately changes on update. We deliberately do NOT spread the whole
+        // component into .set() because callers may pass:
+        //   - createdAt as an epoch NUMBER (Date.now()) -> drizzle's timestamp mapper throws
+        //     (value.toISOString() on a number), and
+        //   - bogus fallback FK values (entityId/worldId/sourceEntityId = createUniqueUuid('unknown-*'))
+        //     that don't exist -> foreign-key violations.
+        // Updating only `data` + `updatedAt` sidesteps both and matches every caller's real intent.
         await this.db
           .update(componentTable)
           .set({
-            ...component,
+            data: (component as any).data,
             updatedAt: new Date(),
           })
           .where(eq(componentTable.id, component.id));
