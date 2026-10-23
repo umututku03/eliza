@@ -1,0 +1,939 @@
+{
+  "block": 26250601,
+  "reserveUsdc": "178.23",
+  "goalDai": "37.31",
+  "deltas": [
+    0,
+    -0.01,
+    -0.02,
+    -0.03
+  ],
+  "daiMovesEth": [
+    0,
+    100,
+    200,
+    250,
+    300,
+    320,
+    350,
+    400,
+    500,
+    589
+  ],
+  "preMovesEth": {
+    "0": "0",
+    "-0.01": "20.900322651868918908",
+    "-0.02": "42.119729769183322785",
+    "-0.03": "63.666432379250181837"
+  },
+  "cells": [
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 0,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "37.54",
+      "sAnyForGoal": "37.54"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 100,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "41.64",
+      "sAnyForGoal": "41.64"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 200,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "45.95",
+      "sAnyForGoal": "45.95"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 250,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "48.19",
+      "sAnyForGoal": "48.19"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 300,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "50.47",
+      "sAnyForGoal": "50.47"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 320,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "51.4",
+      "sAnyForGoal": "51.4"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 350,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "52.82",
+      "sAnyForGoal": "52.82"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 400,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": true,
+      "sStar": "55.21",
+      "sAnyForGoal": "55.21"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 500,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "60.16"
+    },
+    {
+      "delta": 0,
+      "preMoveEth": "0",
+      "daiMoveEth": 589,
+      "B1": "237.636476",
+      "surplus": "59.406476",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "64.74"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 0,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "37.17",
+      "sAnyForGoal": "37.17"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 100,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "41.22",
+      "sAnyForGoal": "41.22"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 200,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "45.49",
+      "sAnyForGoal": "45.49"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 250,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "47.7",
+      "sAnyForGoal": "47.7"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 300,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "49.97",
+      "sAnyForGoal": "49.97"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 320,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "50.89",
+      "sAnyForGoal": "50.89"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 350,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "52.29",
+      "sAnyForGoal": "52.29"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 400,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": true,
+      "sStar": "54.66",
+      "sAnyForGoal": "54.66"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 500,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "59.56"
+    },
+    {
+      "delta": -0.01,
+      "preMoveEth": "20.900322651868918908",
+      "daiMoveEth": 589,
+      "B1": "235.260111",
+      "surplus": "57.030111",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "64.09"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 0,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "36.79",
+      "sAnyForGoal": "36.79"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 100,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "40.81",
+      "sAnyForGoal": "40.81"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 200,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "45.03",
+      "sAnyForGoal": "45.03"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 250,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "47.22",
+      "sAnyForGoal": "47.22"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 300,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "49.47",
+      "sAnyForGoal": "49.47"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 320,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "50.38",
+      "sAnyForGoal": "50.38"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 350,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "51.76",
+      "sAnyForGoal": "51.76"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 400,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": true,
+      "sStar": "54.11",
+      "sAnyForGoal": "54.11"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 500,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "58.96"
+    },
+    {
+      "delta": -0.02,
+      "preMoveEth": "42.119729769183322785",
+      "daiMoveEth": 589,
+      "B1": "232.883746",
+      "surplus": "54.653746",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "63.45"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 0,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "36.42",
+      "sAnyForGoal": "36.42"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 100,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "40.39",
+      "sAnyForGoal": "40.39"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 200,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "44.57",
+      "sAnyForGoal": "44.57"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 250,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "46.74",
+      "sAnyForGoal": "46.74"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 300,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "48.96",
+      "sAnyForGoal": "48.96"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 320,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "49.86",
+      "sAnyForGoal": "49.86"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 350,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": true,
+      "sStar": "51.23",
+      "sAnyForGoal": "51.23"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 400,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "53.55"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 500,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "58.35"
+    },
+    {
+      "delta": -0.03,
+      "preMoveEth": "63.666432379250181837",
+      "daiMoveEth": 589,
+      "B1": "230.507381",
+      "surplus": "52.277381",
+      "feasible": false,
+      "sStar": null,
+      "sAnyForGoal": "62.8"
+    }
+  ],
+  "settings": [
+    {
+      "name": "relative cap = expected surplus",
+      "capUsdc": "59.406476",
+      "cells": 40,
+      "feasibleCells": 31,
+      "falseBlocks": 0,
+      "unsafeAdmits": 26,
+      "perCell": [
+        {
+          "delta": 0,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 400,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 400,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 400,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 400,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": true
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        }
+      ]
+    },
+    {
+      "name": "relative cap = worst-case surplus",
+      "capUsdc": "52.277381",
+      "cells": 40,
+      "feasibleCells": 31,
+      "falseBlocks": 5,
+      "unsafeAdmits": 0,
+      "perCell": [
+        {
+          "delta": 0,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 350,
+          "falseBlock": true,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 400,
+          "falseBlock": true,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": 0,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 350,
+          "falseBlock": true,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 400,
+          "falseBlock": true,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.01,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 400,
+          "falseBlock": true,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.02,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 0,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 100,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 200,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 250,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 300,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 320,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 350,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 400,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 500,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        },
+        {
+          "delta": -0.03,
+          "daiMoveEth": 589,
+          "falseBlock": false,
+          "unsafeAdmit": false
+        }
+      ]
+    },
+    {
+      "name": "absolute floor (proposed)",
+      "falseBlocks": 0,
+      "unsafeAdmits": 0,
+      "note": "admits exactly the feasible spends by construction"
+    }
+  ]
+}
