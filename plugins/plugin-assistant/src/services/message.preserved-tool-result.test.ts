@@ -37,10 +37,12 @@ import {
   EventType,
   ModelType,
   PROVIDER_CONTEXT_OVERFLOW,
+  promoteSubactionsToActions,
   registerDirectActionRoutingRule,
 } from "@elizaos/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannerToolResult } from "../runtime/planner-loop.ts";
+import { evaluatePlannedReplyEgress } from "./message/egress-policy.ts";
 import {
   answerlessToolTurnReport,
   DefaultMessageService,
@@ -256,6 +258,168 @@ function visibleTexts(contents: Content[]): string[] {
 }
 
 describe("planner-loop death after a completed tool", () => {
+  it("delivers a promoted wallet submission without losing the settled result or replaying the action", async () => {
+    const h = await createHarness({ actionResult: { success: true } });
+    h.runtime.actions.length = 0;
+    let submissions = 0;
+    const submitted: ActionResult = {
+      success: true,
+      text: "Submitted swap on mainnet: 0xrecorded-submission",
+      data: {
+        status: "submitted",
+        subaction: "swap",
+        mode: "execute",
+        dryRun: false,
+        transactionHash: "0xrecorded-submission",
+      },
+      values: { walletActionSucceeded: true },
+    };
+    const wallet: Action = {
+      name: "WALLET",
+      description: "Report an approved wallet submission.",
+      parameters: [
+        {
+          name: "action",
+          required: true,
+          schema: { type: "string", enum: ["swap"] },
+        },
+      ],
+      validate: async () => true,
+      handler: async (_runtime, _message, _state, options) => {
+        expect(options?.parameters?.action).toBe("swap");
+        submissions++;
+        return submitted;
+      },
+    };
+    for (const action of promoteSubactionsToActions(wallet))
+      h.runtime.registerAction(action);
+    const reply =
+      "The ETH-to-USDC swap was submitted. On-chain confirmation is unverified. The DAI step remains incomplete.";
+    let responseCalls = 0;
+    h.runtime.registerModel(
+      ModelType.RESPONSE_HANDLER,
+      async () => {
+        if (++responseCalls === 1) {
+          const first = stageOneToolTurn();
+          Object.assign(first.toolCalls[0].arguments, {
+            candidateActionNames: ["WALLET_SWAP"],
+            intents: ["Report the approved swap submission"],
+          });
+          return first;
+        }
+        return JSON.stringify({
+          thought:
+            "The wallet reported submission; confirmation and the DAI step remain unverified.",
+          success: true,
+          decision: "FINISH",
+          requestFullyCovered: true,
+          outcomeCoverage: [
+            {
+              intentId: "intent:1",
+              status: "completed",
+              evidenceStepIds: ["step:1"],
+            },
+          ],
+          messageToUser: reply,
+          replyEffectStatus: "none",
+        });
+      },
+      "wallet-submission-regression",
+      300,
+    );
+    h.runtime.registerModel(
+      ModelType.ACTION_PLANNER,
+      async () => ({
+        text: "",
+        toolCalls: [{ id: "wallet-swap", name: "WALLET_SWAP", arguments: {} }],
+      }),
+      "wallet-submission-regression",
+      300,
+    );
+    let recoveryCalls = 0;
+    h.runtime.registerModel(
+      ModelType.TEXT_SMALL,
+      async (_runtime, params) => {
+        if (params.prompt.startsWith("Compose a user-facing response")) {
+          recoveryCalls++;
+          throw new Error("A grounded submission needs no recovery");
+        }
+        return reply;
+      },
+      "wallet-submission-regression",
+      300,
+    );
+
+    const result = await new DefaultMessageService().handleMessage(
+      h.runtime,
+      makeMessage(
+        h.runtime,
+        "Report the approved ETH-to-USDC swap submission, without claiming settlement.",
+      ),
+      h.callback,
+    );
+    expect(submissions).toBe(1);
+    expect(result.actionResults).toContainEqual(
+      expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({
+          actionName: "WALLET_SWAP",
+          status: "submitted",
+        }),
+      }),
+    );
+    expect(result.responseContent?.text).toBe(reply);
+    expect(visibleTexts(h.callbacks)).toContain(reply);
+    expect(recoveryCalls).toBe(0);
+    const results = result.actionResults ?? [];
+    for (const unsupported of [
+      "The swap was confirmed.",
+      "The ETH transfer was submitted.",
+    ]) {
+      expect(
+        evaluatePlannedReplyEgress({
+          reply: unsupported,
+          actionResults: results,
+          actions: h.runtime.actions,
+        }),
+      ).toEqual({ verdict: "reject", kind: "financial_completion" });
+    }
+    const walletResult = results.find(
+      (entry) => entry.data?.actionName === "WALLET_SWAP",
+    );
+    if (!walletResult?.data) throw new Error("Missing promoted wallet result");
+    for (const invalid of [
+      { ...walletResult, success: false },
+      { ...walletResult, data: { ...walletResult.data, status: "prepared" } },
+      { ...walletResult, data: { ...walletResult.data, mode: "prepare" } },
+      { ...walletResult, data: { ...walletResult.data, dryRun: true } },
+      { ...walletResult, data: { ...walletResult.data, transactionHash: "" } },
+      {
+        ...walletResult,
+        data: { ...walletResult.data, subaction: "transfer" },
+      },
+    ]) {
+      expect(
+        evaluatePlannedReplyEgress({
+          reply: "The swap was submitted.",
+          request: "Report the ETH wallet operation.",
+          actionResults: [invalid],
+          actions: h.runtime.actions,
+        }),
+      ).toEqual({ verdict: "reject", kind: "financial_completion" });
+    }
+    expect(
+      evaluatePlannedReplyEgress({
+        reply: "The swap was submitted.",
+        request: "Report the ETH wallet operation.",
+        actionResults: [walletResult],
+        actions: [
+          { name: "WALLET_SWAP", description: "Unrelated lookalike action." },
+        ],
+      }),
+    ).toEqual({ verdict: "reject", kind: "financial_completion" });
+  });
+
   it.each([false, true])(
     "keeps composite dossier coverage distinct from an explicit Calendar read (explicit=%s)",
     async (explicitCalendar) => {

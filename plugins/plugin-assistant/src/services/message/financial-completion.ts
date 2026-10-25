@@ -3,8 +3,8 @@
  * operation from this turn. Router preparation and balance observations are
  * not evidence of submission; an unrelated successful operation is not proof.
  */
-import type { ActionResult } from "@elizaos/core";
-import { isObjectRecord } from "@elizaos/core";
+import type { Action, ActionResult } from "@elizaos/core";
+import { isObjectRecord, promotedSubactionDescription } from "@elizaos/core";
 
 type FinancialOperation = "transfer" | "swap" | "bridge" | "order" | "gov";
 type FinancialClaim = {
@@ -87,9 +87,25 @@ function nonemptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/** Core records the dispatched child identity, not its umbrella's name. */
+function isWalletResult(
+  result: ActionResult,
+  actions: readonly Action[],
+): boolean {
+  const name = result.data?.actionName;
+  if (name === "WALLET") return true;
+  const action = actions.find((candidate) => candidate.name === name);
+  const promoted = action && promotedSubactionDescription(action);
+  return (
+    promoted?.parent === "WALLET" &&
+    promoted.subaction === result.data?.subaction
+  );
+}
+
 function resultProvesClaim(
   result: ActionResult,
   claim: FinancialClaim,
+  actions: readonly Action[],
 ): boolean {
   if (result.success !== true) return false;
   // The existing router results prove provider submission, not confirmation
@@ -107,7 +123,7 @@ function resultProvesClaim(
     );
   }
   if (
-    data.actionName !== "WALLET" ||
+    !isWalletResult(result, actions) ||
     data.subaction !== claim.operation ||
     data.status !== "submitted" ||
     data.mode !== "execute" ||
@@ -128,6 +144,7 @@ function resultProvesClaim(
 export function financialCompletionIsUngrounded(
   reply: string,
   results: readonly ActionResult[],
+  actions: readonly Action[],
   request?: string,
 ): boolean {
   // Unqualified orders and transfers also exist outside finance. Only the
@@ -136,14 +153,14 @@ export function financialCompletionIsUngrounded(
   const financialContext =
     results.some(
       (result) =>
-        result.data?.actionName === "WALLET" ||
-        result.data?.actionName === "TRADE",
+        isWalletResult(result, actions) || result.data?.actionName === "TRADE",
     ) ||
     /\b(?:wallet|crypto|on-?chain|governance|Hyperliquid|Polymarket|SOL|ETH|BTC|USDC|USDT)\b/i.test(
       `${request ?? ""}\n${reply}`,
     );
   if (!financialContext) return false;
   return financialClaims(reply).some(
-    (claim) => !results.some((result) => resultProvesClaim(result, claim)),
+    (claim) =>
+      !results.some((result) => resultProvesClaim(result, claim, actions)),
   );
 }
