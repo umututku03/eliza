@@ -2003,7 +2003,7 @@ describe("contextual native discovery", () => {
     expect(executions).toBe(0);
     expect(discovery.description).not.toContain("NOTES_LIST");
     const invalid = await discovery.handler?.(runtime, message, undefined, {
-      parameters: { query: "notes", names: [] },
+      parameters: { query: "notes", names: ["NOTES_LIST"] },
     });
     expect(invalid?.success).toBe(false);
     const denied = await discovery.handler?.(runtime, message, undefined, {

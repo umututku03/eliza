@@ -1,41 +1,11 @@
 /** Adapter integration checks; live and keyless-runtime suites have dedicated configs. */
-import path from "node:path";
 import { defineConfig } from "vitest/config";
-
-const elizaRoot = path.resolve(import.meta.dirname, "../..");
-const pluginSqlRoot = path.join(
-	elizaRoot,
-	"plugins",
-	"plugin-sql",
-	"src",
-);
+import { buildWorkspaceSourceAliases } from "../../packages/scripts/vitest/source-aliases.ts";
 
 export default defineConfig({
 	resolve: {
- conditions: ["eliza-source", "node"],
-		alias: [
- {find: /^@elizaos\/core$/, replacement: path.join(elizaRoot, "packages/core/src/index.ts")},
-			{
-				find: /^@elizaos\/plugin-sql$/,
-				replacement: path.join(pluginSqlRoot, "index.ts"),
-			},
-			{
-				find: /^@elizaos\/plugin-sql\/schema$/,
-				replacement: path.join(pluginSqlRoot, "schema", "index.ts"),
-			},
-			{
-				find: /^@elizaos\/plugin-sql\/types$/,
-				replacement: path.join(pluginSqlRoot, "types.ts"),
-			},
-			{
-				find: /^@elizaos\/plugin-sql\/errors$/,
-				replacement: path.join(pluginSqlRoot, "pglite", "errors.ts"),
-			},
-			{
-				find: /^@elizaos\/plugin-sql\/(.+)$/,
-				replacement: path.join(pluginSqlRoot, "$1"),
-			},
-		],
+    conditions: ["eliza-source", "node"],
+    alias: buildWorkspaceSourceAliases(),
 	},
 	test: {
     maxWorkers: 2,

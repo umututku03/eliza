@@ -375,12 +375,23 @@ function resolvePromptCacheOptions(
  * field because compatible endpoints reject unsupported request properties.
  * An explicit valid `OPENAI_REASONING_EFFORT` always wins.
  *
- * Valid values follow the OpenAI spec exactly: `minimal`, `low`,
- * `medium`, `high`. Anything else is logged and ignored.
+ * `none` is also forwarded for the documented GPT-6 Luna/Sol contract.
+ * Unknown values are logged and ignored.
  */
 type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 
 const VALID_REASONING_EFFORTS: readonly ReasoningEffort[] = ["minimal", "low", "medium", "high"];
+
+/** These exact OpenAI models require none for Chat Completions function tools. */
+function supportsOpenAIChatToolReasoningNone(
+  runtime: IAgentRuntime,
+  modelName: string | undefined
+): boolean {
+  return (
+    getUsageProvider(runtime) === "openai" &&
+    (modelName === "gpt-6-luna" || modelName === "gpt-6-sol")
+  );
+}
 
 /**
  * Strips the provider prefixes accepted by the cloud gateway while retaining
@@ -464,17 +475,18 @@ function resolveReasoningEffort(
   runtime: IAgentRuntime,
   modelName?: string
 ): ReasoningEffort | "none" | undefined {
-  const raw = runtime.getSetting("OPENAI_REASONING_EFFORT");
+  const raw = getSetting(runtime, "OPENAI_REASONING_EFFORT");
   const normalized = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   if (normalized === "none") {
     if (
-      isCerebrasMode(runtime) &&
-      modelName &&
-      normalizeCerebrasModelId(modelName) === "qwen-3.8-27b"
+      supportsOpenAIChatToolReasoningNone(runtime, modelName) ||
+      (isCerebrasMode(runtime) &&
+        modelName &&
+        normalizeCerebrasModelId(modelName) === "qwen-3.8-27b")
     )
       return "none";
-    // "none" is a deliberate operator setting that only the documented
-    // endpoint above accepts on the wire. For every other model it resolves to
+    // "none" is a deliberate operator setting for the documented contracts
+    // above. For every other model it resolves to
     // that model's documented default below, silently: warning on every call
     // for a recognized value is noise (live 2026-09-06: three warnings per
     // Discord turn on gemma-4-31b, whose default already sends no field).
@@ -498,7 +510,8 @@ function resolveReasoningEffort(
 function resolveProviderOptions(
   params: GenerateTextParams,
   runtime: IAgentRuntime,
-  modelName?: string
+  modelName?: string,
+  hasChatTools = false
 ): Record<string, unknown> | undefined {
   const withOpenAIOptions = params as GenerateTextParamsWithOpenAIOptions;
   const rawProviderOptions = withOpenAIOptions.providerOptions;
@@ -513,7 +526,7 @@ function resolveProviderOptions(
     | { thinking?: unknown; preferToolReasoning?: unknown }
     | undefined;
   const elizaThinking = eliza?.thinking;
-  const configuredEffort = runtime.getSetting("OPENAI_REASONING_EFFORT");
+  const configuredEffort = getSetting(runtime, "OPENAI_REASONING_EFFORT");
   const preferToolReasoning =
     eliza?.preferToolReasoning === true &&
     !(typeof configuredEffort === "string" && configuredEffort.trim().toLowerCase() === "none");
@@ -534,7 +547,8 @@ function resolveProviderOptions(
     (preferToolReasoning ? thinkingOnEffort : undefined) ??
     thinkingOffEffort ??
     thinkingOnEffort ??
-    reasoningEffort;
+    reasoningEffort ??
+    (hasChatTools && supportsOpenAIChatToolReasoningNone(runtime, modelName) ? "none" : undefined);
 
   if (
     !rawProviderOptions &&
@@ -3260,11 +3274,6 @@ async function generateTextAtEndpoint(
     );
   }
   logger.debug(`[OpenAI] Using ${modelType} model: ${modelName}`);
-  const providerOptions = resolveProviderOptions(
-    params,
-    runtime,
-    endpoint ? resolveRequestedModelName(paramsWithAttachments, runtime, getModelFn) : modelName
-  );
   const hasAttachments = (paramsWithAttachments.attachments?.length ?? 0) > 0;
   const userContent = hasAttachments ? buildUserContent(paramsWithAttachments) : undefined;
   const shouldReturnNativeResult = usesNativeTextResult(paramsWithAttachments);
@@ -3323,6 +3332,15 @@ async function generateTextAtEndpoint(
     params.signal
   );
   const normalizedTools = toolArgumentEnvelope.tools;
+  // Resolve the compatibility default only after validating the actual tool
+  // surface. Text-only calls keep their provider default, explicit efforts
+  // retain precedence, and fallback endpoints retain their own contract.
+  const providerOptions = resolveProviderOptions(
+    params,
+    runtime,
+    endpoint ? resolveRequestedModelName(paramsWithAttachments, runtime, getModelFn) : modelName,
+    !endpoint && normalizedTools !== undefined && Object.keys(normalizedTools).length > 0
+  );
   const normalizedToolChoice = normalizeToolChoice(paramsWithAttachments.toolChoice, {
     toolNameMap: normalizedToolResult.toolNameMap,
   });
