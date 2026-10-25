@@ -80,11 +80,30 @@ function portfolioHoldings(value: unknown): Holding[] {
   });
 }
 
+/** Balances of the configured wallet read on-chain this turn by WALLET balance. */
+function ownWalletHoldings(results: readonly ActionResult[]): Holding[] {
+  return results.flatMap((result) => {
+    const data = result.data;
+    if (
+      result.success !== true ||
+      data?.subaction !== "balance" ||
+      data.scope !== "configured_wallet" ||
+      !Array.isArray(data.holdings)
+    )
+      return [];
+    return data.holdings.flatMap((item) => {
+      if (!isObjectRecord(item)) return [];
+      const observed = holding(item.symbol, item.amount);
+      return observed ? [observed] : [];
+    });
+  });
+}
+
 function observedHoldings(
   results: readonly ActionResult[],
   providers: StateData["providers"],
 ): Holding[] {
-  const observations: Holding[] = [];
+  const observations: Holding[] = [...ownWalletHoldings(results)];
   for (const result of results) {
     if (
       result.success !== true ||
@@ -258,7 +277,10 @@ export function financialHoldingIsUngrounded(args: {
   const observations = observedHoldings(args.actionResults, args.providers);
   // Address lookups can target arbitrary third parties. Only configured wallet
   // providers supply personal-wallet context; a public lookup cannot establish ownership.
-  const personalObservations = observedHoldings([], args.providers);
+  const personalObservations = [
+    ...ownWalletHoldings(args.actionResults),
+    ...observedHoldings([], args.providers),
+  ];
   return holdingClaims(args.reply, args.request).some(
     (claim) =>
       !(claim.personal ? personalObservations : observations).some(

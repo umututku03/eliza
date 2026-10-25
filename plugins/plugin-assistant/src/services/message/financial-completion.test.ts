@@ -18,7 +18,10 @@ const wallet = {
       name: "subaction",
       description: "operation",
       required: true,
-      schema: { type: "string", enum: ["swap", "transfer"] },
+      schema: {
+        type: "string",
+        enum: ["swap", "transfer", "tx_status", "balance"],
+      },
     },
   ],
 } as unknown as Action;
@@ -46,6 +49,41 @@ describe("financial completion grounding", () => {
     expect(
       financialCompletionIsUngrounded(reply, [submittedSwap], actions),
     ).toBe(false);
+  });
+
+  it("grounds a claim about an earlier turn's swap in this turn's on-chain read", () => {
+    const txStatus = (receiptStatus: string, operation: string | null) => ({
+      success: true,
+      text: "",
+      data: {
+        actionName: "WALLET_TX_STATUS",
+        subaction: "tx_status",
+        transactionHash: "0x91a6",
+        receiptStatus,
+        operation,
+      },
+    });
+    const reply =
+      "The 0.1 ETH to USDC swap was submitted earlier and has settled on-chain.";
+    expect(
+      financialCompletionIsUngrounded(
+        reply,
+        [txStatus("success", "swap")],
+        actions,
+      ),
+    ).toBe(false);
+    // Without this turn's evidence, or with weaker evidence, the claim stays ungrounded.
+    for (const results of [
+      [],
+      [txStatus("reverted", "swap")],
+      [txStatus("pending", "swap")],
+      [txStatus("success", null)],
+      [txStatus("success", "transfer")],
+    ]) {
+      expect(financialCompletionIsUngrounded(reply, results, actions)).toBe(
+        true,
+      );
+    }
   });
 
   it("still rejects a settlement claim backed only by a submission", () => {

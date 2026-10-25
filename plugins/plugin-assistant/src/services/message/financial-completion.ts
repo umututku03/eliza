@@ -114,11 +114,22 @@ function resultProvesClaim(
   actions: readonly Action[],
 ): boolean {
   if (result.success !== true) return false;
+  const data = result.data;
+  if (!data) return false;
+  // An on-chain read this turn of a transaction this wallet submitted proves
+  // that operation, including its settlement, whichever turn submitted it.
+  if (
+    claim.operation !== "order" &&
+    claim.operation !== "gov" &&
+    isWalletResult(result, actions) &&
+    data.subaction === "tx_status" &&
+    data.receiptStatus === "success" &&
+    data.operation === claim.operation
+  )
+    return true;
   // The existing router results prove provider submission, not confirmation
   // or settlement. Do not promote a transaction identifier into finality.
   if (claim.requiresSettlement) return false;
-  const data = result.data;
-  if (!data) return false;
   if (claim.operation === "order") {
     return (
       data.actionName === "TRADE" &&

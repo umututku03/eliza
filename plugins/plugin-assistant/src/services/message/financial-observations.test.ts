@@ -82,6 +82,37 @@ describe("financial holdings grounding", () => {
     }
   });
 
+  it("grounds a personal holding in this turn's on-chain balance read", () => {
+    const balance = (scope: string) => ({
+      success: true,
+      text: "",
+      data: {
+        actionName: "WALLET_BALANCE",
+        subaction: "balance",
+        scope,
+        holdings: [{ chain: "mainnet", symbol: "USDC", amount: "237.636476" }],
+      },
+    });
+    const reply = "Your wallet now holds 237.64 USDC.";
+    expect(
+      financialHoldingIsUngrounded({
+        reply,
+        request: REQUEST,
+        actionResults: [balance("configured_wallet")],
+        providers: {},
+      }),
+    ).toBe(false);
+    // A read that is not of the configured wallet does not prove ownership.
+    expect(
+      financialHoldingIsUngrounded({
+        reply,
+        request: REQUEST,
+        actionResults: [balance("other")],
+        providers: {},
+      }),
+    ).toBe(true);
+  });
+
   it("still rejects an EVM holding with no wallet observation", () => {
     expect(
       financialHoldingIsUngrounded({
