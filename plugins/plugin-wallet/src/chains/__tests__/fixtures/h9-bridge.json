@@ -1,0 +1,39 @@
+[
+  {
+    "source": "results-dev2-haiku-stock/llm/calls/8-response.json",
+    "sha256": "fe6380c05a5514a828b04a6610d62b0773c100045f27763f3529c586c8cba465",
+    "params": {
+      "action": "swap",
+      "target": "ethereum",
+      "fromToken": "ETH",
+      "toToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "amount": "0.1",
+      "address": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "mode": "execute"
+    },
+    "archivedDescription": "WALLET operation \"bridge\".\nWALLET family: Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address).",
+    "archivedDiscriminator": {
+      "type": "string",
+      "description": "Subaction discriminator (auto-set to \"bridge\" for this virtual; do not change). (e.g. transfer, swap, bridge, gov, pump_fun_buy, token_info, search_address)",
+      "enum": ["bridge"],
+      "default": "bridge"
+    }
+  },
+  {
+    "source": "results-dev3-haiku-plan_guard/llm/calls/19-response.json",
+    "sha256": "8799b0f667ff782064a102d442cfc00a1f93acd0ad3fec9cb4631c6208752d12",
+    "params": {
+      "action": "token_info",
+      "operation": "token",
+      "address": "0x1137eb7b2ba450b4ce1e2bb084c388b00388c3d7aa109393c079c87f63adbdbe",
+      "chain": "ethereum"
+    },
+    "archivedDescription": "WALLET operation \"bridge\".\nWALLET family: Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address).",
+    "archivedDiscriminator": {
+      "type": "string",
+      "description": "Subaction discriminator (auto-set to \"bridge\" for this virtual; do not change). (e.g. transfer, swap, bridge, gov, pump_fun_buy, token_info, search_address)",
+      "enum": ["bridge"],
+      "default": "bridge"
+    }
+  }
+]

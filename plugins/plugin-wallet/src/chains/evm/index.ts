@@ -25,7 +25,14 @@ export const evmPlugin: Plugin = {
   description: "EVM blockchain integration plugin",
   providers: [evmWalletProvider, tokenBalanceProvider],
   services: [EVMService] as ServiceClass[],
-  actions: promoteSubactionsToActions(walletRouterAction as Action) as Action[],
+  actions: promoteSubactionsToActions(walletRouterAction as Action, {
+    overrides: {
+      bridge: {
+        description:
+          "Cross-chain token transfer from target to toChain. The action discriminator is bridge. Use WALLET_SWAP for a same-chain swap, WALLET_TOKEN_INFO for market data, WALLET_BALANCE for on-chain holdings, and WALLET_TX_STATUS for a transaction receipt.",
+      },
+    },
+  }) as Action[],
   routes: evmSignRoutes,
   async dispose(runtime: IAgentRuntime) {
     const svc = runtime.getService<EVMService>(EVMService.serviceType);
