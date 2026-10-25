@@ -633,6 +633,11 @@ describe("wallet router action", () => {
         }),
       }),
     ]);
+    // A later tx_status read can name the operation behind the hash.
+    await expect(runtime.getCache("wallet:submitted:0xtest")).resolves.toEqual({
+      chain: "base",
+      subaction: "swap",
+    });
     // The message runtime normalizes every receipt; this one survives intact.
     expect(normalizeEffectReceipts(result?.effectReceipts)).toEqual(
       result?.effectReceipts,

@@ -704,7 +704,7 @@ class LazyTeeWalletProvider extends WalletProvider {
  * comma-separated; a bare address uses the first configured chain), read on-chain at call time. This gives
  * the agent its token holdings without an external token-data service.
  */
-async function trackedTokenBalances(
+export async function trackedTokenBalances(
   runtime: IAgentRuntime
 ): Promise<{ lines: string[]; holdings: EvmHolding[] }> {
   const raw = runtime.getSetting("EVM_WALLET_TRACKED_TOKENS");

@@ -51,6 +51,11 @@ import {
   isWalletRouterSubaction,
   parseWalletRouterParams,
 } from "../types/wallet-router.js";
+import {
+  evmBalanceHandler,
+  evmTxStatusHandler,
+  walletSubmissionCacheKey,
+} from "./evm/actions/onchain-read.js";
 
 const LEGACY_SWAP_ACTIONS = new Set([
   "SWAP",
@@ -83,7 +88,12 @@ const LEGACY_SEARCH_ADDRESS_ACTIONS = new Set([
 ]);
 const GOV_OPS = new Set(["propose", "vote", "queue", "execute"]);
 
-const ANALYTICS_SUBACTIONS = ["token_info", "search_address"] as const;
+const ANALYTICS_SUBACTIONS = [
+  "token_info",
+  "search_address",
+  "tx_status",
+  "balance",
+] as const;
 type WalletAnalyticsSubaction = (typeof ANALYTICS_SUBACTIONS)[number];
 
 const WALLET_SUBACTIONS = [
@@ -581,6 +591,13 @@ async function runWalletRouter(
   });
 
   const receipt = walletSubmissionReceipt(routed);
+  if (receipt && routed.ok) {
+    // Lets a later tx_status read name the operation behind this hash.
+    await runtime.setCache(walletSubmissionCacheKey(receipt.resource.id), {
+      chain: routed.handler.chain,
+      subaction: routed.result.subaction,
+    });
+  }
   return {
     success: routed.ok,
     text,
@@ -610,9 +627,9 @@ async function runWalletRouter(
 export const walletRouterAction: Action = {
   name: "WALLET",
   description:
-    "Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address).",
+    "Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address); action=tx_status reads a transaction's on-chain status (params: target, transactionHash); action=balance reads the configured wallet's native and tracked token balances on-chain now (param: target).",
   descriptionCompressed:
-    "WALLET transfer|swap|bridge|gov|pump_fun_buy|token_info|search_address; chain ops + market/portfolio",
+    "WALLET transfer|swap|bridge|gov|pump_fun_buy|token_info|search_address|tx_status|balance; chain ops + market/portfolio + on-chain reads",
   contexts: ["finance", "crypto", "wallet"],
   contextGate: { anyOf: ["finance", "crypto", "wallet"] },
   roleGate: { minRole: "ADMIN" },
@@ -649,6 +666,8 @@ export const walletRouterAction: Action = {
         "pump_fun_buy",
         "token_info",
         "search_address",
+        "tx_status",
+        "balance",
       ],
     },
     {
@@ -802,6 +821,14 @@ export const walletRouterAction: Action = {
       examples: ["base", "ethereum", "solana"],
     },
     {
+      name: "transactionHash",
+      description:
+        "tx_status only: the 0x-prefixed hash of the transaction to check, for example one this wallet submitted earlier.",
+      required: false,
+      subactions: ["tx_status"],
+      schema: { type: "string" },
+    },
+    {
       name: "operation",
       description:
         "token_info only: which lookup to run. token looks up one token by address or query; search matches query text; trending, boosted, and profiles list tokens; new_pairs lists new pairs (optional chain); chain_pairs lists the top pairs on chain. When omitted, a call with address or query runs token. On target coingecko, token takes query as the coin id, or address with chain.",
@@ -859,6 +886,12 @@ export const walletRouterAction: Action = {
 
     if (subaction === "token_info") {
       return tokenInfoHandler(runtime, message, state, options, callback);
+    }
+    if (subaction === "tx_status") {
+      return evmTxStatusHandler(runtime, raw);
+    }
+    if (subaction === "balance") {
+      return evmBalanceHandler(runtime, raw);
     }
     if (subaction === "search_address") {
       return walletSearchAddressHandler(
