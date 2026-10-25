@@ -1,0 +1,9 @@
+{
+  "name": "agent-harness-v2",
+  "private": true,
+  "type": "module",
+  "description": "Fork experiment harness for stock ElizaOS v2 (research only; resolves @elizaos/* from the monorepo root)",
+  "dependencies": {
+    "viem": "2.56.9"
+  }
+}
