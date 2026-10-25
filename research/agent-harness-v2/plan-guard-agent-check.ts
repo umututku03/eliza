@@ -60,8 +60,9 @@ try {
   await run('swap USDC for DAI spending 20 USDC (misses the goal)', 'refuse', swap(USDC, DAI, '20'));
   await run('swap USDC for DAI with the surplus (plan step 2)', 'admit', swap(USDC, DAI, budget));
   await run('step 2 again', 'refuse', swap(USDC, DAI, '1'));
-  await runtime.stop?.();
 } finally {
   writeFileSync(out, JSON.stringify({ block: frozen.block, cases, passed: cases.filter(c => c.pass).length, total: cases.length }, null, 2) + '\n');
   anvil.proc.kill();
 }
+// Exit explicitly with the check result (see smoke.ts): runtime shutdown noise must not decide the exit code.
+process.exit(cases.length === 9 && cases.every(c => c.pass) ? 0 : 1);

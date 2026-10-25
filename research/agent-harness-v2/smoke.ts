@@ -32,6 +32,7 @@ const stub = Bun.serve({
 });
 
 const anvil = await startAnvil(frozen.block);
+let ok = false;
 try {
   await fundAgent(anvil);
   const agentId = stringToUuid('smoke-agent');
@@ -65,9 +66,12 @@ try {
   console.log(JSON.stringify({ booted: true, initMs: Date.now() - t0, address, expected: AGENT, matches: address.toLowerCase() === AGENT.toLowerCase(),
     chainId, balanceEth: formatEther(balance), actions: runtime.actions.map(a => a.name).filter(n => n.startsWith('WALLET')),
     stubRequests: requests.length }));
+  ok = address.toLowerCase() === AGENT.toLowerCase() && chainId === 1;
   void ChannelType; void createMessageMemory; void (null as unknown as UUID);
-  await runtime.stop?.();
 } finally {
   anvil.proc.kill();
   stub.stop(true);
 }
+// Exit explicitly with the check result: stopping the runtime while background services are still
+// starting logs errors and can end the process with a non-zero code unrelated to the check.
+process.exit(ok ? 0 : 1);
