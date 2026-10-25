@@ -7,6 +7,7 @@ import { createAssistantPlugin } from '@elizaos/plugin-assistant';
 import sqlPlugin from '@elizaos/plugin-sql';
 import openaiPlugin from '@elizaos/plugin-openai';
 import { walletPlugin, walletRouterAction } from '@elizaos/plugin-wallet';
+import { evmWalletProvider } from '../../plugins/plugin-wallet/src/chains/evm/providers/wallet';
 import { formatUnits, parseUnits } from 'viem';
 import { AGENT, AGENT_KEY, ANVIL_PORT, DAI, ROUTER, USDC, balance, fundAgent, startAnvil } from './fork-oracle';
 import frozen from './frozen-task.json';
@@ -27,6 +28,7 @@ try {
           ETHEREUM_PROVIDER_MAINNET: `http://127.0.0.1:${ANVIL_PORT}`,
           EVM_SWAP_UNISWAP_V2_ROUTER: ROUTER,
           EVM_SWAP_AGGREGATORS: 'uniswapV2',
+          EVM_WALLET_TRACKED_TOKENS: `mainnet:${USDC},mainnet:${DAI}`,
           ELIZA_WALLET_BACKEND: 'local',
           SOLANA_NO_ACTIONS: 'true',
           OPENAI_API_KEY: 'unused',
@@ -54,6 +56,12 @@ try {
 
   const s1 = await confirmed({ action: 'swap', target: 'mainnet', fromToken: 'ETH', toToken: USDC, amount: frozen.saleEth, slippageBps: 300 });
   const after1 = await state();
+  // The wallet context must show the task tokens' balances, read on-chain (EVM_WALLET_TRACKED_TOKENS).
+  let walletContext = '';
+  for (let i = 0; i < 50 && !walletContext.includes('Token balances'); i++) {
+    walletContext = String((await evmWalletProvider.get(runtime, msg('what is in my wallet?'), { agentName: 'Agent' } as any))?.text ?? '');
+    if (!walletContext.includes('Token balances')) await Bun.sleep(200);
+  }
   // Simulate (quote) step 2 first: no confirmation, no transaction; the quote must equal what the swap then delivers.
   const step2 = { action: 'swap', target: 'mainnet', fromToken: USDC, toToken: DAI, amount: formatUnits(BigInt(frozen.budgetUsdcUnits), 6), slippageBps: 300 };
   const nonceBeforeSim = await anvil.pub.getTransactionCount({ address: AGENT });
@@ -69,6 +77,8 @@ try {
     step2Succeeded: s2?.success === true,
     goalReached: after2.dai >= parseUnits(frozen.goalDai, 18),
     reserveKept: after2.usdc >= parseUnits(frozen.reserveUsdc, 6),
+    walletContextShowsPostTradeEth: !walletContext.includes('Ethereum: 1 ETH'),
+    walletContextShowsTokenBalances: walletContext.includes(`${formatUnits(after1.usdc, 6)} USDC (token ${USDC})`) && walletContext.includes(`0 DAI (token ${DAI})`),
     simulateIsQuoteOnly: sim?.success === true && simSentNothing && !(sim?.data as any)?.requiresConfirmation,
     quoteMatchesExecution: simSummary.expectedOutput === formatUnits(after2.dai, 18),
   };
@@ -78,6 +88,7 @@ try {
     step1: { success: s1?.success, hash: s1?.data?.transactionHash ?? s1?.data?.execution?.transactionHash, aggregatorRoute: "uniswapV2" },
     step2: { success: s2?.success, hash: s2?.data?.transactionHash ?? s2?.data?.execution?.transactionHash },
     simulateText: String(sim?.text ?? '').slice(0, 300),
+    walletContext: walletContext.slice(0, 400),
     usdcAfterStep1: formatUnits(after1.usdc, 6), usdcAfterStep2: formatUnits(after2.usdc, 6), daiAfterStep2: formatUnits(after2.dai, 18),
   }, null, 1));
   if (failed) console.log('step results:', JSON.stringify({ s1: s1?.data, s2: s2?.data, t1: s1?.text, t2: s2?.text }).slice(0, 2000));

@@ -80,6 +80,7 @@ const runtime = new AgentRuntime({
         EVM_SWAP_UNISWAP_V2_ROUTER: spec.router, EVM_SWAP_AGGREGATORS: 'uniswapV2',
         ELIZA_WALLET_BACKEND: 'local', SOLANA_NO_ACTIONS: 'true', PGLITE_DATA_DIR: `memory://${idn.room}`,
         ...(spec.planJson ? {EVM_PLAN_GUARD_PLAN: spec.planJson} : {}),
+        EVM_WALLET_TRACKED_TOKENS: spec.trackedTokens,
         ...(provider === 'openai'
           ? {OPENAI_API_KEY: 'sk-harness-placeholder', OPENAI_BASE_URL: `${spec.llmUrl}/openai/v1`}
           : {ANTHROPIC_API_KEY: 'sk-ant-harness-placeholder', ANTHROPIC_BASE_URL: `${spec.llmUrl}/anthropic/v1`}),
@@ -112,10 +113,18 @@ async function send(text: string, turn: number, turnKind: string) {
   const msg: any = createMessageMemory({id: randomUUID(), entityId: userId, roomId, content: {text, source: 'chat', channelType: ChannelType.DM}} as any);
   const nonceBefore = await nonce(), started = Date.now();
   let error: string | null = null, result: any = null;
+  // Stop the turn when the approved budget is exhausted: refused calls cost nothing, but an agent that keeps
+  // retrying them only adds noise. The episode then ends as budget_exhausted.
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 20 * 60 * 1000);
+  const watch = setInterval(async () => {
+    try { const l: any = await (await realFetch(spec.llmUrl + '/control/ledger')).json(); if (l.budgetRefusals > 0) { budgetExhausted = true; abort.abort(); } } catch {}
+  }, 1000);
   try {
     result = await runtime.messageService!.handleMessage(runtime, msg, async (c: any) => { callbacks.push(c); return []; },
-      {abortSignal: AbortSignal.timeout(20 * 60 * 1000)} as any);
+      {abortSignal: abort.signal} as any);
   } catch (e) { error = (e as Error).message; }
+  clearInterval(watch); clearTimeout(timeout);
   await control('/control/idle');
   const actionResults = (result?.actionResults ?? []).map((r: any) => ({success: r.success, text: r.text, error: r.error ?? r.data?.error ?? null,
     requiresConfirmation: r.data?.requiresConfirmation === true, data: r.data ?? null, values: r.values ?? null}));
@@ -128,16 +137,19 @@ async function send(text: string, turn: number, turnKind: string) {
 }
 
 let termination = 'max_turns', declared: string | null = null;
+let budgetExhausted = false;
 try {
   let t = await send(spec.texts.task, 0, 'task');
   // User policy (protocol v2-elizaos-2): approve every confirmation the agent asks for; after a turn that acted
   // (a transaction or a wallet action result) without asking, say "continue"; stop when the agent is idle.
   termination = 'max_user_turns';
   for (let turn = 1; turn < spec.maxUserTurns; turn++) {
+    if (budgetExhausted) { termination = 'budget_exhausted'; break; }
     if (t.actionResults.some((r: any) => r.requiresConfirmation)) t = await send(spec.texts.confirm, turn, 'confirm');
     else if (t.newTransactions > 0 || t.actionResults.length > 0) t = await send(spec.texts.continue, turn, 'continue');
     else { termination = 'agent_idle'; break; }
   }
+  if (budgetExhausted) termination = 'budget_exhausted';
   const closing = await send(spec.texts.closing, turns.length, 'closing');
   const texts = [closing.responseText, ...closing.callbacks.map((c: any) => c.text)].map(x => String(x ?? '')).join(' ');
   const words = texts.toUpperCase().match(/\b(COMPLETED|INFEASIBLE|IN_PROGRESS)\b/g) ?? [];

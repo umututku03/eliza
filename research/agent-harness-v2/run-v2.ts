@@ -87,6 +87,7 @@ const manifest = {createdAt: new Date().toISOString(), protocolVersion: PROTOCOL
     openai: treeDigest(join(REPO, 'plugins/plugin-openai')), anthropic: treeDigest(join(REPO, 'plugins/plugin-anthropic'))},
   bunLockSha256: sha(join(REPO, 'bun.lock')), bunVersion: Bun.version,
   deviations: ['plugin-wallet: on-chain Uniswap V2 route (EVM_SWAP_UNISWAP_V2_ROUTER, exclusive) so swaps execute on the fork',
+    'plugin-wallet: EVM_WALLET_TRACKED_TOKENS lists the task tokens, whose balances the wallet context reads on-chain',
     'task text names token contracts (v2 refuses symbols without a token-data service)',
     'scripted user approves every confirmation request and sends nothing else',
     'deterministic local embeddings for all cohorts', 'network guard: localhost only',
@@ -138,7 +139,7 @@ const saleRule: SaleCandidate | undefined = PLAN ? (t => {
   const inner = decodeRedemption(t.data);
   return !!inner && inner.target.toLowerCase() === frozen.router.toLowerCase() && inner.value > 0n;
 }) : undefined;
-const baseSpec = {wallet: W, sender: SENDER, planJson: planSetup?.planJson ?? null, privateKey: AGENT_KEY, router: frozen.router, usdc: USDC, dai: DAI, saleEth: frozen.saleEth,
+const baseSpec = {wallet: W, sender: SENDER, planJson: planSetup?.planJson ?? null, trackedTokens: `mainnet:${USDC},mainnet:${DAI}`, privateKey: AGENT_KEY, router: frozen.router, usdc: USDC, dai: DAI, saleEth: frozen.saleEth,
   goalDai: frozen.goalDai, reserveUsdc: frozen.reserveUsdc, budgetUsdcUnits: frozen.budgetUsdcUnits, forkProxyUrl: forkProxy.url, llmUrl};
 async function child(script: string, id: string, spec: any) {
   const work = join(tmpdir(), 'agent-harness-v2-work', id);

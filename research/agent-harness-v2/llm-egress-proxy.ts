@@ -53,7 +53,7 @@ if (testUpstream) { UPSTREAM.openai = testUpstream; UPSTREAM.anthropic = testUps
 
 let context: any = null;            // {episodeId, turn, turnKind, mockPlan?, forbidden} while a turn is active
 let mockState: any = {step: 0, callsThisTurn: 0};
-let calls = 0, usedUSD = priorUSD;
+let calls = 0, usedUSD = priorUSD, budgetRefusals = 0;
 const ledgerPath = join(dest, 'ledger.jsonl');
 
 function promptText(body: any): string {
@@ -233,7 +233,7 @@ Bun.serve({
         return Response.json({ok: true});
       }
       if (url.pathname === '/control/idle') { context = null; return Response.json({ok: true}); }
-      if (url.pathname === '/control/ledger') return Response.json({mode, calls, priorUSD, usedUSD, newUSD: usedUSD - priorUSD, cohortCap, cumulativeCap});
+      if (url.pathname === '/control/ledger') return Response.json({mode, calls, priorUSD, usedUSD, newUSD: usedUSD - priorUSD, cohortCap, cumulativeCap, budgetRefusals});
       return new Response('unknown control', {status: 404});
     }
     const provider = url.pathname.startsWith('/openai/') ? 'openai' : url.pathname.startsWith('/anthropic/') ? 'anthropic' : null;
@@ -287,7 +287,7 @@ Bun.serve({
     const reserved = reservation(body.model, entry.requestBytes, maxOut);
     if (usedUSD + reserved > cumulativeCap || usedUSD + reserved - priorUSD > cohortCap) {
       // Not forwarded, so nothing is reserved: the ledger records the would-be reservation for information only.
-      entry.status = 'refused_budget'; entry.wouldReserveUSD = reserved;
+      entry.status = 'refused_budget'; entry.wouldReserveUSD = reserved; budgetRefusals++;
       appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
       return Response.json({error: {message: 'Refused by harness: approved budget exhausted.'}}, {status: 503});
     }

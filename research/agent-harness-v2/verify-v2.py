@@ -95,7 +95,8 @@ def audit(folder):
         ep = e['episodeId']; base = ep.split('#')[0]
         need(base in episode_ids, 'call for unknown episode', ep)
         per_ep.setdefault(base, []).append(e)
-        if e['status'] == 'refused_budget': continue            # never forwarded, nothing reserved, no record files
+        if e['status'] == 'refused_budget':                    # never forwarded and nothing reserved; the request is saved
+            exp_files.add(f"{e['call']}-request.json"); continue
         exp_files.add(f"{e['call']}-request.json")
         req = read(p / 'llm' / 'calls' / f"{e['call']}-request.json")
         body = req['body']; text = json.dumps(body).lower()

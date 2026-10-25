@@ -23,6 +23,7 @@ const runtime = new AgentRuntime({
     EVM_SWAP_UNISWAP_V2_ROUTER: spec.router, EVM_SWAP_AGGREGATORS: 'uniswapV2',
     ELIZA_WALLET_BACKEND: 'local', SOLANA_NO_ACTIONS: 'true', OPENAI_API_KEY: 'unused', OPENAI_BASE_URL: 'http://127.0.0.1:9/v1',
     ...(spec.planJson ? {EVM_PLAN_GUARD_PLAN: spec.planJson} : {}),
+    EVM_WALLET_TRACKED_TOKENS: spec.trackedTokens,
     PGLITE_DATA_DIR: `memory://control-${spec.scenario}-${Date.now()}`}}} as any,
   plugins: [createAssistantPlugin(), sqlPlugin, openaiPlugin, walletPlugin as any],
   logLevel: 'error',
