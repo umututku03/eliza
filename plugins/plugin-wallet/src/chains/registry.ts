@@ -60,7 +60,11 @@ import { buildSendTxParams } from "./evm/actions/helpers";
 import { SwapAction, swapRouteOptionsFromSettings } from "./evm/actions/swap";
 import { TransferAction } from "./evm/actions/transfer";
 import { routeEvmBridge } from "./evm/bridge-router";
-import { DEFAULT_CHAINS, NATIVE_TOKEN_ADDRESS } from "./evm/constants";
+import {
+  DEFAULT_CHAINS,
+  EVM_SERVICE_NAME,
+  NATIVE_TOKEN_ADDRESS,
+} from "./evm/constants";
 import { parseEvmBaseUnits } from "./evm/exact-units";
 import { routeEvmGovernance } from "./evm/gov-router";
 import { planGuardFromSettings } from "./evm/plan-guard";
@@ -524,6 +528,18 @@ async function simulateEvmSwap(
   };
 }
 
+/**
+ * The wallet's own transaction changes its balances, but the EVM service refreshes its cache only every
+ * CACHE_REFRESH_INTERVAL_MS. Refresh it now, so the next context does not show pre-trade balances. A failed
+ * refresh must not hide a submitted transaction, so it is not raised.
+ */
+async function refreshEvmWalletCache(runtime: IAgentRuntime): Promise<void> {
+  const service = runtime.getService(EVM_SERVICE_NAME) as {
+    refreshWalletData?: () => Promise<void>;
+  } | null;
+  await service?.refreshWalletData?.().catch(() => undefined);
+}
+
 function createEvmHandler(key: string, chain: Chain): WalletChainHandler {
   const aliases = evmAliases(key, chain);
   return {
@@ -576,11 +592,13 @@ function createEvmHandler(key: string, chain: Chain): WalletChainHandler {
           `Refused by the approved plan: ${params.subaction} is not part of the plan.`,
         );
       }
-      if (params.subaction === "transfer") {
-        return executeEvmTransfer(params, context, key, chain);
-      }
-      if (params.subaction === "swap") {
-        return executeEvmSwap(params, context, key, chain);
+      if (params.subaction === "transfer" || params.subaction === "swap") {
+        const execution =
+          params.subaction === "transfer"
+            ? await executeEvmTransfer(params, context, key, chain)
+            : await executeEvmSwap(params, context, key, chain);
+        await refreshEvmWalletCache(context.runtime);
+        return execution;
       }
       if (params.subaction === "bridge") {
         return routeEvmBridge(params, context, key, chain);
