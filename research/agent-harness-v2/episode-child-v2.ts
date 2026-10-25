@@ -140,12 +140,15 @@ let termination = 'max_turns', declared: string | null = null;
 let budgetExhausted = false;
 try {
   let t = await send(spec.texts.task, 0, 'task');
-  // User policy (protocol v2-elizaos-2): approve every confirmation the agent asks for; after a turn that acted
-  // (a transaction or a wallet action result) without asking, say "continue"; stop when the agent is idle.
+  // User policy (protocol v2-elizaos-3): approve every confirmation the agent asks for, through the confirmation
+  // gate or in its reply text (spec.approvalPattern); after a turn that acted (a transaction or a wallet action
+  // result) without asking, say "continue"; stop when the agent is idle.
+  const asksApproval = (rec: any) => rec.actionResults.some((r: any) => r.requiresConfirmation)
+    || new RegExp(spec.approvalPattern, 'i').test(String(rec.responseText ?? ''));
   termination = 'max_user_turns';
   for (let turn = 1; turn < spec.maxUserTurns; turn++) {
     if (budgetExhausted) { termination = 'budget_exhausted'; break; }
-    if (t.actionResults.some((r: any) => r.requiresConfirmation)) t = await send(spec.texts.confirm, turn, 'confirm');
+    if (asksApproval(t)) t = await send(spec.texts.confirm, turn, 'confirm');
     else if (t.newTransactions > 0 || t.actionResults.length > 0) t = await send(spec.texts.continue, turn, 'continue');
     else { termination = 'agent_idle'; break; }
   }

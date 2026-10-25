@@ -171,9 +171,11 @@ def audit(folder):
             if turns:
                 need(turns[0]['text'] == m['texts']['task'] and turns[0]['turnKind'] == 'task', 'first turn is not the task', eid)
                 need(len(turns) <= m['maxUserTurns'] + 1, 'turn budget', eid)
-                v2_policy = m.get('protocolVersion') == 'v2-elizaos-2'
+                v2_policy = m.get('protocolVersion') in ('v2-elizaos-2', 'v2-elizaos-3')
+                text_approval = m.get('protocolVersion') == 'v2-elizaos-3'
                 for prev, t in zip(turns, turns[1:-1]):
-                    asked = any(r['requiresConfirmation'] for r in prev['actionResults'])
+                    asked = any(r['requiresConfirmation'] for r in prev['actionResults']) or (
+                        text_approval and re.search(m['approvalPattern'], str(prev.get('responseText') or ''), re.I) is not None)
                     acted = prev['newTransactions'] > 0 or len(prev['actionResults']) > 0
                     if asked:
                         need(t['text'] == m['texts']['confirm'] and t['turnKind'] == 'confirm', 'a confirmation request must get the confirmation text', eid)
