@@ -286,6 +286,35 @@ export class SwapAction {
       `All swap attempts failed after ${attemptCount} tries. ${lastError?.message ?? "Unknown error"}`
     );
   }
+  /**
+   * Best current quote for a swap, without signing or sending anything: the route that `swap()` would try
+   * first at this slippage. `expectedOutputAmount` is reported when the route gives a pre-slippage quote.
+   */
+  async quote(params: SwapParams): Promise<{
+    aggregator: SwapQuote["aggregator"];
+    minOutputAmount: string;
+    expectedOutputAmount: string | null;
+    path: readonly string[] | null;
+  }> {
+    const walletClient = this.walletProvider.getWalletClient(params.chain);
+    const [fromAddress] = await walletClient.getAddresses();
+    const chainId = this.walletProvider.getChainConfigs(params.chain).id;
+    const resolved: SwapParams = {
+      ...params,
+      fromToken: (await this.resolveTokenAddress(params.fromToken, chainId)) as Address,
+      toToken: (await this.resolveTokenAddress(params.toToken, chainId)) as Address,
+    };
+    const slippage =
+      params.slippageBps === undefined ? DEFAULT_SLIPPAGE_PERCENT : params.slippageBps / 10000;
+    const [best] = await this.getSortedQuotes(fromAddress, resolved, slippage);
+    const route = best.aggregator === "uniswapV2" ? (best.swapData as UniswapV2RouteData) : null;
+    return {
+      aggregator: best.aggregator,
+      minOutputAmount: best.minOutputAmount,
+      expectedOutputAmount: route ? route.amountOut : null,
+      path: route ? route.path : null,
+    };
+  }
   private isRecoverableError(error: Error): boolean {
     const message = error.message;
     return (
@@ -737,6 +766,7 @@ export class SwapAction {
         router,
         path,
         amountIn: fromAmount,
+        amountOut: amountOut.toString(),
         amountOutMin: amountOutMin.toString(),
         fromNative,
         toNative,

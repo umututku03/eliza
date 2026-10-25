@@ -196,6 +196,8 @@ export interface UniswapV2RouteData {
   readonly router: Address;
   readonly path: readonly Address[];
   readonly amountIn: string;
+  /** Router quote before slippage, in output base units. */
+  readonly amountOut: string;
   readonly amountOutMin: string;
   readonly fromNative: boolean;
   readonly toNative: boolean;

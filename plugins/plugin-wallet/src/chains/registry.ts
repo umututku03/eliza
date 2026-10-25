@@ -38,7 +38,13 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import bs58 from "bs58";
-import { type Address, type Chain, encodeFunctionData, parseAbi } from "viem";
+import {
+  type Address,
+  type Chain,
+  encodeFunctionData,
+  formatUnits,
+  parseAbi,
+} from "viem";
 import * as viemChains from "viem/chains";
 import type { WalletBackendService } from "../services/wallet-backend-service.js";
 import type {
@@ -432,6 +438,92 @@ async function executeEvmSwap(
   );
 }
 
+/**
+ * Swap simulation on EVM is a quote: the route `swap()` would try first, with its expected and minimum
+ * output. Nothing is signed or sent. The quote is not an execution guarantee (prices can move).
+ */
+async function simulateEvmSwap(
+  params: WalletRouterParams,
+  context: WalletRouterContext,
+  chainKey: string,
+  chain: Chain,
+): Promise<WalletRouterExecution> {
+  const walletProvider = await initWalletProvider(context.runtime);
+  const fromToken = await resolveEvmTokenAddress(
+    params.fromToken,
+    chainKey,
+    chain,
+    context,
+  );
+  const toToken = await resolveEvmTokenAddress(
+    params.toToken,
+    chainKey,
+    chain,
+    context,
+  );
+  const action = new SwapAction(
+    walletProvider,
+    swapRouteOptionsFromSettings(context.runtime),
+  );
+  const quote = await action.quote({
+    chain: chainKey as SupportedChain,
+    fromToken,
+    toToken,
+    amount: params.amount ?? "",
+    slippageBps: params.slippageBps,
+  });
+  const decimals =
+    toToken === NATIVE_TOKEN_ADDRESS
+      ? chain.nativeCurrency.decimals
+      : Number(
+          await walletProvider
+            .getPublicClient(chainKey as SupportedChain)
+            .readContract({
+              address: toToken as Address,
+              abi: parseAbi(["function decimals() view returns (uint8)"]),
+              functionName: "decimals",
+              authorizationList: undefined,
+            }),
+        );
+  const format = (raw: string | null) =>
+    raw === null ? null : formatUnits(BigInt(raw), decimals);
+  return {
+    status: "simulated",
+    chain: chainKey,
+    chainId: String(chain.id),
+    subaction: "swap",
+    dryRun: params.dryRun,
+    mode: params.mode,
+    amount: params.amount,
+    fromToken,
+    toToken,
+    simulation: {
+      success: true,
+      err: null,
+      logs: [],
+      unitsConsumed: null,
+      route: [
+        {
+          label: quote.aggregator,
+          inputMint: fromToken,
+          outputMint: toToken,
+          percent: 100,
+        },
+      ],
+      requestedSlippageBps: params.slippageBps ?? null,
+      effectiveSlippageBps: params.slippageBps ?? null,
+      summary: {
+        basis: "quote, not executed",
+        venue: quote.aggregator,
+        amountIn: params.amount ?? null,
+        expectedOutput: format(quote.expectedOutputAmount),
+        minimumOutput: format(quote.minOutputAmount),
+        path: quote.path ? quote.path.join(">") : null,
+      },
+    },
+  };
+}
+
 function createEvmHandler(key: string, chain: Chain): WalletChainHandler {
   const aliases = evmAliases(key, chain);
   return {
@@ -459,6 +551,20 @@ function createEvmHandler(key: string, chain: Chain): WalletChainHandler {
       supportedActions: ["transfer", "swap", "bridge", "gov"],
       description:
         "Prepare mode and dry-run return route metadata without signing.",
+    },
+    simulation: {
+      supported: true,
+      supportedActions: ["swap"],
+      description:
+        "Quotes the swap on the route it would execute on (expected and minimum output) — no signing, no broadcast.",
+    },
+    async simulate(params, context) {
+      if (params.subaction === "swap") {
+        return simulateEvmSwap(params, context, key, chain);
+      }
+      throw new Error(
+        `${chain.name} does not support simulate for ${params.subaction}.`,
+      );
     },
     async execute(params, context) {
       if (
