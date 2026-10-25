@@ -186,9 +186,19 @@ export const BebopRouteSchema = z.object({
 });
 
 export interface SwapQuote {
-  readonly aggregator: "lifi" | "bebop" | "kyberswap";
+  readonly aggregator: "lifi" | "bebop" | "kyberswap" | "uniswapV2";
   readonly minOutputAmount: string;
-  readonly swapData: Route | BebopRoute | KyberSwapRouteData;
+  readonly swapData: Route | BebopRoute | KyberSwapRouteData | UniswapV2RouteData;
+}
+
+/** On-chain route through a Uniswap V2 router (see SwapRouteOptions). */
+export interface UniswapV2RouteData {
+  readonly router: Address;
+  readonly path: readonly Address[];
+  readonly amountIn: string;
+  readonly amountOutMin: string;
+  readonly fromNative: boolean;
+  readonly toNative: boolean;
 }
 
 export interface BridgeParams {

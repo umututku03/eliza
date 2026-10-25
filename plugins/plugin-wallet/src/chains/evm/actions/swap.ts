@@ -36,6 +36,7 @@ import {
   encodeFunctionData,
   formatUnits,
   type Hex,
+  isAddress,
   parseAbi,
   parseUnits,
 } from "viem";
@@ -74,6 +75,7 @@ import {
   type SwapParams,
   type SwapQuote,
   type Transaction,
+  type UniswapV2RouteData,
 } from "../types";
 import { buildSendTxParams, createEvmActionValidator } from "./helpers";
 export const DEFAULT_EVM_SWAP_FETCH_TIMEOUT_MS = 10000;
@@ -81,8 +83,53 @@ const legacySpec = requireActionSpec("EVM_SWAP");
 const spec = { ...legacySpec, name: "WALLET" };
 
 export { swapTemplate };
+
+const UNISWAP_V2_ROUTER_ABI = parseAbi([
+  "function WETH() view returns (address)",
+  "function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)",
+  "function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable returns (uint256[] amounts)",
+  "function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)",
+  "function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)",
+]);
+
+/**
+ * Optional on-chain route. With `uniswapV2Router` set, swaps can be quoted with the router's
+ * `getAmountsOut` and executed on it. This route needs no HTTP API, so it also works on a local
+ * mainnet fork, where aggregator quotes describe live mainnet state instead of the fork.
+ * `exclusive` skips the HTTP aggregators.
+ */
+export interface SwapRouteOptions {
+  readonly uniswapV2Router?: Address;
+  readonly exclusive?: boolean;
+}
+
+/** Reads EVM_SWAP_UNISWAP_V2_ROUTER and EVM_SWAP_AGGREGATORS ("uniswapV2" makes the route exclusive). */
+export function swapRouteOptionsFromSettings(runtime: IAgentRuntime): SwapRouteOptions {
+  const router = runtime.getSetting("EVM_SWAP_UNISWAP_V2_ROUTER");
+  const aggregators = runtime.getSetting("EVM_SWAP_AGGREGATORS");
+  if (router === null || router === undefined || router === "") {
+    if (aggregators === "uniswapV2") {
+      throw new EVMError(
+        EVMErrorCode.INVALID_PARAMS,
+        "EVM_SWAP_AGGREGATORS=uniswapV2 requires EVM_SWAP_UNISWAP_V2_ROUTER"
+      );
+    }
+    return {};
+  }
+  if (typeof router !== "string" || !isAddress(router)) {
+    throw new EVMError(
+      EVMErrorCode.INVALID_PARAMS,
+      `Invalid EVM_SWAP_UNISWAP_V2_ROUTER: ${String(router)}`
+    );
+  }
+  return { uniswapV2Router: router, exclusive: aggregators === "uniswapV2" };
+}
+
 export class SwapAction {
-  constructor(private readonly walletProvider: WalletProvider) {
+  constructor(
+    private readonly walletProvider: WalletProvider,
+    private readonly routeOptions: SwapRouteOptions = {}
+  ) {
     const lifiChains: ExtendedChain[] = [];
     for (const config of Object.values(this.walletProvider.chains)) {
       const blockExplorerUrls = config.blockExplorers?.default?.url
@@ -196,6 +243,9 @@ export class SwapAction {
             case "kyberswap":
               result = await this.executeKyberSwapQuote(quote, resolvedParams);
               break;
+            case "uniswapV2":
+              result = await this.executeUniswapV2Quote(quote, resolvedParams);
+              break;
           }
           if (result) {
             logger.info(`✅ Swap succeeded via ${quote.aggregator}!`);
@@ -255,16 +305,21 @@ export class SwapAction {
     // Parsed here, outside the per-aggregator catch blocks, so an amount the
     // token cannot hold is refused instead of reported as "No routes found".
     const fromAmount = parseEvmBaseUnits(params.amount, fromTokenDecimals).toString();
-    const quotesPromises: Promise<SwapQuote | undefined>[] = [
-      this.getLifiQuote(fromAddress, params, fromAmount, slippage),
-      // The current Bebop request does not carry an enforceable slippage
-      // bound. Keep it available for the legacy default path, but never let
-      // it win a quote the user confirmed with an explicit tolerance.
-      ...(params.slippageBps === undefined
-        ? [this.getBebopQuote(fromAddress, params, fromAmount)]
-        : []),
-      this.getKyberSwapQuote(fromAddress, params, fromAmount, slippage),
-    ];
+    const quotesPromises: Promise<SwapQuote | undefined>[] = this.routeOptions.exclusive
+      ? []
+      : [
+          this.getLifiQuote(fromAddress, params, fromAmount, slippage),
+          // The current Bebop request does not carry an enforceable slippage
+          // bound. Keep it available for the legacy default path, but never let
+          // it win a quote the user confirmed with an explicit tolerance.
+          ...(params.slippageBps === undefined
+            ? [this.getBebopQuote(fromAddress, params, fromAmount)]
+            : []),
+          this.getKyberSwapQuote(fromAddress, params, fromAmount, slippage),
+        ];
+    if (this.routeOptions.uniswapV2Router) {
+      quotesPromises.push(this.getUniswapV2Quote(params, fromAmount, slippage));
+    }
     const quotesResults = await Promise.all(quotesPromises);
     const sortedQuotes = quotesResults.filter((quote): quote is SwapQuote => quote !== undefined);
     sortedQuotes.sort((a, b) => (BigInt(a.minOutputAmount) > BigInt(b.minOutputAmount) ? -1 : 1));
@@ -624,6 +679,109 @@ export class SwapAction {
       to: tx.routerAddress as Address,
       value: BigInt(tx.transactionValue ?? "0"),
       data: tx.data as Hex,
+      chainId: this.walletProvider.getChainConfigs(params.chain).id,
+    };
+  }
+  private async getUniswapV2Quote(
+    params: SwapParams,
+    fromAmount: string,
+    slippage: number
+  ): Promise<SwapQuote | undefined> {
+    const router = this.routeOptions.uniswapV2Router;
+    if (!router) return undefined;
+    try {
+      const publicClient = this.walletProvider.getPublicClient(params.chain);
+      const weth = await publicClient.readContract({
+        address: router,
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "WETH",
+        authorizationList: undefined,
+      });
+      const fromNative = params.fromToken === NATIVE_TOKEN_ADDRESS;
+      const toNative = params.toToken === NATIVE_TOKEN_ADDRESS;
+      const from = fromNative ? weth : (params.fromToken as Address);
+      const to = toNative ? weth : (params.toToken as Address);
+      if (from.toLowerCase() === to.toLowerCase()) return undefined;
+      // Token-to-token swaps route through WETH, as the router's deepest pools do.
+      const path: Address[] =
+        from.toLowerCase() === weth.toLowerCase() || to.toLowerCase() === weth.toLowerCase()
+          ? [from, to]
+          : [from, weth, to];
+      const amounts = await publicClient.readContract({
+        address: router,
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "getAmountsOut",
+        args: [BigInt(fromAmount), path],
+        authorizationList: undefined,
+      });
+      const amountOut = amounts[amounts.length - 1];
+      const amountOutMin = (amountOut * BigInt(10000 - Math.round(slippage * 10000))) / 10000n;
+      const swapData: UniswapV2RouteData = {
+        router,
+        path,
+        amountIn: fromAmount,
+        amountOutMin: amountOutMin.toString(),
+        fromNative,
+        toNative,
+      };
+      return { aggregator: "uniswapV2", minOutputAmount: amountOutMin.toString(), swapData };
+    } catch (error) {
+      logger.error(
+        "Error in getUniswapV2Quote:",
+        error instanceof Error ? error.message : String(error)
+      );
+      return undefined;
+    }
+  }
+  private async executeUniswapV2Quote(
+    quote: SwapQuote,
+    params: SwapParams
+  ): Promise<Transaction | undefined> {
+    const route = quote.swapData as UniswapV2RouteData;
+    const walletClient = this.walletProvider.getWalletClient(params.chain);
+    const publicClient = this.walletProvider.getPublicClient(params.chain);
+    const account = walletClient.account;
+    if (!account) {
+      throw new EVMError(EVMErrorCode.WALLET_NOT_INITIALIZED, "Wallet account is not available");
+    }
+    const amountIn = BigInt(route.amountIn);
+    const amountOutMin = BigInt(route.amountOutMin);
+    const path = [...route.path];
+    // Deadline from chain time: a fork's clock need not match the wall clock.
+    const deadline = (await publicClient.getBlock()).timestamp + 1200n;
+    let value = 0n;
+    let data: Hex;
+    if (route.fromNative) {
+      value = amountIn;
+      data = encodeFunctionData({
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "swapExactETHForTokens",
+        args: [amountOutMin, path, account.address, deadline],
+      });
+    } else {
+      await this.handleTokenApproval(publicClient, walletClient, path[0], route.router, amountIn);
+      data = encodeFunctionData({
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: route.toNative ? "swapExactTokensForETH" : "swapExactTokensForTokens",
+        args: [amountIn, amountOutMin, path, account.address, deadline],
+      });
+    }
+    const hash = await walletClient.sendTransaction(
+      buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain })
+    );
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+    });
+    if (receipt.status === "reverted") {
+      throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${hash}`);
+    }
+    return {
+      hash,
+      from: account.address,
+      to: route.router,
+      value,
+      data,
       chainId: this.walletProvider.getChainConfigs(params.chain).id,
     };
   }

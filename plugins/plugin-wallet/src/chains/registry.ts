@@ -51,7 +51,7 @@ import type {
 } from "../types/wallet-router.js";
 import type { SolanaSigner } from "../wallet/backend.js";
 import { buildSendTxParams } from "./evm/actions/helpers";
-import { SwapAction } from "./evm/actions/swap";
+import { SwapAction, swapRouteOptionsFromSettings } from "./evm/actions/swap";
 import { TransferAction } from "./evm/actions/transfer";
 import { routeEvmBridge } from "./evm/bridge-router";
 import { DEFAULT_CHAINS, NATIVE_TOKEN_ADDRESS } from "./evm/constants";
@@ -405,7 +405,10 @@ async function executeEvmSwap(
     context,
   );
 
-  const action = new SwapAction(walletProvider);
+  const action = new SwapAction(
+    walletProvider,
+    swapRouteOptionsFromSettings(context.runtime),
+  );
   const tx = await action.swap({
     chain: chainKey as SupportedChain,
     fromToken,
