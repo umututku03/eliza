@@ -25,6 +25,7 @@ export function financialObservationProviders(
       [
         "get-balance",
         "solana-wallet",
+        "evm-wallet",
         "BIRDEYE_WALLET_PORTFOLIO",
         "BIRDEYE_TRADE_PORTFOLIO",
       ].includes(name),
@@ -113,6 +114,15 @@ function observedHoldings(
       if (observed) observations.push(observed);
     } else if (name === "solana-wallet") {
       observations.push(...portfolioHoldings(data));
+    } else if (name === "evm-wallet") {
+      // Native and tracked ERC-20 balances, each read on-chain for this turn.
+      if (Array.isArray(data.holdings)) {
+        for (const item of data.holdings) {
+          if (!isObjectRecord(item)) continue;
+          const observed = holding(item.symbol, item.amount);
+          if (observed) observations.push(observed);
+        }
+      }
     } else if (
       name === "BIRDEYE_WALLET_PORTFOLIO" ||
       name === "BIRDEYE_TRADE_PORTFOLIO"
@@ -125,6 +135,14 @@ function observedHoldings(
 
 const UNVERIFIED =
   /\b(?:cannot|can't|unable|unavailable|unknown|unverified|not\s+(?:verified|confirmed)|if|unless|whether|could|would)\b/i;
+// A quantity stated as a limit ("keep at least 178.23 USDC in your wallet",
+// "the 37.31 DAI target") restates the user's constraint; it is not a holding.
+const LIMIT_PREFIX =
+  /\b(?:at\s+(?:least|most)|no\s+(?:less|more|fewer)\s+than|(?:a\s+)?(?:minimum|maximum)\s+of|keep(?:s|ing)?|leav(?:e|es|ing)|retain(?:s|ing)?|preserv(?:e|es|ing)|up\s+to)\s*$/i;
+// A quantity traded into another asset ("the 0.1 ETH to USDC swap") is an
+// order amount, not a holding.
+const LIMIT_SUFFIX =
+  /^\s*(?:minimum|maximum|floor|reserve|target|goal|limit|(?:to|for|into)\s+[A-Za-z])/i;
 const NON_ASSET_UNITS =
   /^(?:seconds?|minutes?|hours?|days?|weeks?|times?|attempts?|results?|assets?|items?|tokens?|coins?)$/i;
 
@@ -194,6 +212,11 @@ function holdingClaims(
         )
           continue;
         if (NON_ASSET_UNITS.test(match[2])) continue;
+        if (
+          LIMIT_PREFIX.test(prefix) ||
+          LIMIT_SUFFIX.test(clause.slice((match.index ?? 0) + match[0].length))
+        )
+          continue;
         const claim = holding(match[2], match[1].replace(/,/g, ""));
         if (claim)
           claims.push({
@@ -204,6 +227,25 @@ function holdingClaims(
     }
   }
   return claims;
+}
+
+/**
+ * An observed amount supports a claim stated to fewer decimal places only when it
+ * rounds (half up) to exactly that claim: "237.64 USDC" for an observed
+ * 237.636476. Both inputs are normalized decimals from `decimal()`.
+ */
+function supports(observed: string, claimed: string): boolean {
+  if (observed === claimed) return true;
+  const places = (claimed.split(".")[1] ?? "").length;
+  const [whole, fraction = ""] = observed.split(".");
+  if (fraction.length <= places) return false;
+  const scaled = BigInt(whole + fraction.slice(0, places));
+  const rounded = fraction[places] >= "5" ? scaled + 1n : scaled;
+  const digits = rounded.toString().padStart(places + 1, "0");
+  const text = places
+    ? `${digits.slice(0, -places)}.${digits.slice(-places)}`
+    : digits;
+  return decimal(text) === claimed;
 }
 
 /** Missing holdings stay unknown; only an explicit observed zero can prove zero. */
@@ -221,7 +263,8 @@ export function financialHoldingIsUngrounded(args: {
     (claim) =>
       !(claim.personal ? personalObservations : observations).some(
         (observed) =>
-          observed.symbol === claim.symbol && observed.amount === claim.amount,
+          observed.symbol === claim.symbol &&
+          supports(observed.amount, claim.amount),
       ),
   );
 }

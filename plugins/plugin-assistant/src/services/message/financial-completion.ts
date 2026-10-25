@@ -18,6 +18,10 @@ const COMPLETION =
 const NON_ASSERTION =
   /\b(?:not|never|failed|rejected|unable|cannot|can't|couldn't|didn't|hasn't|haven't|wasn't|weren't|isn't|aren't|if|unless|once|when|whether|would|could|should|will|can|may|might)\b/i;
 
+// The user's own approval ("before you had confirmed it") is not a claim that
+// the operation settled.
+const USER_SUBJECT = /\byou(?:'ve|'d|\s+(?:have|had|already|just))*\s+$/i;
+
 function financialClaims(reply: string): FinancialClaim[] {
   const claims: FinancialClaim[] = [];
   for (const sentence of reply.split(
@@ -36,7 +40,9 @@ function financialClaims(reply: string): FinancialClaim[] {
       (match) =>
         /\b(?:transferred|swapped|bridged|executed|completed|queued|voted|confirmed|settled|finalized|filled)\b/i.test(
           match[0],
-        ) && !NON_ASSERTION.test(sentence.slice(0, match.index)),
+        ) &&
+        !NON_ASSERTION.test(sentence.slice(0, match.index)) &&
+        !USER_SUBJECT.test(sentence.slice(0, match.index)),
     );
     if (
       /\b(?:governance|onchain|on-chain)\s+(?:proposal|vote)|\bproposal\b/i.test(
