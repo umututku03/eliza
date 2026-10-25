@@ -1485,9 +1485,11 @@ async function generateTextWithModel(
   modelType: TextModelType
 ): Promise<string | TextStreamResult> {
   const paramsWithAttachments = toAnthropicTextParams(params);
+  const responseFormat = paramsWithAttachments.responseFormat;
   if (
     !paramsWithAttachments.responseSchema &&
-    paramsWithAttachments.responseFormat?.type === "json_object"
+    (responseFormat === "json_object" ||
+      (typeof responseFormat === "object" && responseFormat?.type === "json_object"))
   ) {
     // Anthropic's native JSON output requires a schema. Silently discarding
     // json_object makes callers believe output is constrained when it isn't.

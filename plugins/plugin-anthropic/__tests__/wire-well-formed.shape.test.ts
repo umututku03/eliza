@@ -160,15 +160,18 @@ describe("#18025: Anthropic request bodies are well-formed strict JSON", () => {
     expect(captured).toHaveLength(1);
     expect(JSON.parse(captured[0].toString()).output_config.format.type).toBe("json_schema");
   });
-  it("rejects unsupported json_object locally instead of silently sending unconstrained output", async () => {
-    await expect(
-      handleTextSmall(buildRuntime(), {
-        prompt: "Return JSON",
-        responseFormat: { type: "json_object" },
-      } as never)
-    ).rejects.toMatchObject({ code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED" });
-    expect(captured).toHaveLength(0);
-  });
+  it.each([{ type: "json_object" }, "json_object"])(
+    "rejects unsupported json_object locally instead of silently sending unconstrained output (%j)",
+    async (responseFormat) => {
+      await expect(
+        handleTextSmall(buildRuntime(), {
+          prompt: "Return JSON",
+          responseFormat,
+        } as never)
+      ).rejects.toMatchObject({ code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED" });
+      expect(captured).toHaveLength(0);
+    }
+  );
   it("rejects an oversized sparse response schema before opening a provider request", async () => {
     const sparseSchema = new Array(MAX_WELL_FORMED_VISITS);
 
