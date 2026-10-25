@@ -1,0 +1,194 @@
+{
+  "createdAt": "2026-10-25T09:05:37.017Z",
+  "rule": "PREREGISTRATION.md §4.1",
+  "tasks": [
+    {
+      "id": "D1",
+      "split": "development",
+      "block": 26250601,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "y": {
+        "symbol": "DAI",
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18
+      },
+      "path": [
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+      ],
+      "saleEth": "0.1",
+      "proceedsXUnits": "237636476",
+      "budgetXUnits": "59406476",
+      "reserveX": "178.23",
+      "baselineYOutUnits": "59046981018462803274",
+      "goalY": "37.31",
+      "goalRatio": 0.6318806419257773,
+      "factors": {
+        "feasible": 0.73,
+        "infeasible": 0.58
+      },
+      "moves": {
+        "price_change_feasible": {
+          "moverEthWei": "320443000000000000000",
+          "budgetYOutUnits": "43104321247992288053",
+          "feasible": true
+        },
+        "price_change_infeasible": {
+          "moverEthWei": "588689000000000000000",
+          "budgetYOutUnits": "34247269288640879956",
+          "feasible": false
+        }
+      }
+    },
+    {
+      "id": "H1",
+      "split": "held-out",
+      "block": 26250601,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "DAI",
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18
+      },
+      "y": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "path": [
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      ],
+      "saleEth": "0.08",
+      "proceedsXUnits": "190088605941132004540",
+      "budgetXUnits": "47518605941132004540",
+      "reserveX": "142.57",
+      "baselineYOutUnits": "47241458",
+      "goalY": "29.85",
+      "goalRatio": 0.632,
+      "factors": {
+        "feasible": 0.7792,
+        "infeasible": 0.582
+      },
+      "moves": {
+        "price_change_feasible": {
+          "moverEthWei": "551181000000000000000",
+          "budgetYOutUnits": "36810550",
+          "feasible": true
+        },
+        "price_change_infeasible": {
+          "moverEthWei": "1289425000000000000000",
+          "budgetYOutUnits": "27494532",
+          "feasible": false
+        }
+      }
+    },
+    {
+      "id": "H2",
+      "split": "held-out",
+      "block": 26250601,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "y": {
+        "symbol": "DAI",
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18
+      },
+      "path": [
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+      ],
+      "saleEth": "0.05",
+      "proceedsXUnits": "118819668",
+      "budgetXUnits": "29699668",
+      "reserveX": "89.12",
+      "baselineYOutUnits": "29519513909491002675",
+      "goalY": "25.09",
+      "goalRatio": 0.85,
+      "factors": {
+        "feasible": 0.91,
+        "infeasible": 0.7999999999999999
+      },
+      "moves": {
+        "price_change_feasible": {
+          "moverEthWei": "90795000000000000000",
+          "budgetYOutUnits": "26862758687604379189",
+          "feasible": true
+        },
+        "price_change_infeasible": {
+          "moverEthWei": "221951000000000000000",
+          "budgetYOutUnits": "23615626663334586880",
+          "feasible": false
+        }
+      }
+    },
+    {
+      "id": "H3",
+      "split": "held-out",
+      "block": 26100000,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "y": {
+        "symbol": "DAI",
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18
+      },
+      "path": [
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+      ],
+      "saleEth": "0.1",
+      "proceedsXUnits": "269194867",
+      "budgetXUnits": "67294867",
+      "reserveX": "201.9",
+      "baselineYOutUnits": "66867077374946705190",
+      "goalY": "42.25",
+      "goalRatio": 0.632,
+      "factors": {
+        "feasible": 0.7792,
+        "infeasible": 0.582
+      },
+      "moves": {
+        "price_change_feasible": {
+          "moverEthWei": "234565000000000000000",
+          "budgetYOutUnits": "52102829617436036186",
+          "feasible": true
+        },
+        "price_change_infeasible": {
+          "moverEthWei": "548737000000000000000",
+          "budgetYOutUnits": "38916670226777290465",
+          "feasible": false
+        }
+      }
+    }
+  ]
+}
