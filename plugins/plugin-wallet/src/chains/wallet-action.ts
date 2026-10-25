@@ -14,6 +14,7 @@
 import type {
   Action,
   ActionResult,
+  AppliedEffectReceipt,
   HandlerCallback,
   HandlerOptions,
   IAgentRuntime,
@@ -393,6 +394,43 @@ function resultText(result: WalletRouterResult): string {
   return `Submitted ${execution.subaction} on ${result.handler.chain}${id ? `: ${id}` : "."}`;
 }
 
+/**
+ * Proof of a submitted on-chain transaction, for the message runtime's claim binding. Without a receipt, a
+ * reply that truthfully reports the submission cannot be grounded: recovery then fails the turn after the
+ * trade, and the agent loses the record of its own effect. Only a submitted, non-dry-run execution with a
+ * transaction id qualifies; an unconfirmed submission does not.
+ */
+function walletSubmissionReceipt(
+  routed: WalletRouterResult,
+): AppliedEffectReceipt | null {
+  if (!routed.ok) return null;
+  const execution = routed.result;
+  const id = execution.transactionHash ?? execution.signature;
+  const unconfirmed =
+    (execution.metadata as { confirmationStatus?: unknown } | undefined)
+      ?.confirmationStatus === "unconfirmed";
+  if (
+    execution.status !== "submitted" ||
+    execution.mode !== "execute" ||
+    execution.dryRun ||
+    !id ||
+    unconfirmed
+  ) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  return {
+    receiptId: `wallet:${routed.handler.chain}:${execution.subaction}:${id}`,
+    operation: `wallet.${execution.subaction}`,
+    resource: { kind: `wallet.${routed.handler.chain}.transaction`, id },
+    artifacts: [],
+    idempotency: { key: null, replayed: false },
+    observedAt: now,
+    outcome: "applied",
+    commit: { kind: "provider_accepted", id, committedAt: now },
+  };
+}
+
 function serviceFromRuntime(
   runtime: IAgentRuntime,
 ): WalletBackendService | null {
@@ -542,9 +580,11 @@ async function runWalletRouter(
     },
   });
 
+  const receipt = walletSubmissionReceipt(routed);
   return {
     success: routed.ok,
     text,
+    ...(receipt ? { effectReceipts: [receipt] } : {}),
     values: routed.ok
       ? {
           walletActionSucceeded:

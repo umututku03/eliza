@@ -8,6 +8,7 @@ import {
   type HandlerOptions,
   type IAgentRuntime,
   type Memory,
+  normalizeEffectReceipts,
   validateToolArgs,
 } from "@elizaos/core";
 import { decodeFunctionData, parseAbi } from "viem";
@@ -591,6 +592,78 @@ describe("wallet router action", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("proves a submitted swap with an applied receipt, and a proposal with none", async () => {
+    const { runtime, service } = createService();
+    service.registerChainHandler(handler("base", "Base", "8453", "evm"));
+    const parameters = {
+      subaction: "swap",
+      chain: "8453",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC_EVM,
+      amount: "1",
+      mode: "execute",
+    };
+
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message("please swap"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    expect(proposal?.effectReceipts).toBeUndefined();
+
+    const result = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(result?.effectReceipts).toEqual([
+      expect.objectContaining({
+        receiptId: "wallet:base:swap:0xtest",
+        operation: "wallet.swap",
+        resource: { kind: "wallet.base.transaction", id: "0xtest" },
+        outcome: "applied",
+        commit: expect.objectContaining({
+          kind: "provider_accepted",
+          id: "0xtest",
+        }),
+      }),
+    ]);
+    // The message runtime normalizes every receipt; this one survives intact.
+    expect(normalizeEffectReceipts(result?.effectReceipts)).toEqual(
+      result?.effectReceipts,
+    );
+  });
+
+  it("gives no receipt for a submission whose confirmation is uncertain", async () => {
+    const { runtime, service } = createService();
+    const base = handler("base", "Base", "8453", "evm");
+    vi.mocked(base.execute).mockImplementationOnce(async (params) => ({
+      status: "submitted",
+      chain: "base",
+      chainId: "8453",
+      subaction: params.subaction,
+      dryRun: false,
+      mode: params.mode,
+      transactionHash: "0xtest",
+      metadata: { confirmationStatus: "unconfirmed" },
+    }));
+    service.registerChainHandler(base);
+
+    const result = await runConfirmed(runtime, {
+      subaction: "swap",
+      chain: "8453",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC_EVM,
+      amount: "1",
+      mode: "execute",
+    });
+    expect(result?.text).toContain("Confirmation uncertain");
+    expect(result?.effectReceipts).toBeUndefined();
   });
 
   it("routes Solana transfer and swap through the Solana handler", async () => {

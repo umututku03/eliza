@@ -45,7 +45,6 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as viemChains from "viem/chains";
 import { DEFAULT_CHAINS, EVM_SERVICE_NAME } from "../constants";
-import { requireProviderSpec } from "../generated/specs/spec-helpers";
 import { planGuardFromSettings } from "../plan-guard";
 import {
   initRPCProviderManager,
@@ -700,16 +699,16 @@ class LazyTeeWalletProvider extends WalletProvider {
   }
 }
 
-const spec = requireProviderSpec("wallet");
-
 /**
  * ERC-20 balances of the wallet for the tokens in `EVM_WALLET_TRACKED_TOKENS` ("chain:address" entries,
  * comma-separated; a bare address uses the first configured chain), read on-chain at call time. This gives
  * the agent its token holdings without an external token-data service.
  */
-async function trackedTokenBalanceLines(runtime: IAgentRuntime): Promise<string[]> {
+async function trackedTokenBalances(
+  runtime: IAgentRuntime
+): Promise<{ lines: string[]; holdings: EvmHolding[] }> {
   const raw = runtime.getSetting("EVM_WALLET_TRACKED_TOKENS");
-  if (typeof raw !== "string" || raw.trim() === "") return [];
+  if (typeof raw !== "string" || raw.trim() === "") return { lines: [], holdings: [] };
   const walletProvider = await initWalletProvider(runtime);
   const owner = walletProvider.getAddress();
   const defaultChain = Object.keys(walletProvider.chains)[0];
@@ -719,6 +718,7 @@ async function trackedTokenBalanceLines(runtime: IAgentRuntime): Promise<string[
     "function balanceOf(address) view returns (uint256)",
   ]);
   const lines: string[] = [];
+  const holdings: EvmHolding[] = [];
   for (const entry of raw
     .split(",")
     .map((e) => e.trim())
@@ -749,14 +749,22 @@ async function trackedTokenBalanceLines(runtime: IAgentRuntime): Promise<string[
           authorizationList: undefined,
         }),
       ]);
-      lines.push(
-        `${chainName}: ${formatUnits(balance as bigint, Number(decimals))} ${String(symbol)} (token ${addressPart})`
-      );
+      const amount = formatUnits(balance as bigint, Number(decimals));
+      lines.push(`${chainName}: ${amount} ${String(symbol)} (token ${addressPart})`);
+      holdings.push({ chain: chainName, symbol: String(symbol), amount, token: addressPart });
     } catch {
       lines.push(`${chainName}: token ${addressPart} balance unavailable (RPC error)`);
     }
   }
-  return lines;
+  return { lines, holdings };
+}
+
+/** One balance of the configured wallet, as observed this turn; the message runtime grounds holdings claims in these. */
+interface EvmHolding {
+  chain: string;
+  symbol: string;
+  amount: string;
+  token?: string;
 }
 
 export const evmWalletProvider: Provider = {
@@ -823,7 +831,8 @@ export const evmWalletProvider: Provider = {
         ...unavailableChains.map((chain) => `${chain.chainName}: balance unavailable (RPC error)`),
       ].join("\n");
 
-      const trackedLines = await trackedTokenBalanceLines(runtime);
+      const tracked = await trackedTokenBalances(runtime);
+      const trackedLines = tracked.lines;
       const trackedText = trackedLines.length
         ? `\n\nToken balances (read on-chain now):\n${trackedLines.join("\n")}`
         : "";
@@ -835,6 +844,14 @@ export const evmWalletProvider: Provider = {
           unavailableChains,
           chainCount: walletData.chains.length,
           displayedChainCount: chains.length,
+          holdings: [
+            ...chains.map((chain) => ({
+              chain: chain.name,
+              symbol: chain.symbol,
+              amount: chain.balance,
+            })),
+            ...tracked.holdings,
+          ],
         },
         values: {
           address: walletData.address,
