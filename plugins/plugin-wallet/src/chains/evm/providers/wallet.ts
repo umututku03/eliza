@@ -760,7 +760,9 @@ async function trackedTokenBalanceLines(runtime: IAgentRuntime): Promise<string[
 }
 
 export const evmWalletProvider: Provider = {
-  name: spec.name,
+  // The spec name "wallet" collides with plugin-wallet's top-level address-only `wallet` provider; the
+  // runtime keeps the first registration and silently skips this one, so balances never reached context.
+  name: "evm-wallet",
   description: "EVM wallet address and balances",
   descriptionCompressed: "EVM wallet address and balances.",
   contexts: ["finance", "crypto", "wallet"],
