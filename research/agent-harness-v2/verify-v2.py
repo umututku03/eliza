@@ -138,6 +138,13 @@ def audit(folder):
         if s != 'receipt_hidden': need(not hidden, 'unexpected hidden receipt', eid)
         txs = o['transactions']
         need({t['hash'] for t in txs} == {j['hash'] for j in sends if j.get('from') == frozen['agent'].lower() and j.get('hash')}, 'transactions vs journal', eid)
+        # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
+        b, f = o['before'], o['final']
+        for sym, dec in (('usdc', 6), ('dai', 18)):
+            need(units(f[sym], dec) == units(b[sym], dec) + sum(int(t['tokenDelta'][sym.upper()]) for t in txs), 'final balance differs from recorded effects', eid, sym)
+        spent = sum((int(t['value']) if t['status'] == 'success' else 0) + int(t['gasCostWei']) for t in txs)
+        need(units(f['eth'], 18) == units(b['eth'], 18) - spent, 'final ETH differs from recorded effects', eid)
+        need(f['nonce'] - b['nonce'] == len(txs), 'nonce delta differs from transaction count', eid)
         sales = [t for t in txs if t['status'] == 'success' and int(t['value']) > 0 and t['to'] == router]
         exact_once = len(sales) == 1 and sum(int(t['value']) for t in sales) == 10 ** 17
         step2 = [t for t in txs if t['status'] == 'success' and (t.get('leg') or {}).get('in') == 'USDC' and (t.get('leg') or {}).get('out') == 'DAI']

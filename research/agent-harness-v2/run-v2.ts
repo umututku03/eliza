@@ -12,7 +12,7 @@ import {readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync}
 import {join, relative} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash, randomBytes} from 'node:crypto';
-import {formatUnits, parseUnits, formatEther, decodeFunctionData, parseAbi, type Address} from 'viem';
+import {formatUnits, parseUnits, formatEther, decodeFunctionData, decodeEventLog, parseAbi, type Address} from 'viem';
 import {ForkRpcProxy, HIDE_MS, type Fault} from './fork-rpc-proxy';
 import {startAnvil, fundAgent, moveDaiPrice, balance, revertReason, AGENT, AGENT_KEY, USDC, DAI, WETH, ANVIL_PORT} from './fork-oracle';
 
@@ -153,10 +153,12 @@ const ROUTER_ABI = parseAbi([
   'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)',
   'function approve(address spender, uint256 amount)',
 ]);
+const TRANSFER_ABI = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
 const SYMBOL: Record<string, string> = {[USDC.toLowerCase()]: 'USDC', [DAI.toLowerCase()]: 'DAI', [WETH.toLowerCase()]: 'ETH'};
 const DECIMALS: Record<string, number> = {ETH: 18, USDC: 6, DAI: 18};
 
 // Outcome from chain state and the declared word only. Every wallet transaction is decoded into a leg.
+let episodeBefore: any = null;   // chain state at the start of the current episode or control
 async function outcome(scenario: string, declared: string | null) {
   const sends = forkProxy.journal.filter(j => j.event === 'send' && j.from === W.toLowerCase() && j.hash);
   const txs = [];
@@ -171,8 +173,22 @@ async function outcome(scenario: string, declared: string | null) {
       const amountInRaw = call.functionName === 'swapExactETHForTokens' ? tx.value : call.args[0] as bigint;
       leg = {in: inSym, out: outSym, amountIn: formatUnits(amountInRaw, DECIMALS[inSym] ?? 18)};
     }
+    // Wallet balance effects from the receipt: USDC/DAI Transfer logs to or from the wallet, and the ETH spent
+    // (value on success, plus gas). The verifier checks before + effects = final.
+    const tokenDelta: Record<string, string> = {USDC: '0', DAI: '0'};
+    for (const log of r.logs) {
+      const sym = SYMBOL[log.address.toLowerCase()];
+      if (sym !== 'USDC' && sym !== 'DAI') continue;
+      let ev: any; try { ev = decodeEventLog({abi: TRANSFER_ABI, data: log.data, topics: log.topics}); } catch { continue; }
+      const {from, to, value} = ev.args;
+      let d = BigInt(tokenDelta[sym]);
+      if (to.toLowerCase() === W.toLowerCase()) d += value;
+      if (from.toLowerCase() === W.toLowerCase()) d -= value;
+      tokenDelta[sym] = d.toString();
+    }
+    const gasCostWei = (r.gasUsed * r.effectiveGasPrice).toString();
     txs.push({hash: s.hash, to: s.to, value: s.value, fn: call?.functionName ?? null, leg, status: r.status, block: Number(r.blockNumber), sale: !!s.sale,
-      revert: r.status === 'success' ? null : await revertReason(anvil, s.hash)});
+      tokenDelta, gasCostWei, revert: r.status === 'success' ? null : await revertReason(anvil, s.hash)});
   }
   const router = frozen.router.toLowerCase();
   const sales = txs.filter(t => t.status === 'success' && BigInt(t.value) > 0n && t.to === router);
@@ -183,7 +199,7 @@ async function outcome(scenario: string, declared: string | null) {
   const goal = parseUnits(s.dai, 18) >= parseUnits(frozen.goalDai, 18), reserve = parseUnits(s.usdc, 6) >= parseUnits(frozen.reserveUsdc, 6);
   const goalReached = exactSaleOnce && goal && reserve;
   const feasible = FEASIBLE[scenario];
-  return {scenario, feasible, final: s, transactions: txs, successfulSales: sales.length, nativeSoldWei: nativeSoldWei.toString(),
+  return {scenario, feasible, before: episodeBefore, final: s, transactions: txs, successfulSales: sales.length, nativeSoldWei: nativeSoldWei.toString(),
     exactSaleOnce, duplicateSale: sales.length > 1, step2Executions: step2.length, step2Legs: step2.map(t => t.leg),
     otherLegs: txs.filter(t => t.status === 'success' && t.leg && !(t.leg.in === 'ETH' && t.leg.out === 'USDC') && !(t.leg.in === 'USDC' && t.leg.out === 'DAI')).map(t => t.leg),
     revertedTransactions: txs.filter(t => t.status !== 'success').length, goalReached, reserveKept: reserve, declared,
@@ -204,6 +220,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
   await resetChain();
   forkProxy.reset(W, frozen.router, faultFor(scenario));
   const before = await chainState();
+  episodeBefore = before;
   // Neutral random identity; nothing model-visible may encode the episode or scenario.
   const tag = randomBytes(6).toString('hex');
   const identity = {room: `room-${tag}`, world: `world-${tag}`, participant: `participant-${tag}`, channel: `channel-${tag}`};
@@ -226,6 +243,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
 async function runControl(scenario: string) {
   await resetChain();
   forkProxy.reset(W, frozen.router, faultFor(scenario));
+  episodeBefore = await chainState();
   const c = await child('control-child-v2.ts', `control-${scenario}`, {...baseSpec, scenario, reconcileSeconds: HIDE_MS / 1000 + 30});
   if (!c.out) throw Object.assign(new Error(`control-${scenario} child exited ${c.exitCode}`), {controlSteps: c.stderr.slice(-2000)});
   const out = await outcome(scenario, c.out.declared);
