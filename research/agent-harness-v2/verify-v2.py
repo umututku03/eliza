@@ -59,8 +59,10 @@ def audit(folder):
     models = [x['key'] for x in m['models']]
     need(models == [k for k in MODEL_ORDER if k in models], 'model order')
     tag = 'pg' if m.get('condition') == 'plan_guard' else 'v2'
-    planned_eps = [f'{k}-{tag}-r{r}-{s}' for k in models for r in range(1, m['reps'] + 1) for s in SCENARIOS]
-    planned = [f'control-{s}' for s in SCENARIOS] + planned_eps
+    scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
+    need(scenarios == list(m.get('scenarios', SCENARIOS)), 'scenario subset not in predeclared order')
+    planned_eps = [f'{k}-{tag}-r{r}-{s}' for k in models for r in range(1, m['reps'] + 1) for s in scenarios]
+    planned = [f'control-{s}' for s in scenarios] + planned_eps
     complete = (p / 'complete.json').exists(); err = (p / 'run-error.json').exists()
     need(complete != err, 'exactly one of complete.json / run-error.json')
     marker = read(p / ('complete.json' if complete else 'run-error.json'))

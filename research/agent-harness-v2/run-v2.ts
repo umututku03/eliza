@@ -38,6 +38,10 @@ export const MODEL_ORDER = ['luna', 'haiku', 'sol', 'opus'];            // prede
 export const SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible'] as const;
 export const MAX_USER_TURNS = 6;
 const REPS = Number(arg('reps') ?? 2);
+// --scenarios=a,b selects a predeclared subset (recorded in the manifest; the verifier plans from it).
+const RUN_SCENARIOS = (arg('scenarios') ? arg('scenarios')!.split(',') : [...SCENARIOS]) as string[];
+for (const s of RUN_SCENARIOS) if (!(SCENARIOS as readonly string[]).includes(s)) throw new Error(`Unknown scenario ${s}`);
+if (RUN_SCENARIOS.join() !== SCENARIOS.filter(s => RUN_SCENARIOS.includes(s)).join()) throw new Error('Scenarios must follow the predeclared order.');
 const models = (arg('models') ?? 'luna,haiku').split(',');
 for (const m of models) if (!MODELS[m]) throw new Error(`Unknown model ${m}`);
 if (models.join() !== MODEL_ORDER.filter(m => models.includes(m)).join()) throw new Error('Models must follow the predeclared order.');
@@ -75,7 +79,7 @@ const files = ['run-v2.ts', 'episode-child-v2.ts', 'control-child-v2.ts', 'llm-e
 // Harness labels that must never reach a model request (checked by the egress proxy before forwarding).
 export const FORBIDDEN_BASE = ['receipt_hidden', 'price_change', 'scheduled_market_change', 'frozen-task', 'mockplan', 'moverethwei', 'harness', 'deterministic control'];
 const manifest = {createdAt: new Date().toISOString(), protocolVersion: PROTOCOL_VERSION, mode, models: models.map(m => ({key: m, ...MODELS[m]})),
-  scenarios: SCENARIOS, reps: REPS, maxUserTurns: MAX_USER_TURNS, texts: TEXTS, frozen, feasible: FEASIBLE,
+  scenarios: RUN_SCENARIOS, reps: REPS, maxUserTurns: MAX_USER_TURNS, texts: TEXTS, frozen, feasible: FEASIBLE,
   files: Object.fromEntries(files.filter(f => existsSync(join(HERE, f))).map(f => [f, sha(join(HERE, f))])),
   elizaGitHead: gitHead, elizaSourceDirty: gitDirty.length > 0,
   sourceTrees: {core: treeDigest(join(REPO, 'packages/core/src')), assistant: treeDigest(join(REPO, 'plugins/plugin-assistant/src')),
@@ -294,7 +298,7 @@ let runError: string | null = null;
 try {
   // Debug limits (mock mode only): --controls-only, --max-episodes=N, --scenarios=a,b. Live runs use the full plan.
   const maxEpisodes = mode === 'mock' ? Number(arg('max-episodes') ?? Infinity) : Infinity;
-  const onlyScenarios = mode === 'mock' && arg('scenarios') ? arg('scenarios')!.split(',') : null;
+  const onlyScenarios = RUN_SCENARIOS;
   const skipControls = mode === 'mock' && process.argv.includes('--skip-controls');
   if (!skipControls) for (const scenario of SCENARIOS) if (!onlyScenarios || onlyScenarios.includes(scenario)) results.push(await runControl(scenario));
   const plan: [string, number, string][] = [];
