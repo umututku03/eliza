@@ -20,7 +20,22 @@ The results folders are git-ignored and stay local; each passed `verify-v2.py` a
 | A5 | plugin-wallet | The wallet context listed only native balances; token balances resolve symbols through an external API. | "I can't confirm… the wallet and market-data checks were unavailable." | dev run 1, plan_guard Luna | `fe88ecf023`: `EVM_WALLET_TRACKED_TOKENS`, read on-chain |
 | A6 | plugin-wallet | The wallet cache refreshes every 60 s and is not invalidated after the wallet's own transaction. | Right after selling 0.1 ETH, the context still said "Ethereum: 1 ETH". | fork check (`control-v2-route.ts`) | `5b47b508ed`: refresh after a successful swap or transfer |
 
-A1–A3 are defects in the stock code. A4–A5 are capability gaps that matter wherever external data services are unavailable or rate-limited. A6 is a stale-state defect.
+| A7 | plugin-wallet | The EVM balance provider and plugin-wallet's top-level address-only provider are both named `"wallet"`. The runtime keeps the first and skips the second, logging only a collision warning. | EVM balances never reached the model: 0 of 170 live requests in dev run 2. Agents kept calling external lookups ("I can't confirm whether the 0.1 ETH sale already went through"). | dev run 2; smoke log | `62541034b2`: renamed to `evm-wallet`; after the fix, balances appear in the prompts |
+| A8 | plugin-wallet / core (design) | The wallet context has `cacheScope: "turn"`. | Planner iterations after a trade in the same turn still see pre-trade balances; the next turn sees the new ones. | mock run after A7 (calls 10–13 vs 15–18) | not changed (design choice); recorded |
+
+| A9 | plugin-assistant reply egress | A cautious, honest reply was rejected with "A grounded conversational reply could not be generated". Its text contains no completion claim under the financial-completion rules, so another egress path rejected it; that path is not identified. | The turn ended with an empty reply, and the episode as idle, right after a correct sale. | dev run 3, stock Haiku r1, turn 2 | not fixed; open |
+| A10 | plugin-wallet Steward trading status | With Steward unconfigured, the context said only "Steward Trading: Unavailable". | Haiku: "The DAI purchase … needs Steward trading, which isn't configured here, so I can't carry it out yet." The WALLET swap does not use Steward. | dev run 3, stock Haiku r1 | `094ab7e94b`: the status now states its scope (Hyperliquid and Polymarket only) |
+
+A1–A3 and A7 are defects in the stock code. A4–A5 are capability gaps that matter wherever external data services are unavailable or rate-limited. A6 is a stale-state defect, and A8 is a stale-state design choice.
+
+## Milestone: first live completion
+
+Dev run 3, stock_fixed `gpt-6-luna`, D1/normal, at commit `8e2edb93b4` (fixes A1–A7 plus protocol v2-elizaos-3):
+- sold exactly 0.1 ETH;
+- quoted step 2 with simulate;
+- swapped exactly 59.406476 USDC for DAI.
+
+The final balances equal the deterministic oracle's to the wei (178.23 USDC, 59.046981018462803274 DAI), and the audit passes. The closing declaration is missing only because the $0.12 development cap was used up during the closing turn.
 
 ## B. Behaviour that the fixes do not remove (the plan_guard motivation)
 

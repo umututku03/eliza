@@ -1,0 +1,49 @@
+{
+  "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
+  "results": [
+    {
+      "folder": "/private/tmp/claude-501/-Users-utkueumut-Desktop-utku-apps-projects-defi-spartan-agent/2de7a066-a35e-4fe8-8831-102dc5061e11/scratchpad/wt-eliza-v2/research/agent-harness-v2/results-dev3-luna-stock",
+      "mode": "live",
+      "status": "complete",
+      "episodes": 2,
+      "modelCalls": 75,
+      "refusedOutsideTurn": 3,
+      "localEmbeddings": 0,
+      "liveUSD": 0.108550375,
+      "rows": [
+        {
+          "id": "control-normal",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "luna-v2-r1-normal",
+          "declared": "UNPARSEABLE",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "budget_exhausted",
+          "exit": 0,
+          "calls": 75,
+          "confirmTurns": 2,
+          "reverts": []
+        }
+      ]
+    }
+  ]
+}

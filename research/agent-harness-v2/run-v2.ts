@@ -310,6 +310,12 @@ try {
   if (!(mode === 'mock' && process.argv.includes('--controls-only')))
     for (const cell of plan.slice(0, maxEpisodes)) results.push(await runEpisode(...cell));
 } catch (e) { runError = (e as Error).message; if ((e as any).controlSteps) writeFileSync(join(dest, 'failed-control-steps.json'), JSON.stringify((e as any).controlSteps, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2)); }
+// Let forwarded calls finish and be recorded (an aborted turn can leave calls in flight) before reading the ledger.
+for (let i = 0; i < 600; i++) {
+  const l: any = await fetch(llmUrl + '/control/ledger').then(r => r.json()).catch(() => null);
+  if (!l || !l.inFlight) break;
+  await Bun.sleep(500);
+}
 const ledger = await fetch(llmUrl + '/control/ledger').then(r => r.json()).catch(() => null);
 writeFileSync(join(dest, runError ? 'run-error.json' : 'complete.json'), JSON.stringify({at: new Date().toISOString(), mode, error: runError,
   episodes: results.map(r => r.id), ledger}, null, 2));

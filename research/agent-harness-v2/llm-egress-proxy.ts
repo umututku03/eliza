@@ -53,7 +53,7 @@ if (testUpstream) { UPSTREAM.openai = testUpstream; UPSTREAM.anthropic = testUps
 
 let context: any = null;            // {episodeId, turn, turnKind, mockPlan?, forbidden} while a turn is active
 let mockState: any = {step: 0, callsThisTurn: 0};
-let calls = 0, usedUSD = priorUSD, budgetRefusals = 0;
+let calls = 0, usedUSD = priorUSD, budgetRefusals = 0, inFlight = 0;
 const ledgerPath = join(dest, 'ledger.jsonl');
 
 function promptText(body: any): string {
@@ -233,7 +233,7 @@ Bun.serve({
         return Response.json({ok: true});
       }
       if (url.pathname === '/control/idle') { context = null; return Response.json({ok: true}); }
-      if (url.pathname === '/control/ledger') return Response.json({mode, calls, priorUSD, usedUSD, newUSD: usedUSD - priorUSD, cohortCap, cumulativeCap, budgetRefusals});
+      if (url.pathname === '/control/ledger') return Response.json({mode, calls, priorUSD, usedUSD, newUSD: usedUSD - priorUSD, cohortCap, cumulativeCap, budgetRefusals, inFlight});
       return new Response('unknown control', {status: 404});
     }
     const provider = url.pathname.startsWith('/openai/') ? 'openai' : url.pathname.startsWith('/anthropic/') ? 'anthropic' : null;
@@ -298,12 +298,14 @@ Bun.serve({
     const beta = req.headers.get('anthropic-beta'); if (beta) headers['anthropic-beta'] = beta;
     const started = performance.now();
     let status = 0, text = '', contentType = 'application/json';
+    inFlight++;   // forwarded and not yet recorded; the runner waits for zero before shutting the proxy down
     try {
       const r = await fetch(UPSTREAM[provider] + url.pathname.replace(/^\/(openai|anthropic)/, '') + url.search, {method: 'POST', headers, body: sent, signal: AbortSignal.timeout(300000)});
       status = r.status; text = await r.text(); contentType = r.headers.get('content-type') ?? contentType;
     } catch (e) {
       entry.status = 'transport_error_reservation_kept'; entry.error = (e as Error).name;
       appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
+      inFlight--;
       return Response.json({error: {message: 'Upstream transport failure.'}}, {status: 502});
     }
     entry.httpStatus = status; entry.latencyMs = performance.now() - started;
@@ -317,6 +319,7 @@ Bun.serve({
       Object.assign(entry, {status: 'settled', inputTokens: usage.input, outputTokens: usage.output, estimatedUSD: usd, cachedTokens: usage.cached, reasoningTokens: usage.reasoning});
     } else entry.status = status === 200 ? 'unsettled_usage_reservation_kept' : 'http_error_reservation_kept';
     appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
+    inFlight--;
     return new Response(text, {status, headers: {'content-type': contentType}});
   },
 });
