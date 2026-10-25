@@ -1643,13 +1643,14 @@ export async function runV5MessageRuntimeStage1(
       getModelRegistrations: () => args.runtime.getModelRegistrations?.() ?? [],
       supportsModelAttemptPreparation:
         runtimeWithOptionalServices.supportsModelAttemptPreparation,
-      restoreProviderContext: async (original) => {
+      restoreProviderContext: async (original, refreshProviders) => {
         getStreamingContext()?.abortSignal?.throwIfAborted();
         const freshState = await args.runtime.composeState(
           args.message,
           plannerProviderNames,
           true,
           false,
+          refreshProviders ? [...refreshProviders] : null,
         );
         const fresh = await createV5MessageContextObject({
           ...args,

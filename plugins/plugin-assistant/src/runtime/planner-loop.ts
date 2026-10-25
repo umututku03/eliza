@@ -5746,6 +5746,32 @@ async function executeQueuedToolCall(params: {
     result,
   };
   params.trajectory.steps.push(completedStep);
+  // A turn cache remains reusable until an action explicitly changes its source.
+  // Replace the model prefix as well as evaluator context: refreshing the state
+  // cache alone leaves the planner's already-rendered balances stale (H8).
+  if (
+    result.refreshProviders?.length &&
+    params.params.runtime.restoreProviderContext
+  ) {
+    const fresh = await params.params.runtime.restoreProviderContext(
+      params.trajectory.modelBaseContext ?? params.trajectory.context,
+      result.refreshProviders,
+    );
+    params.trajectory.modelBaseContext = fresh;
+    params.trajectory.context = {
+      ...params.trajectory.context,
+      events: [
+        ...params.trajectory.context.events.filter(
+          (event) =>
+            !(event.type === "provider" && event.source === "composeState"),
+        ),
+        ...fresh.events.filter(
+          (event) =>
+            event.type === "provider" && event.source === "composeState",
+        ),
+      ],
+    };
+  }
   appendPlannerToolStepToModelHistory(
     params.trajectory,
     completedStep,
@@ -10822,6 +10848,7 @@ export function actionResultToPlannerToolResult(
     data.values = result.values;
   }
   const plannerResult: PlannerToolResult = {
+    refreshProviders: result.refreshProviders,
     emptyTrackedState: result.emptyTrackedState,
     success: result.success,
     verification: result.verification,

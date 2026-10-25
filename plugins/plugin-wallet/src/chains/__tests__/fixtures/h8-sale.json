@@ -1,0 +1,44 @@
+{
+  "source": {
+    "request": "results-dev4-haiku-stock/llm/calls/22-request.json",
+    "requestSha256": "9642116abd9eaf9b2b8d92cee517ecf364c19590474db89f877a807693c73d56",
+    "episode": "results-dev4-haiku-stock/episodes/haiku-v2-r1-normal.json",
+    "turn": 1
+  },
+  "beforeText": "The agent's EVM Wallet Address: 0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0\n\nBalances:\nEthereum: 1 ETH\n\nToken balances (read on-chain now):\nmainnet: 0 USDC (token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)\nmainnet: 0 DAI (token 0x6B175474E89094C44Da98b954EedeAC495271d0F)",
+  "submitted": {
+    "status": "submitted",
+    "chain": "mainnet",
+    "chainId": "1",
+    "subaction": "swap",
+    "dryRun": false,
+    "mode": "execute",
+    "transactionHash": "0x91a67de983433b603a6261a46fdf94ba88d982faac815f6982bbe11a49d314fb",
+    "amount": "0.1",
+    "fromToken": "0x0000000000000000000000000000000000000000",
+    "toToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+  },
+  "transaction": {
+    "hash": "0x91a67de983433b603a6261a46fdf94ba88d982faac815f6982bbe11a49d314fb",
+    "to": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+    "value": "100000000000000000",
+    "effectiveTo": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+    "effectiveValue": "100000000000000000",
+    "fn": "swapExactETHForTokens",
+    "leg": {
+      "in": "ETH",
+      "out": "USDC",
+      "amountIn": "0.1"
+    },
+    "status": "success",
+    "block": 26250602,
+    "sale": true,
+    "tokenDelta": {
+      "USDC": "237636476",
+      "DAI": "0"
+    },
+    "gasCostWei": "136393326488608",
+    "holderEthDeltaWei": "-100136393326488608",
+    "revert": null
+  }
+}

@@ -21,6 +21,7 @@ import type {
 } from "../../types/wallet-router";
 import { registerDefaultWalletChainHandlers } from "../registry";
 import { walletRouterAction } from "../wallet-action";
+import recordedSale from "./fixtures/h8-sale.json";
 
 const USDC_EVM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -217,6 +218,41 @@ async function run(
 }
 
 describe("wallet router action", () => {
+  it("refreshes turn context after the recorded dev4 sale, but never for its proposal or an unconfirmed/tampered result", async () => {
+    const { runtime, service } = createService();
+    const evm = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(evm);
+    const parameters = {
+      ...recordedSale.submitted,
+      action: "swap",
+      target: "mainnet",
+    };
+    const proposal = await run(runtime, parameters);
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    expect(proposal?.refreshProviders).toBeUndefined();
+    vi.mocked(evm.execute).mockResolvedValueOnce(
+      recordedSale.submitted as WalletRouterExecution,
+    );
+    const result = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(result?.refreshProviders).toEqual(["evm-wallet"]);
+    expect(result?.effectReceipts).toContainEqual(
+      expect.objectContaining({
+        commit: expect.objectContaining({ id: recordedSale.transaction.hash }),
+      }),
+    );
+    vi.mocked(evm.execute).mockResolvedValueOnce({
+      ...recordedSale.submitted,
+      metadata: { confirmationStatus: "unconfirmed" },
+    } as WalletRouterExecution);
+    const uncertain = await runConfirmed(runtime, parameters);
+    expect(uncertain?.refreshProviders).toBeUndefined();
+    expect(uncertain?.effectReceipts).toBeUndefined();
+  });
   it("routes gov through the default EVM handler and discloses the vote before signing", async () => {
     const { runtime, service } = createService();
     runtime.character.settings = { chains: { evm: ["base"] } };

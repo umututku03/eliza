@@ -43,3 +43,13 @@ Under the pinned toolchain, with all fixes in place:
 - **The confirmation gate:** in dev run 4, the second sale came after an explicit "Yes, confirm." to a re-proposed sale. Haiku's statement that it "sent that swap before you had confirmed it" is false.
 - **"cli-inference … session limit":** this is a fixture string in two message tests, not a real model call.
 - **"TEXT_LARGE … Service Unavailable" (25 times):** these are our proxy's budget refusals in dev run 1 (fixed in the harness), not provider failures.
+
+## 26 October 2026 hardening: H8
+
+H8 is fixed locally. The EVM service was refreshed after submission, but the planner base context and evaluator context retained the already composed provider text. `results-dev4-haiku-stock/llm/calls/22-request.json` (turn 1) says 1 ETH / 0 USDC after transaction `0x91a67de983433b603a6261a46fdf94ba88d982faac815f6982bbe11a49d314fb`; the episode oracle records +237.636476 USDC and gas-adjusted native balance 0.899863606673511392 ETH.
+
+A confirmed EVM wallet submission now explicitly requests `evm-wallet` refresh. The planner uses the existing named-provider compose contract to replace composed provider events in planner and evaluator context. Other cached providers are reused; proposals, failed and unconfirmed results do not claim a confirmed change. Nested planners propagate the refresh to their parent.
+
+The replay retains public fork transaction fields and the recorded balance excerpt. It uses a real runtime composer: two wallet reads after a submission, one unrelated provider read. The tampered prose-only failure cannot refresh context. The router replay checks submission, proposal and unconfirmed cases. Reverting the respective production files to `29f3a4fb91` gives 1 failure / 1 pass (planner) and 1 failure / 26 passes (router); fixed targeted tests pass. Full suites will be repeated at the final offline gate. Initial pinned baselines: assistant 2736 passed, wallet 218 passed / 1 skipped. Restricted runs hit localhost `listen EPERM`; unrestricted runs pass.
+
+Type checks stop before analysis: this installed workspace lacks the `node` type library in assistant and `bun` in wallet (TS2688). No type-check success is claimed.

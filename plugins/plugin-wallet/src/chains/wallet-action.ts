@@ -601,7 +601,14 @@ async function runWalletRouter(
   return {
     success: routed.ok,
     text,
-    ...(receipt ? { effectReceipts: [receipt] } : {}),
+    ...(receipt
+      ? {
+          effectReceipts: [receipt],
+          ...(routed.ok && routed.handler.signer.kind === "evm"
+            ? { refreshProviders: ["evm-wallet"] }
+            : {}),
+        }
+      : {}),
     values: routed.ok
       ? {
           walletActionSucceeded:
