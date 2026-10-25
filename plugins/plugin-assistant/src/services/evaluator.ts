@@ -109,7 +109,9 @@ function stringifyForPrompt(value: unknown): string {
   if (typeof value === "string") return value;
   return stringifyForModel(value);
 }
-function coerceObjectOutput(raw: unknown): Record<string, unknown> | null {
+export function coerceObjectOutput(
+  raw: unknown,
+): Record<string, unknown> | null {
   if (
     isRecord(raw) &&
     typeof raw.text === "string" &&
@@ -137,8 +139,12 @@ function coerceObjectOutput(raw: unknown): Record<string, unknown> | null {
   }
   if (isRecord(raw)) return raw;
   if (typeof raw !== "string") return null;
+  // Without a provider-enforced format (Anthropic ignores json_object), models
+  // commonly wrap the object in one markdown fence. Only a whole-reply fence is
+  // unwrapped; prose around it stays invalid.
+  const fenced = /^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/i.exec(raw);
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(fenced ? fenced[1] : raw);
     return isRecord(parsed) ? parsed : null;
   } catch {
     // error-policy:J3 evaluator model output is untrusted input; malformed
