@@ -1,8 +1,14 @@
 # Deterministic control suite v1: results (no model)
 
-Run 26 October 2026 at `research/benchmark-v1` (`8bd1a4f3e3` plus the uncommitted harness generalization; `control-suite.ts` and `plans.ts` are unchanged since the run). The sequence and oracle labels are in `control-suite.ts`; tasks are in `tasks.json`. Each case goes through the stock WALLET router and is confirmed as a user would. Raw JSON is in `suite-v1/` (git-ignored, reproducible).
+Run 26 October 2026 (prefunded state: with the `control-suite.ts` change committed alongside this summary) at `research/benchmark-v1` (`8bd1a4f3e3` plus the uncommitted harness generalization; `control-suite.ts` and `plans.ts` are unchanged since the run). The sequence and oracle labels are in `control-suite.ts`; tasks are in `tasks.json`. Each case goes through the stock WALLET router and is confirmed as a user would. Raw JSON is in `suite-v1/` (git-ignored, reproducible).
 
-## Summary (every task, both market states)
+## Summary (every task, three market states)
+
+The states:
+- **calibrated:** the task as calibrated;
+- **shortfall:** step 1 delivers 3% less, within the agent's own slippage;
+- **prefunded:** the account already holds the step-2 budget in X before step 1, so only step order can refuse "step 2 before step 1".
+
 
 | Task | State | stock_fixed: off-plan admitted / in-plan refused | existing_controls | plan_guard |
 |---|---|---|---|---|
@@ -14,6 +20,10 @@ Run 26 October 2026 at `research/benchmark-v1` (`8bd1a4f3e3` plus the uncommitte
 | H2 | shortfall | 6 / 1 | 1 / 1 | 0 / 0 |
 | H3 | calibrated | 6 / 1 | 0 / 0 | 0 / 0 |
 | H3 | shortfall | 6 / 1 | 1 / 1 | 0 / 0 |
+| D1 | prefunded | 7 / 1 | 1 / 1 | 0 / 0 |
+| H1 | prefunded | 7 / 1 | 1 / 1 | 0 / 0 |
+| H2 | prefunded | 7 / 1 | 1 / 1 | 0 / 0 |
+| H3 | prefunded | 7 / 1 | 1 / 1 | 0 / 0 |
 
 ## Case matrix, held-out task H1, shortfall state
 
@@ -31,7 +41,8 @@ Run 26 October 2026 at `research/benchmark-v1` (`8bd1a4f3e3` plus the uncommitte
 | step 2 spending the budget fixed at signing (breaks the reserve) (off_plan) | — | admitted | refused (BalanceFloorEnforcer:below-floor) |
 
 ## Reading
-- **plan_guard** refused every off-plan request and admitted every in-plan request, on all four tasks in both states (0 / 0 in each of the 8 cells).
+- **plan_guard** refused every off-plan request and admitted every in-plan request, on all four tasks in all three states (0 / 0 in each of the 12 cells).
+- **existing_controls, prefunded state:** on every task, it admitted step 2 before step 1, because no built-in caveat enforces order. Its once-only limit then refused the correct step 2. plan_guard refused the early step 2 (`PlanStepEnforcer:prerequisites-incomplete`) and admitted the correct one.
 - **existing_controls**, MetaMask's built-in caveats:
   - At the calibrated prices it matched plan_guard (0 / 0).
   - In the shortfall state, on every task, it admitted the step 2 that spends the budget fixed at signing. That step 2 breaks the reserve, because step 1 delivered 3% less, which is within the agent's own slippage.
@@ -41,6 +52,6 @@ Run 26 October 2026 at `research/benchmark-v1` (`8bd1a4f3e3` plus the uncommitte
   - Its in-plan refusal is a knock-on effect: the earlier admitted trades had already spent the X that the in-plan step 2 needed.
 
 ## Limits
-- **Ordering:** in existing_controls, "step 2 before step 1" was refused because the account held no X yet, not because order was checked. With a pre-existing X balance, MetaMask's built-in caveats do not enforce order. This suite does not test that case.
+- **Ordering:** in the calibrated and shortfall states, existing_controls refused "step 2 before step 1" only because the account held no X yet. The prefunded state tests order directly (above).
 - **Sequential state:** cases share one state, so an admitted off-plan effect changes later cases (noted above). Per-case snapshots would isolate them.
 - **Shortfall only:** the opposite state (step 1 over-delivers, while the step-2 price worsens) is where relative caps falsely refuse feasible trades (`research/notes/controls-check.md`). It is not in this suite.
