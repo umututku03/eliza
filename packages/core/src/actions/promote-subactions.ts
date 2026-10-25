@@ -315,7 +315,7 @@ function pinDiscriminatorForVirtual(
 				// description channel and example consistent with the dispatch pin.
 				descriptionCompressed: pinnedDiscriminatorDescription(subaction),
 				compressedDescription: pinnedDiscriminatorDescription(subaction),
-				examples: [subaction],
+				examples: undefined,
 				required: false,
 				schema: {
 					...baseSchema,
