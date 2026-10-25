@@ -12,8 +12,11 @@
 //   /anthropic/v1/* -> https://api.anthropic.com/v1/*
 //   /control/*      -> episode/turn context, mock plan, ledger (local only)
 // Every model call is saved (request body after normalization, response body, usage) without headers. Calls
-// outside an active episode turn are refused, so background tasks cannot spend budget. The only request
-// normalization is removing `temperature` for gpt-6* models, which reject it; each removal is recorded.
+// outside an active episode turn are refused, so background tasks cannot spend budget. Request normalizations,
+// each recorded on the call: remove `temperature` for gpt-6* models, which reject it; and for gpt-6* Chat
+// Completions requests that carry tools, set `reasoning_effort: "none"`. OpenAI rejects function tools with any
+// other reasoning effort on that endpoint ("use /v1/responses or set reasoning_effort to 'none'"), and stock
+// plugin-openai never sends "none" to OpenAI, so without this every planner call fails (live-1b, run 1).
 //
 // Usage: bun llm-egress-proxy.ts --port=18650 --dest=<dir> --mode=live|mock [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N]
 import {mkdirSync, writeFileSync, appendFileSync, existsSync, realpathSync} from 'node:fs';
@@ -254,6 +257,8 @@ Bun.serve({
       return Response.json({error: {message: 'Refused by harness: no active episode turn.'}}, {status: 503});
     }
     if (provider === 'openai' && String(body.model).startsWith('gpt-6') && 'temperature' in body) { delete body.temperature; entry.normalized.push('temperature'); }
+    if (provider === 'openai' && String(body.model).startsWith('gpt-6') && url.pathname.endsWith('/chat/completions') && Array.isArray(body.tools) && body.tools.length
+        && body.reasoning_effort !== 'none') { body.reasoning_effort = 'none'; entry.normalized.push('reasoning_effort:none'); }
     const sent = JSON.stringify(body);
     // Blinding gate: refuse (never forward, never charge) any request containing a harness label or this
     // episode's identifiers, as supplied by the runner for the active turn.

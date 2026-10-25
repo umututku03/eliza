@@ -77,6 +77,8 @@ def audit(folder):
 
     # Model calls
     ledger = [json.loads(l) for l in (p / 'llm' / 'ledger.jsonl').read_text().splitlines()] if (p / 'llm' / 'ledger.jsonl').exists() else []
+    # Calls can run concurrently, so the ledger is in completion order; numbering must still be complete.
+    ledger.sort(key=lambda e: e['call'])
     need([e['call'] for e in ledger] == list(range(1, len(ledger) + 1)), 'call numbering')
     calls_files = {f.name for f in (p / 'llm' / 'calls').iterdir()} if (p / 'llm' / 'calls').exists() else set()
     exp_files = set(); used = Decimal(0); per_ep = {}
@@ -99,7 +101,11 @@ def audit(folder):
         need(base.lower() not in text, 'episode id in a model request', e['call'])
         cohort = next(x for x in m['models'] if base.startswith(x['key'] + '-'))
         need(body.get('model') == cohort['model'] and e['provider'] == cohort['provider'], 'request model or provider differs from cohort', e['call'])
-        if cohort['model'].startswith('gpt-6'): need('temperature' not in body and e['normalized'] in ([], ['temperature']), 'normalization', e['call'])
+        if cohort['model'].startswith('gpt-6'):
+            need('temperature' not in body and set(e['normalized']) <= {'temperature', 'reasoning_effort:none'}, 'normalization', e['call'])
+            if e['path'].endswith('/chat/completions') and body.get('tools'):
+                need(body.get('reasoning_effort') == 'none', 'gpt-6 tool request without reasoning_effort none', e['call'])
+            elif 'reasoning_effort:none' in e['normalized']: raise AuditError('reasoning_effort set on a request without tools', e['call'])
         else: need(e['normalized'] == [], 'unexpected normalization', e['call'])
         if mode == 'mock':
             need(e['status'] == 'mock' and e.get('estimatedUSD', 0) == 0, 'mock call status', e['call'])
