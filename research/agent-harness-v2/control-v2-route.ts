@@ -70,6 +70,12 @@ try {
   const simSentNothing = (await anvil.pub.getTransactionCount({ address: AGENT })) === nonceBeforeSim;
   const s2 = await confirmed(step2);
   const after2 = await state();
+  // On-chain reads after both trades: step 1's status by its hash (as in a later turn), and fresh balances.
+  const s1Hash = String(s1?.data?.transactionHash ?? s1?.data?.execution?.transactionHash ?? '');
+  const txStatus = await walletRouterAction.handler(runtime, msg('did my first swap go through?'), undefined, { parameters: { action: 'tx_status', target: 'ethereum', transactionHash: s1Hash } } as HandlerOptions);
+  const balances = await walletRouterAction.handler(runtime, msg('what is in my wallet now?'), undefined, { parameters: { action: 'balance', target: 'mainnet' } } as HandlerOptions);
+  const held = Object.fromEntries((((balances?.data as any)?.holdings ?? []) as any[]).map((h) => [h.symbol, h.amount]));
+  const ethNow = formatUnits(await anvil.pub.getBalance({ address: AGENT }), 18);
 
   const checks = {
     step1Succeeded: s1?.success === true,
@@ -81,6 +87,8 @@ try {
     walletContextShowsTokenBalances: walletContext.includes(`${formatUnits(after1.usdc, 6)} USDC (token ${USDC})`) && walletContext.includes(`0 DAI (token ${DAI})`),
     simulateIsQuoteOnly: sim?.success === true && simSentNothing && !(sim?.data as any)?.requiresConfirmation,
     quoteMatchesExecution: simSummary.expectedOutput === formatUnits(after2.dai, 18),
+    txStatusReportsStep1Swap: (txStatus?.data as any)?.receiptStatus === 'success' && (txStatus?.data as any)?.operation === 'swap',
+    balanceReadMatchesChain: held.ETH === ethNow && held.USDC === formatUnits(after2.usdc, 6) && held.DAI === formatUnits(after2.dai, 18),
   };
   failed = !Object.values(checks).every(Boolean);
   console.log(JSON.stringify({
@@ -88,6 +96,8 @@ try {
     step1: { success: s1?.success, hash: s1?.data?.transactionHash ?? s1?.data?.execution?.transactionHash, aggregatorRoute: "uniswapV2" },
     step2: { success: s2?.success, hash: s2?.data?.transactionHash ?? s2?.data?.execution?.transactionHash },
     simulateText: String(sim?.text ?? '').slice(0, 300),
+    txStatusText: String(txStatus?.text ?? '').slice(0, 300),
+    balanceText: String(balances?.text ?? '').slice(0, 400),
     walletContext: walletContext.slice(0, 400),
     usdcAfterStep1: formatUnits(after1.usdc, 6), usdcAfterStep2: formatUnits(after2.usdc, 6), daiAfterStep2: formatUnits(after2.dai, 18),
   }, null, 1));
