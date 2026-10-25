@@ -37,6 +37,8 @@ import {
   createWalletClient,
   formatUnits,
   http,
+  isAddress,
+  parseAbi,
   publicActions,
   walletActions,
 } from "viem";
@@ -700,6 +702,63 @@ class LazyTeeWalletProvider extends WalletProvider {
 
 const spec = requireProviderSpec("wallet");
 
+/**
+ * ERC-20 balances of the wallet for the tokens in `EVM_WALLET_TRACKED_TOKENS` ("chain:address" entries,
+ * comma-separated; a bare address uses the first configured chain), read on-chain at call time. This gives
+ * the agent its token holdings without an external token-data service.
+ */
+async function trackedTokenBalanceLines(runtime: IAgentRuntime): Promise<string[]> {
+  const raw = runtime.getSetting("EVM_WALLET_TRACKED_TOKENS");
+  if (typeof raw !== "string" || raw.trim() === "") return [];
+  const walletProvider = await initWalletProvider(runtime);
+  const owner = walletProvider.getAddress();
+  const defaultChain = Object.keys(walletProvider.chains)[0];
+  const erc20 = parseAbi([
+    "function symbol() view returns (string)",
+    "function decimals() view returns (uint8)",
+    "function balanceOf(address) view returns (uint256)",
+  ]);
+  const lines: string[] = [];
+  for (const entry of raw
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean)) {
+    const [chainPart, addressPart] = entry.includes(":") ? entry.split(":") : [defaultChain, entry];
+    const chainName = chainPart as SupportedChain;
+    if (!walletProvider.chains[chainName] || !isAddress(addressPart)) {
+      lines.push(`${entry}: invalid tracked token entry`);
+      continue;
+    }
+    try {
+      const client = walletProvider.getPublicClient(chainName);
+      const read = (functionName: "symbol" | "decimals") =>
+        client.readContract({
+          address: addressPart,
+          abi: erc20,
+          functionName,
+          authorizationList: undefined,
+        });
+      const [symbol, decimals, balance] = await Promise.all([
+        read("symbol"),
+        read("decimals"),
+        client.readContract({
+          address: addressPart,
+          abi: erc20,
+          functionName: "balanceOf",
+          args: [owner],
+          authorizationList: undefined,
+        }),
+      ]);
+      lines.push(
+        `${chainName}: ${formatUnits(balance as bigint, Number(decimals))} ${String(symbol)} (token ${addressPart})`
+      );
+    } catch {
+      lines.push(`${chainName}: token ${addressPart} balance unavailable (RPC error)`);
+    }
+  }
+  return lines;
+}
+
 export const evmWalletProvider: Provider = {
   name: spec.name,
   description: "EVM wallet address and balances",
@@ -762,8 +821,12 @@ export const evmWalletProvider: Provider = {
         ...unavailableChains.map((chain) => `${chain.chainName}: balance unavailable (RPC error)`),
       ].join("\n");
 
+      const trackedLines = await trackedTokenBalanceLines(runtime);
+      const trackedText = trackedLines.length
+        ? `\n\nToken balances (read on-chain now):\n${trackedLines.join("\n")}`
+        : "";
       return {
-        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}`,
+        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}${trackedText}`,
         data: {
           address: walletData.address,
           chains,
