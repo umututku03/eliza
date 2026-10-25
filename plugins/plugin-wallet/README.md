@@ -22,6 +22,13 @@ endpoints and provider credentials; the root barrel exports the same readers.
 
 ## Development
 
+Set `WALLET_ANALYTICS_ENABLED=false` in offline or restricted-network hosts to
+mark external `token_info` and Birdeye `search_address` unavailable and reject
+their HTTP routes locally. Birdeye also needs a configured credential or cloud
+route. DexScreener and CoinGecko public endpoints do not require keys. Readiness
+does not verify connectivity. On-chain `balance` and `tx_status` use the configured
+chain RPC independently of analytics.
+
 Install dependencies with `bun install` at the repository root. Run from that root:
 
 ```bash

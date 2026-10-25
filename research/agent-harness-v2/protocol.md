@@ -72,3 +72,7 @@ Counts show that something happened, not rates.
 - every outcome flag.
 
 `test-llm-egress-proxy.ts` tests the proxy offline.
+
+## Hardening disclosure: external analytics readiness (26 October 2026)
+
+The episode child now sets WALLET_ANALYTICS_ENABLED=false to declare its existing localhost-only network policy to wallet capability selection. External token_info and Birdeye search_address are marked unavailable and refused before HTTP. The network guard, task text, confirmation rules, faults and chain scoring are unchanged. Every new result records the changed harness and source hashes; older results remain at their original hashes.

@@ -1,0 +1,38 @@
+[
+  {
+    "source": "results-dev3-haiku-stock/llm/calls/13-response.json",
+    "sha256": "5409a9239e9f7fe93889eda31969a6f3bd788b43db24106cf71145d9d1280b61",
+    "name": "WALLET_SEARCH_ADDRESS",
+    "params": {
+      "action": "search_address",
+      "address": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0"
+    },
+    "target": "birdeye"
+  },
+  {
+    "source": "results-dev3-haiku-stock/llm/calls/11-response.json",
+    "sha256": "a6e668fead88aaaba92624b91d5d6fb7fcc8338dceede92522b207a42a2caf4b",
+    "name": "WALLET_TOKEN_INFO",
+    "params": {
+      "action": "token_info",
+      "operation": "token",
+      "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "chain": "ethereum",
+      "target": "coingecko"
+    },
+    "target": "coingecko"
+  },
+  {
+    "source": "results-dev3-haiku-stock/llm/calls/17-response.json",
+    "sha256": "e788907d59d6b3ea9e767da614c729dbee67de7f030307cdd7e1a336ac30a79a",
+    "name": "WALLET_TOKEN_INFO",
+    "params": {
+      "action": "token_info",
+      "operation": "token",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "chain": "ethereum",
+      "target": "dexscreener"
+    },
+    "target": "dexscreener"
+  }
+]

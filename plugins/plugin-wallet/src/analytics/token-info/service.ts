@@ -74,6 +74,21 @@ export class TokenInfoService extends Service {
     );
   }
 
+  hasAvailableProvider(
+    subaction: TokenInfoSubaction,
+    target?: string,
+  ): boolean {
+    const key = target
+      ? this.aliases.get(normalizeProviderKey(target))
+      : undefined;
+    return [...this.providers.entries()].some(
+      ([name, provider]) =>
+        (!target || name === key) &&
+        provider.supportedSubactions.includes(subaction) &&
+        this.toMetadata(provider).availability?.available !== false,
+    );
+  }
+
   getCapabilities(): {
     readonly providers: readonly TokenInfoProviderMetadata[];
   } {
@@ -91,6 +106,15 @@ export class TokenInfoService extends Service {
     );
     if (!providerResult.ok) {
       return providerResult;
+    }
+    const availability = this.toMetadata(providerResult.provider).availability;
+    if (availability && !availability.available) {
+      return {
+        ok: false,
+        error: "PROVIDER_UNAVAILABLE",
+        detail: availability.reason,
+        providers: [this.toMetadata(providerResult.provider)],
+      };
     }
 
     try {
@@ -144,13 +168,29 @@ export class TokenInfoService extends Service {
 
     const preferred = DEFAULT_PROVIDER_BY_SUBACTION[subaction];
     const provider = this.providers.get(preferred);
-    if (provider?.supportedSubactions.includes(subaction)) {
+    if (
+      provider?.supportedSubactions.includes(subaction) &&
+      this.toMetadata(provider).availability?.available !== false
+    ) {
       return { ok: true, provider };
     }
 
-    const candidates = [...this.providers.values()].filter((candidate) =>
+    const supported = [...this.providers.values()].filter((candidate) =>
       candidate.supportedSubactions.includes(subaction),
     );
+    const candidates = supported.filter(
+      (candidate) =>
+        this.toMetadata(candidate).availability?.available !== false,
+    );
+    if (!candidates.length && supported.length) {
+      return {
+        ok: false,
+        error: "PROVIDER_UNAVAILABLE",
+        detail:
+          "No configured token analytics provider is available for this operation.",
+        providers: supported.map((candidate) => this.toMetadata(candidate)),
+      };
+    }
     if (candidates.length === 1) {
       return { ok: true, provider: candidates[0] };
     }
@@ -172,6 +212,8 @@ export class TokenInfoService extends Service {
       aliases: [...provider.aliases],
       supportedSubactions: [...provider.supportedSubactions],
       description: provider.description,
+      availability: provider.getAvailability?.(this.runtime) ??
+        provider.availability ?? { available: true },
     };
   }
 }

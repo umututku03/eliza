@@ -18,6 +18,10 @@ import type {
   DexScreenerProfile,
   DexScreenerServiceResponse,
 } from "../dexscreener/types";
+import {
+  analyticsNetworkAvailability,
+  birdeyeAvailability,
+} from "./availability";
 import type { TokenInfoDispatchContext, TokenInfoProvider } from "./types";
 
 function success(text: string, data: Record<string, unknown>): ActionResult {
@@ -700,6 +704,14 @@ async function executeCoingecko(
 export function createDexScreenerTokenInfoProvider(): TokenInfoProvider {
   return {
     name: "dexscreener",
+    getAvailability: (runtime) => {
+      const network = analyticsNetworkAvailability(runtime);
+      return !network.available
+        ? network
+        : getDexScreenerService(runtime)
+          ? { available: true }
+          : { available: false, reason: "DexScreener service is not running." };
+    },
     aliases: ["dex", "dex-screener"],
     supportedSubactions: [
       "search",
@@ -718,6 +730,7 @@ export function createDexScreenerTokenInfoProvider(): TokenInfoProvider {
 export function createBirdeyeTokenInfoProvider(): TokenInfoProvider {
   return {
     name: "birdeye",
+    getAvailability: birdeyeAvailability,
     aliases: ["bird-eye"],
     supportedSubactions: ["search", "token", "wallet"],
     description: "Birdeye token search and wallet portfolio lookup.",
@@ -728,6 +741,7 @@ export function createBirdeyeTokenInfoProvider(): TokenInfoProvider {
 export function createCoinGeckoTokenInfoProvider(): TokenInfoProvider {
   return {
     name: "coingecko",
+    getAvailability: analyticsNetworkAvailability,
     aliases: ["coin-gecko", "gecko"],
     supportedSubactions: ["search", "token", "trending"],
     description: "CoinGecko coin search, metadata, and broad market data.",

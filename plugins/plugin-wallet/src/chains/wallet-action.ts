@@ -25,6 +25,11 @@ import type {
 } from "@elizaos/core";
 import { walletSearchAddressHandler } from "../analytics/birdeye/actions/wallet-search-address.js";
 import { tokenInfoHandler } from "../analytics/token-info/action.js";
+import { parseTokenInfoParams } from "../analytics/token-info/params.js";
+import {
+  TOKEN_INFO_SERVICE_TYPE,
+  type TokenInfoService,
+} from "../analytics/token-info/service.js";
 import {
   assertEvmTransferRecipientAuthorized,
   assertSolanaTransferRecipientAuthorized,
@@ -872,6 +877,18 @@ export const walletRouterAction: Action = {
     const raw = extractRawParams(message, state, options);
     if (raw) {
       const subaction = resolveSubaction(raw);
+      if (subaction === "search_address" || subaction === "token_info") {
+        const analytics = _runtime.getService(
+          TOKEN_INFO_SERVICE_TYPE,
+        ) as TokenInfoService | null;
+        const params = parseTokenInfoParams(message, state, options);
+        return (
+          analytics?.hasAvailableProvider?.(
+            subaction === "search_address" ? "wallet" : params.subaction,
+            subaction === "search_address" ? "birdeye" : params.target,
+          ) ?? false
+        );
+      }
       if (isWalletSubaction(subaction)) {
         return true;
       }
