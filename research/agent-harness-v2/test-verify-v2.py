@@ -16,7 +16,7 @@ first_ep = next(n for n in json.loads((src / 'complete.json').read_text())['epis
 first_call = json.loads((src / 'llm' / 'ledger.jsonl').read_text().splitlines()[0])['call']
 cases = {
     'outcome flag flipped': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome'].update(duplicateSale=not d['outcome']['duplicateSale'])),
-    'final balance edited': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome']['final'].update(dai='999')),
+    'final balance edited': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome']['final'].update(y='999')),
     'harness label in a request': lambda p: edit_json(p / 'llm' / 'calls' / f'{first_call}-request.json', lambda d: d['body'].update(note='receipt_hidden')),
     'call response removed': lambda p: (p / 'llm' / 'calls' / f'{first_call}-response.json').unlink(),
     'confirmation text changed': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['turns'][1].update(text='Yes, and sell more.')),

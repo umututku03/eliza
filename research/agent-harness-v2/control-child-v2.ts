@@ -13,7 +13,16 @@ const {createAssistantPlugin} = await import('@elizaos/plugin-assistant');
 const sqlPlugin = (await import('@elizaos/plugin-sql')).default;
 const openaiPlugin = (await import('@elizaos/plugin-openai')).default;
 const {walletPlugin, walletRouterAction} = await import('@elizaos/plugin-wallet');
-const {minimalUsdcFor, balance} = await import('./fork-oracle');
+const {quote, balance} = await import('./fork-oracle');
+const X = spec.x, Y = spec.y, PATH = [X.address, spec.weth, Y.address] as Address[];
+/** Smallest X amount (cent steps) whose Y quote on the task's path reaches `target`, or null if `budget` cannot. */
+async function minimalXFor(target: bigint, budget: bigint) {
+  if (await quote(pub, budget, PATH) < target) return null;
+  const cent = 10n ** BigInt(X.decimals - 2);
+  let lo = 0n, hi = budget / cent;
+  while (lo < hi) { const mid = (lo + hi) / 2n; if (await quote(pub, mid * cent, PATH) >= target) hi = mid; else lo = mid + 1n; }
+  return lo * cent;
+}
 
 const pub = createPublicClient({chain: mainnet, transport: http(spec.forkProxyUrl, {retryCount: 0})});
 const runtime = new AgentRuntime({
@@ -42,19 +51,19 @@ const brief = (r: any) => ({success: r?.success, error: r?.data?.error ?? null, 
 const steps: any[] = [];
 let declared = 'INFEASIBLE', error: string | null = null;
 try {
-  const sale = await confirmed({action: 'swap', target: 'mainnet', fromToken: 'ETH', toToken: spec.usdc, amount: spec.saleEth, slippageBps: 300});
+  const sale = await confirmed({action: 'swap', target: 'mainnet', fromToken: 'ETH', toToken: X.address, amount: spec.saleEth, slippageBps: 300});
   steps.push({sale: brief(sale)});
   if (sale?.success !== true) {
     // Reconcile: the transaction may be mined with its receipt hidden. Wait until the proceeds are visible.
     for (let i = 0; i < spec.reconcileSeconds; i++) {
-      if (await balance(pub, spec.usdc as Address, spec.wallet) > 0n) { steps.push({reconciled: 'proceeds visible', afterSeconds: i}); break; }
+      if (await balance(pub, X.address as Address, spec.wallet) > 0n) { steps.push({reconciled: 'proceeds visible', afterSeconds: i}); break; }
       await Bun.sleep(1000);
     }
   }
-  const amount = await minimalUsdcFor(pub, parseUnits(spec.goalDai, 18), BigInt(spec.budgetUsdcUnits));
-  steps.push({oracleStep2Usdc: amount === null ? null : formatUnits(amount, 6)});
+  const amount = await minimalXFor(parseUnits(spec.goalY, Y.decimals), BigInt(spec.budgetXUnits));
+  steps.push({oracleStep2X: amount === null ? null : formatUnits(amount, X.decimals)});
   if (amount !== null) {
-    const swap = await confirmed({action: 'swap', target: 'mainnet', fromToken: spec.usdc, toToken: spec.dai, amount: formatUnits(amount, 6), slippageBps: 300});
+    const swap = await confirmed({action: 'swap', target: 'mainnet', fromToken: X.address, toToken: Y.address, amount: formatUnits(amount, X.decimals), slippageBps: 300});
     steps.push({swap: brief(swap)});
     if (swap?.success !== true) throw new Error(`control step 2 failed: ${brief(swap).text}`);
     declared = 'COMPLETED';

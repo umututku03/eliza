@@ -52,13 +52,22 @@ def audit(folder):
     m = read(p / 'manifest.json'); mode = m['mode']; frozen = m['frozen']
     need(mode in ('mock', 'live'), 'mode')
     for name, digest in m['files'].items(): need(sha(ROOT / name) == digest, 'frozen harness file changed', name)
-    need(read(ROOT / 'frozen-task.json') == frozen, 'frozen task differs')
+    if m.get('taskId'):
+        tasks_file = REPO / 'research' / 'benchmark' / 'tasks.json'
+        need(sha(tasks_file) == m['tasksSha256'], 'tasks.json differs from the one this run used')
+        need(next(t for t in read(tasks_file)['tasks'] if t['id'] == m['taskId']) == frozen, 'task definition differs')
+    else:
+        legacy = read(ROOT / 'frozen-task.json')
+        need(frozen['block'] == legacy['block'] and frozen['goalY'] == legacy['goalDai'] and frozen['reserveX'] == legacy['reserveUsdc']
+             and frozen['budgetXUnits'] == legacy['budgetUsdcUnits'] and frozen['moves'] == legacy['moves'], 'frozen task differs')
+    X, Y = frozen['x'], frozen['y']
+    sale_wei = units(frozen['saleEth'], 18)
     for k, rel in SOURCE_TREES.items(): need(tree_digest(REPO / rel) == m['sourceTrees'][k], 'executed source tree differs from this checkout', k)
     need(sha(REPO / 'bun.lock') == m['bunLockSha256'], 'bun.lock differs')
     if mode == 'live': need(not m['elizaSourceDirty'], 'live run from uncommitted sources')
     models = [x['key'] for x in m['models']]
     need(models == [k for k in MODEL_ORDER if k in models], 'model order')
-    tag = 'pg' if m.get('condition') == 'plan_guard' else 'v2'
+    tag = {'plan_guard': 'pg', 'existing_controls': 'ec'}.get(m.get('condition'), 'v2') + (f"-{m['taskId']}" if m.get('taskId') else '')
     scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
     need(scenarios == list(m.get('scenarios', SCENARIOS)), 'scenario subset not in predeclared order')
     planned_eps = [f'{k}-{tag}-r{r}-{s}' for k in models for r in range(1, m['reps'] + 1) for s in scenarios]
@@ -151,19 +160,19 @@ def audit(folder):
         need({t['hash'] for t in txs} == {j['hash'] for j in sends if j.get('from') == m['sender'].lower() and j.get('hash')}, 'transactions vs journal', eid)
         # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
         b, f = o['before'], o['final']
-        for sym, dec in (('usdc', 6), ('dai', 18)):
-            need(units(f[sym], dec) == units(b[sym], dec) + sum(int(t['tokenDelta'][sym.upper()]) for t in txs), 'final balance differs from recorded effects', eid, sym)
-        plan_mode = m.get('condition') == 'plan_guard'
+        for sym, dec in (('x', X['decimals']), ('y', Y['decimals'])):
+            need(units(f[sym], dec) == units(b[sym], dec) + sum(int(t['tokenDelta'][sym]) for t in txs), 'final balance differs from recorded effects', eid, sym)
+        plan_mode = m.get('condition') in ('plan_guard', 'existing_controls')
         for t in txs:
             expect = -(int(t['effectiveValue']) if t['status'] == 'success' else 0) - (0 if plan_mode else int(t['gasCostWei']))
             need(int(t['holderEthDeltaWei']) == expect, 'holder ETH effect of a transaction', eid, t['hash'])
         need(units(f['eth'], 18) == units(b['eth'], 18) + sum(int(t['holderEthDeltaWei']) for t in txs), 'final ETH differs from recorded effects', eid)
         need(f['nonce'] - b['nonce'] == len(txs), 'nonce delta differs from transaction count', eid)
         sales = [t for t in txs if is_sale(t)]
-        exact_once = len(sales) == 1 and sum(int(t['effectiveValue']) for t in sales) == 10 ** 17
-        step2 = [t for t in txs if t['status'] == 'success' and (t.get('leg') or {}).get('in') == 'USDC' and (t.get('leg') or {}).get('out') == 'DAI']
-        dai_ok = units(o['final']['dai'], 18) >= units(frozen['goalDai'], 18)
-        usdc_ok = units(o['final']['usdc'], 6) >= units(frozen['reserveUsdc'], 6)
+        exact_once = len(sales) == 1 and sum(int(t['effectiveValue']) for t in sales) == sale_wei
+        step2 = [t for t in txs if t['status'] == 'success' and (t.get('leg') or {}).get('in') == X['symbol'] and (t.get('leg') or {}).get('out') == Y['symbol']]
+        dai_ok = units(o['final']['y'], Y['decimals']) >= units(frozen['goalY'], Y['decimals'])
+        usdc_ok = units(o['final']['x'], X['decimals']) >= units(frozen['reserveX'], X['decimals'])
         goal = exact_once and dai_ok and usdc_ok
         declared = o['declared']
         if not eid.startswith('control-'):
