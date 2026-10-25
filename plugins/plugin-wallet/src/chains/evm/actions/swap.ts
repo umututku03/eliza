@@ -58,6 +58,13 @@ import {
 import { parseEvmBaseUnits } from "../exact-units";
 import { requireActionSpec } from "../generated/specs/spec-helpers";
 import {
+  approvalFor,
+  candidateSteps,
+  executeThroughPlan,
+  type PlanGuardConfig,
+  planGuardFromSettings,
+} from "../plan-guard";
+import {
   type ChainBalanceState,
   initWalletProvider,
   type WalletProvider,
@@ -101,6 +108,8 @@ const UNISWAP_V2_ROUTER_ABI = parseAbi([
 export interface SwapRouteOptions {
   readonly uniswapV2Router?: Address;
   readonly exclusive?: boolean;
+  /** Plan-guard mode: swaps run as redemptions of the user's signed plan (see plan-guard.ts). */
+  readonly planGuard?: PlanGuardConfig;
 }
 
 /** Reads EVM_SWAP_UNISWAP_V2_ROUTER and EVM_SWAP_AGGREGATORS ("uniswapV2" makes the route exclusive). */
@@ -122,7 +131,15 @@ export function swapRouteOptionsFromSettings(runtime: IAgentRuntime): SwapRouteO
       `Invalid EVM_SWAP_UNISWAP_V2_ROUTER: ${String(router)}`
     );
   }
-  return { uniswapV2Router: router, exclusive: aggregators === "uniswapV2" };
+  const planGuard = planGuardFromSettings(runtime) ?? undefined;
+  if (planGuard && aggregators !== "uniswapV2") {
+    // HTTP aggregator routes send from the signer, which holds no funds in plan-guard mode.
+    throw new EVMError(
+      EVMErrorCode.INVALID_PARAMS,
+      "EVM_PLAN_GUARD_PLAN requires EVM_SWAP_AGGREGATORS=uniswapV2"
+    );
+  }
+  return { uniswapV2Router: router, exclusive: aggregators === "uniswapV2", planGuard };
 }
 
 export class SwapAction {
@@ -747,6 +764,8 @@ export class SwapAction {
     const amountIn = BigInt(route.amountIn);
     const amountOutMin = BigInt(route.amountOutMin);
     const path = [...route.path];
+    const plan = this.routeOptions.planGuard;
+    const recipient = plan ? plan.account : account.address;
     // Deadline from chain time: a fork's clock need not match the wall clock.
     const deadline = (await publicClient.getBlock()).timestamp + 1200n;
     let value = 0n;
@@ -756,15 +775,38 @@ export class SwapAction {
       data = encodeFunctionData({
         abi: UNISWAP_V2_ROUTER_ABI,
         functionName: "swapExactETHForTokens",
-        args: [amountOutMin, path, account.address, deadline],
+        args: [amountOutMin, path, recipient, deadline],
       });
     } else {
-      await this.handleTokenApproval(publicClient, walletClient, path[0], route.router, amountIn);
+      if (plan) await this.approveThroughPlan(plan, params, path[0], route.router, amountIn);
+      else
+        await this.handleTokenApproval(publicClient, walletClient, path[0], route.router, amountIn);
       data = encodeFunctionData({
         abi: UNISWAP_V2_ROUTER_ABI,
         functionName: route.toNative ? "swapExactTokensForETH" : "swapExactTokensForTokens",
-        args: [amountIn, amountOutMin, path, account.address, deadline],
+        args: [amountIn, amountOutMin, path, recipient, deadline],
       });
+    }
+    if (plan) {
+      const from = route.fromNative ? NATIVE_TOKEN_ADDRESS : path[0];
+      const to = route.toNative ? NATIVE_TOKEN_ADDRESS : path[path.length - 1];
+      const contexts = candidateSteps(plan, from, to, amountIn).map((s) => s.permissionContext);
+      const hash = await executeThroughPlan(
+        this.walletProvider,
+        params.chain,
+        plan,
+        contexts,
+        { to: route.router, value, data },
+        `swap ${params.amount} ${from} -> ${to}`
+      );
+      return {
+        hash,
+        from: plan.account,
+        to: route.router,
+        value,
+        data,
+        chainId: this.walletProvider.getChainConfigs(params.chain).id,
+      };
     }
     const hash = await walletClient.sendTransaction(
       buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain })
@@ -784,6 +826,38 @@ export class SwapAction {
       data,
       chainId: this.walletProvider.getChainConfigs(params.chain).id,
     };
+  }
+  /** In plan-guard mode the plan account approves the router through its signed approval delegation. */
+  private async approveThroughPlan(
+    plan: PlanGuardConfig,
+    params: SwapParams,
+    token: Address,
+    spender: Address,
+    amount: bigint
+  ): Promise<void> {
+    const publicClient = this.walletProvider.getPublicClient(params.chain);
+    const allowance = await publicClient.readContract({
+      address: token,
+      abi: parseAbi(["function allowance(address,address) view returns (uint256)"]),
+      functionName: "allowance",
+      args: [plan.account, spender],
+      authorizationList: undefined,
+    });
+    if (allowance >= amount) return;
+    const approval = approvalFor(plan, token, spender);
+    const data = encodeFunctionData({
+      abi: parseAbi(["function approve(address,uint256)"]),
+      functionName: "approve",
+      args: [spender, amount],
+    });
+    await executeThroughPlan(
+      this.walletProvider,
+      params.chain,
+      plan,
+      approval ? [approval.permissionContext] : [],
+      { to: token, value: 0n, data },
+      `approve ${token} for ${spender}`
+    );
   }
   private async handleTokenApproval(
     publicClient: ReturnType<WalletProvider["getPublicClient"]>,

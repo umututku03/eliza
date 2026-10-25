@@ -57,6 +57,7 @@ import { routeEvmBridge } from "./evm/bridge-router";
 import { DEFAULT_CHAINS, NATIVE_TOKEN_ADDRESS } from "./evm/constants";
 import { parseEvmBaseUnits } from "./evm/exact-units";
 import { routeEvmGovernance } from "./evm/gov-router";
+import { planGuardFromSettings } from "./evm/plan-guard";
 import { initWalletProvider } from "./evm/providers/wallet";
 import type { SupportedChain, Transaction } from "./evm/types";
 import BigNumber from "./solana/bn";
@@ -460,6 +461,15 @@ function createEvmHandler(key: string, chain: Chain): WalletChainHandler {
         "Prepare mode and dry-run return route metadata without signing.",
     },
     async execute(params, context) {
+      if (
+        params.subaction !== "swap" &&
+        planGuardFromSettings(context.runtime)
+      ) {
+        // Plan-guard mode: the agent's key can only redeem the swaps of the user's signed plan.
+        throw new Error(
+          `Refused by the approved plan: ${params.subaction} is not part of the plan.`,
+        );
+      }
       if (params.subaction === "transfer") {
         return executeEvmTransfer(params, context, key, chain);
       }

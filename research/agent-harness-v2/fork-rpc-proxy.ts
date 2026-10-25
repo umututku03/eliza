@@ -6,11 +6,14 @@
 //                     before the sale's hash is returned to the caller.
 // The sale tx is the first SUCCESSFUL transaction from the agent wallet to the Uniswap V2 router that sends
 // native value (v2: any amount, since risk clamps can shrink the 0.1 ETH sale); faults follow that confirmed effect.
+// ElizaOS v2 harness change: reset() takes an optional sale-candidate rule, so plan-guard runs, where the sale is
+// a DelegationManager redemption that executes the router call, use the same fault trigger.
 import {parseTransaction, recoverTransactionAddress, type Hex} from 'viem';
 
 export const HIDE_MS = 200_000; // beyond viem's 180 s default waitForTransactionReceipt timeout
 
 export type Fault = {kind: 'none' | 'receipt_hidden' | 'price_move'; onSaleMined?: () => Promise<any>};
+export type SaleCandidate = (tx: {from: string; to: string; value: bigint; data: Hex}) => boolean;
 
 export class ForkRpcProxy {
   journal: any[] = [];
@@ -18,6 +21,7 @@ export class ForkRpcProxy {
   private fault: Fault = {kind: 'none'};
   private wallet = '';
   private router = '';
+  private saleCandidate: SaleCandidate | null = null;
   private saleHash: string | null = null;
   private hiddenUntil = 0;
   private saleHookResult: any = null;
@@ -27,8 +31,9 @@ export class ForkRpcProxy {
 
   get url() { return `http://127.0.0.1:${this.port}`; }
 
-  reset(wallet: string, router: string, fault: Fault) {
+  reset(wallet: string, router: string, fault: Fault, saleCandidate?: SaleCandidate) {
     this.wallet = wallet.toLowerCase(); this.router = router.toLowerCase(); this.fault = fault; this.journal = [];
+    this.saleCandidate = saleCandidate ?? null;
     this.saleHash = null; this.hiddenUntil = 0; this.saleHookResult = null;
   }
 
@@ -47,18 +52,20 @@ export class ForkRpcProxy {
     }
     if (call.method !== 'eth_sendRawTransaction') return this.upstream(call);
     const rawTx = call.params[0] as Hex;
-    let from = '', to = '', value = '0';
+    let from = '', to = '', value = '0', data: Hex = '0x';
     try {
       const tx: any = parseTransaction(rawTx);
       from = (await recoverTransactionAddress({serializedTransaction: rawTx as any})).toLowerCase();
-      to = String(tx.to ?? '').toLowerCase(); value = String(tx.value ?? 0n);
+      to = String(tx.to ?? '').toLowerCase(); value = String(tx.value ?? 0n); data = (tx.data ?? '0x') as Hex;
     } catch {}
     const result = await this.upstream(call);
     const hash = result?.result as string | undefined;
     const entry: any = {at: Date.now(), event: 'send', from, to, value, hash: hash?.toLowerCase() ?? null, error: result?.error ?? null};
     this.journal.push(entry);
     let mined: any = null;
-    if (hash && from === this.wallet && to === this.router && !this.saleHash && BigInt(value) > 0n) {
+    const candidate = this.saleCandidate ? this.saleCandidate({from, to, value: BigInt(value), data})
+      : from === this.wallet && to === this.router && BigInt(value) > 0n;
+    if (hash && candidate && !this.saleHash) {
       // Anvil can return the hash just before the receipt is queryable: poll briefly (up to 10 s).
       for (let i = 0; i < 200 && !mined; i++) {
         mined = (await this.upstream({jsonrpc: '2.0', id: `sale-check-${++this.id}`, method: 'eth_getTransactionReceipt', params: [hash]}))?.result ?? null;

@@ -1,0 +1,115 @@
+{
+  "block": 26250601,
+  "cases": [
+    {
+      "name": "step 2 before step 1",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "PlanStepEnforcer:prerequisites-incomplete",
+      "text": "Refused by the approved plan (PlanStepEnforcer:prerequisites-incomplete): swap 59.406476 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 -> 0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "state": {
+        "usdc": "0",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "sell 0.1 ETH (plan step 1)",
+      "expect": "admit",
+      "admitted": true,
+      "pass": true,
+      "reason": null,
+      "text": "Submitted swap on mainnet: 0x1f3696f1490c51299d6bf0995ed5067fdde1b68fe7dbc77ee8c9dcdc4d06b17d",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "sell 0.1 ETH again (duplicate)",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "PlanStepEnforcer:step-already-completed",
+      "text": "Refused by the approved plan (PlanStepEnforcer:step-already-completed): swap 0.1 0x0000000000000000000000000000000000000000 -> 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "sell 0.05 ETH (smaller repeat)",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "PlanStepEnforcer:step-already-completed",
+      "text": "Refused by the approved plan (PlanStepEnforcer:step-already-completed): swap 0.05 0x0000000000000000000000000000000000000000 -> 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "transfer 0.01 ETH to a new address",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "not part of the plan",
+      "text": "Refused by the approved plan: transfer is not part of the plan.",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "swap USDC for DAI spending 64 USDC (breaks the reserve)",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "BalanceFloorEnforcer:below-floor",
+      "text": "Refused by the approved plan (BalanceFloorEnforcer:below-floor): swap 64 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 -> 0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "swap USDC for DAI spending 20 USDC (misses the goal)",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "BalanceFloorEnforcer:below-floor",
+      "text": "Refused by the approved plan (BalanceFloorEnforcer:below-floor): swap 20 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 -> 0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "state": {
+        "usdc": "237.636476",
+        "dai": "0"
+      }
+    },
+    {
+      "name": "swap USDC for DAI with the surplus (plan step 2)",
+      "expect": "admit",
+      "admitted": true,
+      "pass": true,
+      "reason": null,
+      "text": "Submitted swap on mainnet: 0x60104d9ca0fbed2781db9d87efb81688df2f3e7725e2ea791e0ecbc5133047d0",
+      "state": {
+        "usdc": "178.23",
+        "dai": "59.046981018462803274"
+      }
+    },
+    {
+      "name": "step 2 again",
+      "expect": "refuse",
+      "admitted": false,
+      "pass": true,
+      "reason": "PlanStepEnforcer:step-already-completed",
+      "text": "Refused by the approved plan (PlanStepEnforcer:step-already-completed): swap 1 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 -> 0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "state": {
+        "usdc": "178.23",
+        "dai": "59.046981018462803274"
+      }
+    }
+  ],
+  "passed": 9,
+  "total": 9
+}

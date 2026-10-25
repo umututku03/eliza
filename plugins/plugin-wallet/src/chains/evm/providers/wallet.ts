@@ -10,6 +10,7 @@
  * address and per-chain balances exclusively from `EVMService`'s
  * background-refreshed cache so RPC latency never enters prompt composition.
  */
+
 import * as path from "node:path";
 import {
   type IAgentRuntime,
@@ -43,6 +44,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as viemChains from "viem/chains";
 import { DEFAULT_CHAINS, EVM_SERVICE_NAME } from "../constants";
 import { requireProviderSpec } from "../generated/specs/spec-helpers";
+import { planGuardFromSettings } from "../plan-guard";
 import {
   initRPCProviderManager,
   type RPCProviderName,
@@ -127,6 +129,8 @@ export class WalletProvider {
   private readonly cacheKey = "evm/wallet";
   private _chains: Record<string, Chain>;
   private _account: PrivateKeyAccount;
+  /** Address that holds the funds when it differs from the signer (plan-guard mode). */
+  private _holder?: Address;
   private readonly _runtime: IAgentRuntime;
   private readonly _rpcConfigs: Record<string, ChainRpcConfig>;
   /** Chains where Cloud RPC returned a non-transient auth error (401/403) and should not be retried this session. */
@@ -144,8 +148,13 @@ export class WalletProvider {
     this._rpcConfigs = rpcConfigs;
   }
 
+  /** The address whose funds the agent manages: the signer, or the plan account in plan-guard mode. */
   getAddress(): Address {
-    return this._account.address;
+    return this._holder ?? this._account.address;
+  }
+
+  setHolderAddress(holder: Address): void {
+    this._holder = holder;
   }
 
   get chains(): Record<string, Chain> {
@@ -287,7 +296,7 @@ export class WalletProvider {
   async getWalletBalanceForChain(chainName: SupportedChain): Promise<string> {
     const client = this.getPublicClient(chainName);
     try {
-      const balance = await client.getBalance({ address: this._account.address });
+      const balance = await client.getBalance({ address: this.getAddress() });
       // Native decimals are chain-specific (e.g. Tempo uses 6); viem's chain
       // definition is authoritative.
       return formatUnits(balance, this.getChainConfigs(chainName).nativeCurrency.decimals);
@@ -562,7 +571,10 @@ export async function initWalletProvider(runtime: IAgentRuntime): Promise<Wallet
   }
 
   const validatedKey = PrivateKeySchema.parse(privateKey);
-  return new WalletProvider(validatedKey, runtime, chains, rpcConfigs);
+  const provider = new WalletProvider(validatedKey, runtime, chains, rpcConfigs);
+  const plan = planGuardFromSettings(runtime);
+  if (plan) provider.setHolderAddress(plan.account);
+  return provider;
 }
 
 class LazyTeeWalletProvider extends WalletProvider {

@@ -43,7 +43,7 @@ async function control(path: string, body?: any) {
 }
 async function nonce() {
   const r: any = await (await realFetch(spec.forkProxyUrl, {method: 'POST', headers: {'content-type': 'application/json'},
-    body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'eth_getTransactionCount', params: [spec.wallet, 'latest']})})).json();
+    body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'eth_getTransactionCount', params: [spec.sender, 'latest']})})).json();
   return Number(r.result);
 }
 
@@ -79,6 +79,7 @@ const runtime = new AgentRuntime({
         EVM_PRIVATE_KEY: spec.privateKey, ETHEREUM_PROVIDER_MAINNET: spec.forkProxyUrl,
         EVM_SWAP_UNISWAP_V2_ROUTER: spec.router, EVM_SWAP_AGGREGATORS: 'uniswapV2',
         ELIZA_WALLET_BACKEND: 'local', SOLANA_NO_ACTIONS: 'true', PGLITE_DATA_DIR: `memory://${idn.room}`,
+        ...(spec.planJson ? {EVM_PLAN_GUARD_PLAN: spec.planJson} : {}),
         ...(provider === 'openai'
           ? {OPENAI_API_KEY: 'sk-harness-placeholder', OPENAI_BASE_URL: `${spec.llmUrl}/openai/v1`}
           : {ANTHROPIC_API_KEY: 'sk-ant-harness-placeholder', ANTHROPIC_BASE_URL: `${spec.llmUrl}/anthropic/v1`}),
