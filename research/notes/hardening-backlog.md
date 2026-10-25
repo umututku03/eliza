@@ -79,3 +79,22 @@ Promotion now pins discriminator examples and compressed descriptions along with
 H6 follow-up: the source-aware type check exposed that responseFormat also accepts strings. The local json_object refusal now handles both the string and object forms; the wire replay covers both. The change is confined to request-shape handling.
 
 H9 integration follow-up: the complete assistant suite caught three compact alias-contract regressions when the pinned example was repeated in the description. Promotion now drops the inherited examples entirely (the enum/default already carry the exact value), preserving the canonical pin description and alias reconstruction contract. The original contradictory examples remain absent. The existing alias-contract tests are retained unchanged.
+
+## Offline gate status, 25 October 2026 (America/Toronto)
+
+The original status table above is historical; this append records the completed hardening status without rewriting earlier findings.
+
+| Item | Current status | Fix commits |
+|---|---|---|
+| H8 | fixed; recorded replay and tampered case pass | b9c180dea5 |
+| H6 | fixed; local budget is not permanent incompatibility, unsupported JSON mode is explicit | 0f7b54b776, 3df4c89a67 |
+| Analytics availability | fixed; unavailable providers hidden/marked and forced calls refused locally | 751c40201d |
+| H9 | fixed contradictory description metadata; wrong calls still rejected | ae031e00b8, 2f37495104 |
+
+Final pinned suites: assistant 2740/2740, wallet 225 passed / 1 skipped, Anthropic 28/28. Assistant and wallet type checks pass after local-only type-library links. Fork route control 11/11. All four tasks × all three conditions × both scripted models pass: 12 complete mock folders, 96 agent episodes plus 48 controls, and 108 tamper rejections. New model spend $0. No turn errors, blocked hosts, nonzero agent child exits, REPLY_GROUNDING_FAILED or EVALUATOR_INVALID_OUTPUT in those mocks.
+
+Remaining lifecycle observation: H3/stock has 4 refused_outside_turn ledger entries (calls 73–76), from evaluation attempts after turn closure; the logs show POST_TURN_MEMORY / room-queue-closed diagnostics. The guard refuses these before provider forwarding, and the cell's audit and nine tamper checks pass. No rerun. This background-evaluation/shutdown race remains open outside the four requested fixes. Optional Birdeye service startup still logs missing-route retries separately from tool availability.
+
+Root repository verification is blocked by the filtered install's missing root Biome dependency; Anthropic's standalone type-check is blocked by workspace/imported-source diagnostics. Explicit pinned Biome checks and all required suites above pass. Full evidence and retained wrapper-error details: `hardening-report-2026-10-25-codex.md`.
+
+Stopped at the live-check gate. Both-model development-task live validation still needs fresh user spending approval; it has not been run. No benchmark-scale live run, push, or upstream issue/PR activity.
