@@ -1485,6 +1485,21 @@ async function generateTextWithModel(
   modelType: TextModelType
 ): Promise<string | TextStreamResult> {
   const paramsWithAttachments = toAnthropicTextParams(params);
+  if (
+    !paramsWithAttachments.responseSchema &&
+    paramsWithAttachments.responseFormat?.type === "json_object"
+  ) {
+    // Anthropic's native JSON output requires a schema. Silently discarding
+    // json_object makes callers believe output is constrained when it isn't.
+    // A typed local refusal lets the evaluator explicitly select its plain-JSON
+    // prompt fallback while preserving support for later schema requests.
+    throw new ElizaError(
+      "Anthropic json_object response schema mode is unsupported; supply responseSchema",
+      {
+        code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED",
+      }
+    );
+  }
   const shouldReturnNativeResult = usesNativeTextResult(paramsWithAttachments);
   const systemPrompt = resolveEffectiveSystemPrompt({
     params: paramsWithAttachments,

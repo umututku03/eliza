@@ -139,7 +139,7 @@ export function coerceObjectOutput(
   }
   if (isRecord(raw)) return raw;
   if (typeof raw !== "string") return null;
-  // Without a provider-enforced format (Anthropic ignores json_object), models
+  // Without a provider-enforced format (for example after a local schema-budget refusal), models
   // commonly wrap the object in one markdown fence. Only a whole-reply fence is
   // unwrapped; prose around it stays invalid.
   const fenced = /^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/i.exec(raw);
@@ -721,19 +721,28 @@ async function generateEvaluationOutput(params: {
     // the schema attempt from now on. A schema-specific message arms the memo
     // immediately; a generic "bad request" must recur THRESHOLD times in a row
     // (a single transient blip self-heals on the next schema success).
-    const streak = (schemaRejectionStreak.get(runtime) ?? 0) + 1;
-    schemaRejectionStreak.set(runtime, streak);
     if (
-      !schemaUnsupportedRuntimes.has(runtime) &&
-      (schemaRejectionLooksPersistent(error) ||
-        streak >= SCHEMA_UNSUPPORTED_STREAK_THRESHOLD)
+      error instanceof ElizaError &&
+      error.code === "ANTHROPIC_RESPONSE_SCHEMA_LIMIT"
     ) {
-      schemaUnsupportedRuntimes.add(runtime);
-      // WARN (not debug) so an erroneous permanent downgrade is observable.
-      runtime.logger.warn(
-        { src: "service:evaluator", streak },
-        "Post-turn evaluator: provider rejected schema-constrained output; disabling schema requests for this runtime (json_object fallback)",
-      );
+      // This schema exceeds a local request budget; it says nothing about the
+      // provider's support for a different/smaller schema on the next turn.
+      // Neither the lifetime memo nor the generic-400 streak may learn from it.
+      schemaRejectionStreak.delete(runtime);
+    } else {
+      const streak = (schemaRejectionStreak.get(runtime) ?? 0) + 1;
+      schemaRejectionStreak.set(runtime, streak);
+      if (
+        !schemaUnsupportedRuntimes.has(runtime) &&
+        (schemaRejectionLooksPersistent(error) ||
+          streak >= SCHEMA_UNSUPPORTED_STREAK_THRESHOLD)
+      ) {
+        schemaUnsupportedRuntimes.add(runtime);
+        runtime.logger.warn(
+          { src: "service:evaluator", streak },
+          "Post-turn evaluator: provider rejected schema-constrained output; disabling schema requests for this runtime (json_object fallback)",
+        );
+      }
     }
     runtime.logger.debug(
       { src: "service:evaluator" },

@@ -146,6 +146,29 @@ describe("Anthropic model usage events", () => {
 });
 
 describe("#18025: Anthropic request bodies are well-formed strict JSON", () => {
+  it("continues enforcing a supported schema when json_object is also requested", async () => {
+    await handleTextSmall(buildRuntime(), {
+      prompt: "Return JSON",
+      responseFormat: { type: "json_object" },
+      responseSchema: {
+        type: "object",
+        properties: { goodField: { type: "string" } },
+        required: ["goodField"],
+        additionalProperties: false,
+      },
+    } as never);
+    expect(captured).toHaveLength(1);
+    expect(JSON.parse(captured[0].toString()).output_config.format.type).toBe("json_schema");
+  });
+  it("rejects unsupported json_object locally instead of silently sending unconstrained output", async () => {
+    await expect(
+      handleTextSmall(buildRuntime(), {
+        prompt: "Return JSON",
+        responseFormat: { type: "json_object" },
+      } as never)
+    ).rejects.toMatchObject({ code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED" });
+    expect(captured).toHaveLength(0);
+  });
   it("rejects an oversized sparse response schema before opening a provider request", async () => {
     const sparseSchema = new Array(MAX_WELL_FORMED_VISITS);
 

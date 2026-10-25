@@ -19,6 +19,7 @@ import {
 import { SQLiteDatabaseAdapter } from "@elizaos/testing/runtime";
 import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it, vi } from "vitest";
+import { assertAnthropicResponseSchemaBudget } from "../../../plugin-anthropic/models/text.ts";
 import { getEntityDetails } from "../entities";
 import { preferenceEvaluator } from "../features/advanced-capabilities/evaluators/preference-items";
 import {
@@ -27,6 +28,7 @@ import {
   relationshipEvaluator,
   successEvaluator,
 } from "../features/advanced-capabilities/evaluators/reflection-items";
+import { experiencePatternEvaluator } from "../features/advanced-capabilities/experience/evaluators/experience-items.ts";
 import { createAdvancedMemoryPlugin } from "../features/advanced-memory/index";
 import { createAssistantPlugin } from "../index.ts";
 import {
@@ -40,6 +42,7 @@ import {
   prepareEvaluatorProgress,
   stageEvaluatorOutput,
 } from "./evaluator-progress.ts";
+import recordedEvaluation from "./fixtures/h6-evaluator.json";
 import {
   historyRetentionContext,
   historyRetentionEvaluator,
@@ -186,6 +189,92 @@ async function retentionScope(runtime: AgentRuntime, message: Memory) {
 }
 
 describe("durable background memory", () => {
+  it("still memoizes a genuine provider schema incompatibility", async () => {
+    const { runtime, service, message } = await setup();
+    runtime.registerEvaluator({
+      ...evaluator(),
+      incremental: false,
+      background: false,
+    });
+    let schemaCalls = 0;
+    runtime.useModel = vi.fn(async (_type, params) => {
+      if (params.responseSchema) {
+        schemaCalls++;
+        throw new ElizaError("Provider response schema is not supported", {
+          code: "PROVIDER_SCHEMA_UNSUPPORTED",
+        });
+      }
+      return '{"memory":{"ok":true}}';
+    }) as AgentRuntime["useModel"];
+    try {
+      expect((await service.run(message, state)).errors).toEqual([]);
+      expect((await service.run(message, state)).errors).toEqual([]);
+      expect(schemaCalls).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+  it("replays the dev4 Anthropic local schema refusal without permanently disabling smaller schema requests", async () => {
+    const { runtime, service, message } = await setup();
+    const process = vi.fn(async () => undefined);
+    for (const original of [
+      factMemoryEvaluator,
+      preferenceEvaluator,
+      relationshipEvaluator,
+      identityEvaluator,
+      successEvaluator,
+      experiencePatternEvaluator,
+    ]) {
+      runtime.registerEvaluator({
+        ...evaluator(process),
+        name: original.name,
+        schema: original.schema,
+        incremental: false,
+        background: false,
+      });
+    }
+    const schemaCalls: unknown[] = [];
+    let tampered = false;
+    runtime.useModel = vi.fn(async (_type, params) => {
+      if (params.responseSchema) {
+        schemaCalls.push(params.responseSchema);
+        assertAnthropicResponseSchemaBudget(params.responseSchema);
+        return '{"memory":{"ok":true}}';
+      }
+      if (params.responseFormat)
+        throw new ElizaError(
+          "Anthropic json_object response schema mode is unsupported",
+          { code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED" },
+        );
+      return tampered
+        ? `Here is the result: ${recordedEvaluation.response}`
+        : recordedEvaluation.response;
+    }) as AgentRuntime["useModel"];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const result = await service.run(message, state);
+        expect(result.errors).toEqual([]);
+      }
+      expect(schemaCalls).toHaveLength(2);
+      tampered = true;
+      process.mockClear();
+      const rejected = await service.run(message, state);
+      expect(rejected.errors.length).toBeGreaterThan(0);
+      expect(process).not.toHaveBeenCalled();
+      runtime.evaluators.length = 0;
+      runtime.registerEvaluator({
+        ...evaluator(process),
+        incremental: false,
+        background: false,
+      });
+      const recovered = await service.run(message, state);
+      expect(recovered.errors).toEqual([]);
+      expect(schemaCalls).toHaveLength(4);
+      expect(process).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
   it.each([false, true])(
     "admits foreground events between immediately resolved memory jobs, including failures: %s",
     async (fails) => {
