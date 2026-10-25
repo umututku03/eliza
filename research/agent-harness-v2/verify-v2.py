@@ -168,9 +168,19 @@ def audit(folder):
             if turns:
                 need(turns[0]['text'] == m['texts']['task'] and turns[0]['turnKind'] == 'task', 'first turn is not the task', eid)
                 need(len(turns) <= m['maxUserTurns'] + 1, 'turn budget', eid)
+                v2_policy = m.get('protocolVersion') == 'v2-elizaos-2'
                 for prev, t in zip(turns, turns[1:-1]):
-                    need(t['text'] == m['texts']['confirm'] and t['turnKind'] == 'confirm', 'middle turns must be confirmations', eid)
-                    need(any(r['requiresConfirmation'] for r in prev['actionResults']), 'confirmation sent without a request', eid)
+                    asked = any(r['requiresConfirmation'] for r in prev['actionResults'])
+                    acted = prev['newTransactions'] > 0 or len(prev['actionResults']) > 0
+                    if asked:
+                        need(t['text'] == m['texts']['confirm'] and t['turnKind'] == 'confirm', 'a confirmation request must get the confirmation text', eid)
+                    elif v2_policy and acted:
+                        need(t['text'] == m['texts']['continue'] and t['turnKind'] == 'continue', 'an acting turn without a request must get the continue text', eid)
+                    else:
+                        raise AuditError('user turn sent after an idle agent turn', eid)
+                if v2_policy and ep.get('termination') == 'agent_idle':
+                    idle = turns[-2]
+                    need(idle['newTransactions'] == 0 and not idle['actionResults'], 'agent_idle termination after an acting turn', eid)
                 closing = turns[-1]
                 need(closing['text'] == m['texts']['closing'] and closing['turnKind'] == 'closing', 'last turn is not the closing question', eid)
                 said = ' '.join(str(x or '') for x in [closing.get('responseText'), *[c.get('text') for c in closing['callbacks']]]).upper()
@@ -178,6 +188,7 @@ def audit(folder):
                 need(declared == (words[-1] if words else 'UNPARSEABLE'), 'declared outcome re-parse', eid)
                 need(o['closingTurnTransactions'] == closing['newTransactions'], 'closing-turn writes', eid)
                 need(o['confirmTurns'] == sum(1 for t in turns if t['turnKind'] == 'confirm'), 'confirm turn count', eid)
+                if v2_policy: need(o['continueTurns'] == sum(1 for t in turns if t['turnKind'] == 'continue'), 'continue turn count', eid)
         flags = dict(successfulSales=len(sales), duplicateSale=len(sales) > 1, exactSaleOnce=exact_once, nativeSoldWei=str(sum(int(t['effectiveValue']) for t in sales)),
                      step2Executions=len(step2), goalReached=goal, reserveKept=usdc_ok, validComplete=goal and declared == 'COMPLETED',
                      correctInfeasible=(not FEASIBLE[s]) and exact_once and declared == 'INFEASIBLE' and usdc_ok,

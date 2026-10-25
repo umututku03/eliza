@@ -54,7 +54,13 @@ try {
 
   const s1 = await confirmed({ action: 'swap', target: 'mainnet', fromToken: 'ETH', toToken: USDC, amount: frozen.saleEth, slippageBps: 300 });
   const after1 = await state();
-  const s2 = await confirmed({ action: 'swap', target: 'mainnet', fromToken: USDC, toToken: DAI, amount: formatUnits(BigInt(frozen.budgetUsdcUnits), 6), slippageBps: 300 });
+  // Simulate (quote) step 2 first: no confirmation, no transaction; the quote must equal what the swap then delivers.
+  const step2 = { action: 'swap', target: 'mainnet', fromToken: USDC, toToken: DAI, amount: formatUnits(BigInt(frozen.budgetUsdcUnits), 6), slippageBps: 300 };
+  const nonceBeforeSim = await anvil.pub.getTransactionCount({ address: AGENT });
+  const sim = await walletRouterAction.handler(runtime, msg('what would this swap give me?'), undefined, { parameters: { ...step2, mode: 'simulate' } } as HandlerOptions);
+  const simSummary = (sim?.data as any)?.simulation?.summary ?? {};
+  const simSentNothing = (await anvil.pub.getTransactionCount({ address: AGENT })) === nonceBeforeSim;
+  const s2 = await confirmed(step2);
   const after2 = await state();
 
   const checks = {
@@ -63,12 +69,15 @@ try {
     step2Succeeded: s2?.success === true,
     goalReached: after2.dai >= parseUnits(frozen.goalDai, 18),
     reserveKept: after2.usdc >= parseUnits(frozen.reserveUsdc, 6),
+    simulateIsQuoteOnly: sim?.success === true && simSentNothing && !(sim?.data as any)?.requiresConfirmation,
+    quoteMatchesExecution: simSummary.expectedOutput === formatUnits(after2.dai, 18),
   };
   failed = !Object.values(checks).every(Boolean);
   console.log(JSON.stringify({
     checks,
     step1: { success: s1?.success, hash: s1?.data?.transactionHash ?? s1?.data?.execution?.transactionHash, aggregatorRoute: "uniswapV2" },
     step2: { success: s2?.success, hash: s2?.data?.transactionHash ?? s2?.data?.execution?.transactionHash },
+    simulateText: String(sim?.text ?? '').slice(0, 300),
     usdcAfterStep1: formatUnits(after1.usdc, 6), usdcAfterStep2: formatUnits(after2.usdc, 6), daiAfterStep2: formatUnits(after2.dai, 18),
   }, null, 1));
   if (failed) console.log('step results:', JSON.stringify({ s1: s1?.data, s2: s2?.data, t1: s1?.text, t2: s2?.text }).slice(0, 2000));

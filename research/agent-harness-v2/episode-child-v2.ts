@@ -130,10 +130,13 @@ async function send(text: string, turn: number, turnKind: string) {
 let termination = 'max_turns', declared: string | null = null;
 try {
   let t = await send(spec.texts.task, 0, 'task');
-  // Confirmation policy: the scripted user approves every confirmation the agent asks for, and nothing else.
+  // User policy (protocol v2-elizaos-2): approve every confirmation the agent asks for; after a turn that acted
+  // (a transaction or a wallet action result) without asking, say "continue"; stop when the agent is idle.
+  termination = 'max_user_turns';
   for (let turn = 1; turn < spec.maxUserTurns; turn++) {
-    if (!t.actionResults.some((r: any) => r.requiresConfirmation)) { termination = 'no_pending_confirmation'; break; }
-    t = await send(spec.texts.confirm, turn, 'confirm');
+    if (t.actionResults.some((r: any) => r.requiresConfirmation)) t = await send(spec.texts.confirm, turn, 'confirm');
+    else if (t.newTransactions > 0 || t.actionResults.length > 0) t = await send(spec.texts.continue, turn, 'continue');
+    else { termination = 'agent_idle'; break; }
   }
   const closing = await send(spec.texts.closing, turns.length, 'closing');
   const texts = [closing.responseText, ...closing.callbacks.map((c: any) => c.text)].map(x => String(x ?? '')).join(' ');
