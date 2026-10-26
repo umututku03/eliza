@@ -154,3 +154,11 @@ L1/L2 and both L3 normalization subcases are exercised successfully. L4/L6 remai
 | L7 (related to H4) | Luna/stock turn 3 follows completed trades but its direct reply has no current action results/effect receipts. Call 34 drafts completion; call 36 request says financial_completion, No action results available, providers={}; reply recovery fails and the turn records REPLY_GROUNDING_FAILED. Closing turn still declares COMPLETED correctly. | Open; no fix. This continuation evidence gap is not counted as an independent duplicate of H4. |
 
 See the completion addendum in live-check-2-2026-10-26.md for all four rows, call evidence and the unchanged counting rules. Task B is behavior-preserving cleanup only.
+
+## Post-cleanup validation startup gap — 26 October 2026
+
+| ID | Symptom and evidence | Status |
+|---|---|---|
+| L8 (harness/toolchain, cause unproven) | The scheduled post-cleanup D1/stock mock failed before creating a manifest under Bun 1.4.2: @metamask/utils/dist/logging.mjs imported debug as an object, then threw TypeError: debug is not a function. Preserved local log: review-post-fc-dryrun-review-post-L15-D1-stock.log; the verifier sidecar records the missing manifest. The next scheduled D1/plan_guard and H1/existing_controls mocks pass at the same source. | Open; startup observation, not a demonstrated regression in a framework fix. No patch or replacement run. The failed invocation is excluded from oracle-deviation counts because no episodes exist. |
+
+All unit counts and the route control still match baseline. The required five-mock PASS baseline is not established if any scheduled invocation cannot start. A later scheduled duplicate D1 cell is separate evidence, not a replacement for this failure. Raw logs and any partial output stay local.

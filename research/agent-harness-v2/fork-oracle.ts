@@ -2,15 +2,9 @@
 // feasibility helpers. Copied from the Spartan harness (umututku03/spartan-agent c47d7c3,
 // research/agent-flow-cohorts/fork-oracle.ts) without calibrate(), which depended on Spartan's risk clamp.
 // The frozen task numbers come from frozen-task.json and are not recalibrated.
-// Fork oracle: starts the pinned Anvil mainnet fork and provides the privileged post-sale pool move and the
-// feasibility helpers. Copied from the Spartan harness (umututku03/spartan-agent c47d7c3,
-// research/agent-flow-cohorts/fork-oracle.ts) without calibrate(), which depended on Spartan's risk clamp.
-// The frozen task numbers come from frozen-task.json and are not recalibrated.
 import { createPublicClient, createWalletClient, http, parseEther, keccak256, toHex, type Address, type Hex } from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {mainnet} from 'viem/chains';
-
-
 
 export const ROUTER: Address = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D';
 export const WETH: Address = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
