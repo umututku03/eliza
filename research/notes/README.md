@@ -5,7 +5,7 @@ Status: 2026-10-26 — current review index. Historical notes remain intact; a d
 | Note | Status | Contents |
 |---|---|---|
 | [README.md](README.md) | current | Index of every note; historical bodies are retained. |
-| [hardening-backlog.md](hardening-backlog.md) | current | A/H/L progress, remaining L6/L7 observations and live gate. |
+| [hardening-backlog.md](hardening-backlog.md) | current | A/H/L progress, remaining L6/L7/L8 observations and live gate. |
 | [framework-changes.md](framework-changes.md) | current | Git-generated 58-file framework map with explicit provenance and test gaps. |
 | [live-check-2-2026-10-26.md](live-check-2-2026-10-26.md) | current | Both live-check tables, counting rules, L verdicts, corrected stop rule and exact ledger. |
 | [codex-report-livecheck2-final-and-cleanup.md](codex-report-livecheck2-final-and-cleanup.md) | current | Luna completion, cleanup, full validation and push record. |

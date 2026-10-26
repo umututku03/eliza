@@ -87,6 +87,9 @@ IDs overlap: A9 is split into H items, A8 is H8, and L6/L7 refine remaining L4/H
 | L5 | Reply recovery uses stale write-turn evidence | 2fed8141f6; exact live case not exercised | refreshed-providers.test.ts |
 | L6 | “58.13 minimum” read as a holding | Open; no fix | Live Haiku plan_guard calls 11/13/14 |
 | L7 | Completed earlier task rejected on direct continuation | Open; no fix | Live Luna stock calls 34/36, turn 3 |
+| L8 | Post-cleanup mock fails importing MetaMask debug utility | Open; startup cause unproven | Local review-post stock mock log; no manifest |
+
+Post-cleanup unit suites and route control match their recorded baseline, but one scheduled stock mock cannot start (L8); it has no scorable episodes. The [final report](notes/codex-report-livecheck2-final-and-cleanup.md) records every scheduled mock separately. No failed invocation is replaced.
 
 Analytics readiness is also hardened: unavailable external lookups are hidden/marked and refused locally. It has no numbered defect ID; the map keeps that provenance gap explicit.
 
@@ -110,7 +113,7 @@ Our proposed contribution is the controlled containment comparison with an exist
 
 ## Remaining work and calendar
 
-L6/L7 and plan authoring remain open. Freeze the draft pre-registration before held-out live runs; extend task families and isolated control cases; obtain separate live-run approval; add a second labeller and interval analysis; then package the artifact and paper. The [roadmap §5](notes/next-steps-2026-10-25.md) sets working targets: specification freeze by 8 November, go/no-go by 15 November, held-out runs by 29 November, analysis by 13 December, draft by 10 January and a 14 January 2027 submission target. The official deadline still needs confirmation.
+L6/L7, the L8 harness startup observation, and plan authoring remain open. Freeze the draft pre-registration before held-out live runs; extend task families and isolated control cases; obtain separate live-run approval; add a second labeller and interval analysis; then package the artifact and paper. The [roadmap §5](notes/next-steps-2026-10-25.md) sets working targets: specification freeze by 8 November, go/no-go by 15 November, held-out runs by 29 November, analysis by 13 December, draft by 10 January and a 14 January 2027 submission target. The official deadline still needs confirmation.
 
 **Questions for Srisht:** Is containment the right primary claim? Which task families and control baselines are essential? How should false refusals and shared-state effects be isolated? How much framework repair is acceptable before the held-out freeze? What evidence would justify a second framework?
 
