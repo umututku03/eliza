@@ -153,7 +153,11 @@ function observedHoldings(
 }
 
 const UNVERIFIED =
-  /\b(?:cannot|can't|unable|unavailable|unknown|unverified|not\s+(?:verified|confirmed)|if|unless|whether|could|would)\b/i;
+  /\b(?:cannot|can't|unable|unavailable|unknown|unverified|not\s+(?:verified|confirmed)|if|unless|whether|could|would|should|will|may|might|expected|estimated)\b/i;
+// An order amount ("buying DAI with 38 USDC from your wallet") is not a
+// holding; "left with 178.23 USDC" still is.
+const ORDER_PREFIX =
+  /(?<!\bleft\s)\b(?:with|using|spend(?:ing)?|sell(?:ing)?|swap(?:ping)?|trad(?:e|ing))\s+(?:about\s+|exactly\s+|only\s+)?$/i;
 // A quantity stated as a limit ("keep at least 178.23 USDC in your wallet",
 // "the 37.31 DAI target") restates the user's constraint; it is not a holding.
 const LIMIT_PREFIX =
@@ -233,6 +237,7 @@ function holdingClaims(
         if (NON_ASSET_UNITS.test(match[2])) continue;
         if (
           LIMIT_PREFIX.test(prefix) ||
+          ORDER_PREFIX.test(prefix) ||
           LIMIT_SUFFIX.test(clause.slice((match.index ?? 0) + match[0].length))
         )
           continue;

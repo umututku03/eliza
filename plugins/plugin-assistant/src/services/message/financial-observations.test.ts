@@ -47,6 +47,37 @@ describe("financial holdings grounding", () => {
     ).toBe(false);
   });
 
+  it("does not read hypothetical or order amounts as holdings", () => {
+    // claude-haiku-5-5 drafts rejected in the live check (calls 37 and 61).
+    for (const reply of [
+      "If you want me to continue, I can try a smaller USDC amount that should yield about 37 DAI while keeping at least 178.23 USDC in the wallet.",
+      "I got a fresh quote for buying DAI with 38 USDC from your wallet. It should return about 37.77 DAI.",
+    ]) {
+      expect(
+        financialHoldingIsUngrounded({
+          reply,
+          request: "Yes, confirm.",
+          actionResults: [],
+          providers: {},
+        }),
+      ).toBe(false);
+    }
+    // Stated holdings are still checked, including "left with".
+    for (const reply of [
+      "Your wallet is left with 999 USDC.",
+      "Your wallet now holds 999 USDC.",
+    ]) {
+      expect(
+        financialHoldingIsUngrounded({
+          reply,
+          request: "Yes, confirm.",
+          actionResults: [],
+          providers: {},
+        }),
+      ).toBe(true);
+    }
+  });
+
   it("grounds EVM wallet holdings in the evm-wallet provider", () => {
     const providers = evmWallet([
       { symbol: "ETH", amount: "0.899" },
