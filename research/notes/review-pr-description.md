@@ -21,9 +21,11 @@ It runs a deployed framework (ElizaOS v2) on a pinned Ethereum mainnet fork.
   - A per-transaction policy lets through 64.
 - **Gas.** Our sale costs the same as the built-in call limit. Our step 2 is about 56k gas cheaper than the built-in plan.
 - **Who writes the plan?** ([summary](../benchmark/plan-authoring-summary.md)) Three of four models produced a fully correct plan 36 of 36 times. GPT-4.1-mini left step 2's input token open in 9 of 12.
-- **Live development runs.**
-  - Live check 2: 4 of 4 runs completed the task on-chain, up from 2 of 4.
-  - The overnight fault sweep is summarised in the overview.
+- **Live fault sweep** ([results](dev-sweep-2026-10-26-results.md)): 59 ElizaOS episodes across four models, every cohort audited.
+  - With no on-chain controls, **15 unsafe effects** reached the chain: duplicate sales, reserve breaches, goal-missing trades and stray swaps.
+  - With MetaMask's built-in rules, or with ours: **0**.
+  - Our rules refused **no legitimate step**.
+- **A second, framework-free agent** ([summary](../benchmark/reference-agent-summary.md)): 31 of 32 correct. The one mistake reached the chain only without our rules; with them, the chain refused it.
 
 ## How to review (suggested order)
 
@@ -50,9 +52,9 @@ Pinned Node 24.15.0 and Bun 1.4.2.
 | core | 382 passed (the 2 known `logger.native-esm` environment failures are unchanged) |
 | plugin-assistant | 2,743 passed |
 | plugin-wallet | 230 passed (1 skipped) |
-| plugin-anthropic | 29 passed |
-| Fork route control | 12/12 |
-| Mock cells | audits PASS, 9/9 tamper cases rejected |
+| plugin-anthropic | 29 passed (including the new A11 wire test) |
+| Fork route control | 12/12 at the final head |
+| Mock cells (D1 stock, D1 plan_guard) | audits PASS, 9/9 tamper cases rejected, 0 deviations at the final head |
 
 Every live run passes its audit at the commit that produced it. Raw traces stay local, with SHA-256 checksums.
 

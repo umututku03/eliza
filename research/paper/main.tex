@@ -1,5 +1,5 @@
 % Draft for supervisor review, 26 October 2026. Target: IEEE ICBC 2027 (deadline to be confirmed on the official site).
-% Numbers marked \pending{} come from runs that were still in progress when this draft was written.
+% All numbers come from committed summaries under research/ (26 October 2026 runs); \pending{} is kept for future gaps.
 \documentclass[conference]{IEEEtran}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
@@ -36,7 +36,9 @@ floors), that close this gap. Against a compromised agent key that holds every s
 admit 0 of 244 off-plan actions and refuse 0 of 44 legitimate ones across four tasks and four market states. A plan
 built from MetaMask's built-in caveats (call limits and relative balance caps) admits 16 and refuses 4 feasible trades, and a stateless
 per-transaction policy admits 64.
-\pending{live-agent sweep across four models}. The enforcers cost no more gas than that built-in plan.
+In a fault-injected development sweep of 59 live ElizaOS episodes across four models, 15 unsafe effects reached the
+chain without on-chain controls and none with them; our enforcers refused no legitimate step. The enforcers cost no
+more gas than that built-in plan.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -75,7 +77,8 @@ patterns (duplicate sale; goal used as the input amount) (Sec.~\ref{sec:failures
 \item Two enforcers for the deployed MetaMask delegation framework v1.3.0~\cite{metamaskdelegation,erc7710}
 that make order, once-only success and absolute floors chain-enforced (Sec.~\ref{sec:design}).
 \item A containment evaluation with ablations: a compromised-agent matrix, an agent-error suite through the
-framework's own wallet path, live development runs, and gas (Sec.~\ref{sec:eval}).
+framework's own wallet path, a fault sweep of 59 live episodes across four models, a second framework-free agent, a
+plan-authoring probe, and gas (Sec.~\ref{sec:eval}).
 \end{enumerate}
 
 \section{Background}
@@ -291,9 +294,27 @@ after fixing five framework defects found in the first check (L1--L5). Episodes 
 went from 2 of 4 to 4 of 4. Declarations matching chain state went from 0 of 4 to 3 of 4; the fourth ran out of
 budget after finishing. No episode sold twice.
 
-\textbf{Fault sweep.} \pending{D1, four scenarios, stock / existing\_controls / plan\_guard, Luna and Haiku at r=2,
-Sonnet~5.5 on receipt\_hidden, GPT-4.1-mini at r=1: duplicates, reserve and goal violations, refused steps,
-declared vs.\ actual}.
+\textbf{Fault sweep.} We then ran a pre-declared sweep: D1 under all four scenarios, with three conditions (stock,
+existing\_controls, plan\_guard) and four models. Luna and Haiku ran at $r=2$ in all three conditions, GPT-4.1-mini at
+$r=1$ in stock and plan\_guard, and Sonnet~5.5 on receipt\_hidden only. That is 59 episodes, \$5.29, every cohort
+audited with 9/9 tamper cases rejected.
+\begin{itemize}
+\item \textbf{Stock} (21 episodes): 15 unsafe effects reached the chain: 4 duplicate sales, 3 trades after the goal
+became infeasible, 3 off-plan swap legs, 2 reserve breaches, 2 B2 trades (37.31~USDC as the input) and 1 repeated
+step~2.
+\item \textbf{Built-in caveats} (16 episodes) and \textbf{plan\_guard} (21 episodes): none.
+\item \textbf{Chain refusals:} the chain refused off-plan attempts in 8 episodes of the guarded runs: goal-missing
+trades, B2, and repeated sales. It refused no legitimate step.
+\end{itemize}
+Three caveats:
+\begin{itemize}
+\item \textbf{Behaviour differs by condition.} Plan mode shows the plan in the agent's context, and the guarded agents
+attempted fewer off-plan actions, so part of the difference is behavioural.
+\item \textbf{Built-ins versus plan\_guard.} The market states that separate the two did not arise in these D1 runs;
+the matrix measures them.
+\item \textbf{Sonnet was truncated} by the proxy's worst-case output reservation, not by the model, and Haiku under
+plan\_guard completed only 3 of 8, stalling in confirmation loops rather than being refused.
+\end{itemize}
 
 \subsection{A second, framework-free agent}
 
