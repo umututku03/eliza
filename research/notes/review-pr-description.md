@@ -1,36 +1,63 @@
-# Draft review description
+# Research draft: containing transacting agents (for supervisor review)
 
-## Summary
+**This PR is for review only, on our own fork. It is not meant for upstream ElizaOS.**
 
-A transacting agent can repeat a completed sale after losing its receipt, spend the wrong amount on the next step, or declare an outcome that differs from chain state. This research branch adds a pinned-fork harness and compares which effects reach the chain under an agent-held key, existing delegation controls and signed sequence-level plan enforcers. It also records the framework repairs required to make that comparison possible.
+## What this is
 
-All live checks so far are development evidence. Checks 1 and 2 use r=1 per cell. In check 2 all four cells complete the chain task; three closing declarations are COMPLETED and one is unavailable after its cohort-budget refusal. One Luna/stock continuation still fails reply grounding. L6/L7 and the L8 startup observation are open, and the no-framework-error live gate is not met. These counts are not reliability rates.
+A transacting agent can repeat a completed sale, spend the wrong amount, or report an outcome the chain contradicts. This branch measures which control layer stops which of these before they reach the chain:
+- the framework's own confirmation prompt;
+- MetaMask's built-in delegation rules;
+- two new on-chain rules: step order with once-only success, and absolute balance floors.
 
-## Structure and reading order
+It runs a deployed framework (ElizaOS v2) on a pinned Ethereum mainnet fork.
 
-1. [OVERVIEW.md](../OVERVIEW.md): claim, setup, results, literature and supervisor questions.
-2. [framework-changes.md](framework-changes.md): all 58 framework files since base 6b6df2f254, source commits, test pointers and unexplained gaps.
-3. L1–L5 commits: 0bf39964e2 (asset visibility), 3972fbad47 (history and resolved-chain confirmations), 0e15b8cb4b (own-recipient equivalence), 13c9389b3f (holding-language exclusions), 2fed8141f6 (fresh recovery evidence). The [backlog](hardening-backlog.md) gives trace-backed status, including limitations.
-4. [Harness](../agent-harness-v2/) and [protocol](../agent-harness-v2/protocol.md): execution, ledger, source binding, chain scoring and tamper rejection. Historical audits need their producing source version.
-5. [Pre-registration draft](../benchmark/PREREGISTRATION.md), [control matrix](../benchmark/suite-v1-summary.md) and [enforcer tests](../plan-guard/README.md).
-6. [Final report](codex-report-livecheck2-final-and-cleanup.md): exact validation, spend, preserved stop record and cleanup scope.
+**Start with [`research/OVERVIEW.md`](../OVERVIEW.md).** It's a plain-language summary with every number linked to its source. The paper draft is [`research/paper/main.tex`](../paper/main.tex).
 
-The framework diff includes hardening, replay fixtures and research wallet integrations. The map explicitly leaves analytics availability and mechanism commits without invented defect IDs. It also flags missing dedicated registration/wording and nested-planner replays. L6/L7 are observations, not fixes in this review cleanup.
+## Headline results
+
+- **Stolen or hijacked agent key, all four tasks** ([summary](../benchmark/matrix-v2-summary.md)): this is the deterministic matrix, with no model involved.
+  - Our two enforcers let through **0 of 244** bad actions and block **0 of 44** legitimate ones.
+  - MetaMask's built-in rules let through 16 and block 4 legitimate trades.
+  - A per-transaction policy lets through 64.
+- **Gas.** Our sale costs the same as the built-in call limit. Our step 2 is about 56k gas cheaper than the built-in plan.
+- **Who writes the plan?** ([summary](../benchmark/plan-authoring-summary.md)) Three of four models produced a fully correct plan 36 of 36 times. GPT-4.1-mini left step 2's input token open in 9 of 12.
+- **Live development runs.**
+  - Live check 2: 4 of 4 runs completed the task on-chain, up from 2 of 4.
+  - The overnight fault sweep is summarised in the overview.
+
+## How to review (suggested order)
+
+1. [`research/OVERVIEW.md`](../OVERVIEW.md), then the [paper draft](../paper/main.tex).
+2. The enforcers: [`research/plan-guard/contracts/`](../plan-guard/contracts/), about 100 lines of Solidity, and their [README](../plan-guard/README.md).
+3. The matrix: [`research/benchmark/compromised-agent-matrix.ts`](../benchmark/compromised-agent-matrix.ts).
+4. The harness: [`research/agent-harness-v2/`](../agent-harness-v2/), with the [protocol](../agent-harness-v2/protocol.md) and the verifier `verify-v2.py`.
+5. The framework changes: [`framework-changes.md`](framework-changes.md) maps all of them, each with its bug ID, commit and test. Most are fixes needed to make ElizaOS trade on a fork at all.
+
+## What changed outside `research/`
+
+Every change is listed in [`framework-changes.md`](framework-changes.md):
+- **Framework bug fixes** in `packages/core` and `plugins/plugin-{assistant,wallet,anthropic,openai}`, each with a regression test.
+- **Research-only additions:**
+  - a small on-chain Uniswap V2 swap route (stock ElizaOS quotes only through HTTP aggregators, which a fork can't reach);
+  - the wallet's plan-guard mode.
 
 ## Validation
 
-Pinned Node 24.15.0 / Bun 1.4.2. The recorded pre-cleanup baseline is core 382 passed / 2 known logger.native-esm environment failures, assistant 2743/2743, wallet 230 passed / 1 skipped, route 12/12, and five mock cells with PASS audits, 9/9 tamper rejections and zero deviations each. Post-cleanup unit counts and route checks match. One scheduled stock mock fails before creating a manifest (L8); no episode count can be assigned to it. The final report lists the five scheduled cells individually, rather than treating another stock cell as its replacement.
+Pinned Node 24.15.0 and Bun 1.4.2.
 
-Four check-2 live audits PASS with 9/9 tamper rejections each. No live cell was retried or replaced. Check-2 spend is 0.288868450 USD; the cumulative ledger is 3.676216700 USD. Full comparisons and counting rules are in the [live-check note](live-check-2-2026-10-26.md).
+| Check | Result |
+|---|---|
+| core | 382 passed (the 2 known `logger.native-esm` environment failures are unchanged) |
+| plugin-assistant | 2,743 passed |
+| plugin-wallet | 230 passed (1 skipped) |
+| plugin-anthropic | 29 passed |
+| Fork route control | 12/12 |
+| Mock cells | audits PASS, 9/9 tamper cases rejected |
 
-Cleanup is limited to documentation, four research comments, seven proven-unused imports in the fork helper and an ignored audit-sidecar pattern. A duplicate helper header introduced during import cleanup was also removed. The changed comments transpile to identical JavaScript; the helper's executable body is unchanged. Raw traces/results and local-only test configuration stay untracked.
+Every live run passes its audit at the commit that produced it. Raw traces stay local, with SHA-256 checksums.
 
-## Review scope
+## Not in scope or still open
 
-This is a draft for the user's fork, against research/v2-base. The mechanism is not audited, the benchmark pre-registration is not frozen, and the observed framework gaps remain open. Future held-out or finish-line live checks need separate approval.
-
-No PR has been created. The user can create one after reviewing this description:
-
-```bash
-gh pr create --repo umututku03/eliza --base research/v2-base --head research/benchmark-v1 --draft
-```
+- **Open framework findings:** L6 and L7 (reply-check false positives) and A12 (GPT-6.1 Sol can't use tools through ElizaOS's Chat Completions path).
+- **Not audited:** the enforcers.
+- **Development data only:** the live runs are development runs. The benchmark pre-registration freeze and the held-out runs come next.
