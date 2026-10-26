@@ -1,0 +1,401 @@
+% Draft for supervisor review, 26 October 2026. Target: IEEE ICBC 2027 (deadline to be confirmed on the official site).
+% Numbers marked \pending{} come from runs that were still in progress when this draft was written.
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{cite}
+\newtheorem{proposition}{Proposition}
+\newcommand{\pending}[1]{\textcolor{orange}{[pending: #1]}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\begin{document}
+
+\title{Containing Transacting Agents:\\Sequence-Level On-Chain Enforcement for LLM Wallet Agents,\\Measured on a Fault-Injected Mainnet Fork}
+
+\author{\IEEEauthorblockN{Draft --- author list to be confirmed}
+\IEEEauthorblockA{University of Toronto (CSC490)}}
+
+\maketitle
+
+\begin{abstract}
+LLM agents now hold wallets and execute multi-step DeFi plans. When such an agent loses a receipt, repeats a
+trade, or misreads its own balance, the mistake is irreversible once it reaches the chain. Off-chain safeguards in
+agent frameworks (confirmation gates, output validators) and existing on-chain delegation caveats each address
+part of this risk, but nobody has measured which layer contains which failure for a deployed framework. We contribute (i) a
+fault-injected benchmark that runs a deployed agent framework (ElizaOS v2) end to end on a pinned Ethereum mainnet
+fork, scores outcomes from chain state, and audits every run against tampering; (ii) a failure study of that
+framework: 28 numbered findings, from provider-API drift to safety layers that reject honest replies, 25 of them fixed
+with regression evidence; (iii) a proof that per-redemption caveats whose bounds are fixed at signing time cannot
+enforce an absolute post-trade reserve without either admitting a breach or refusing a feasible step, and that the
+deployed caveat set cannot express step precedence; and (iv) two caveat enforcers for MetaMask's deployed
+delegation framework, \emph{PlanStepEnforcer} (order, once-only success) and \emph{BalanceFloorEnforcer} (absolute
+floors), that close this gap. Against a compromised agent key that holds every signed delegation, our enforcers
+admit 0 of 244 off-plan actions and refuse 0 of 44 legitimate ones across four tasks and four market states. A plan
+built from MetaMask's built-in caveats (call limits and relative balance caps) admits 16 and refuses 4 feasible trades, and a stateless
+per-transaction policy admits 64.
+\pending{live-agent sweep across four models}. The enforcers cost no more gas than that built-in plan.
+\end{abstract}
+
+\begin{IEEEkeywords}
+LLM agents, account abstraction, delegation, caveat enforcers, DeFi, benchmark, mainnet fork
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Agent frameworks such as ElizaOS~\cite{elizaos} give a language model a wallet and a set of financial tools.
+A user asks for an outcome (``sell 0.1~ETH, then buy at least 37.31~DAI, and keep at least 178.23~USDC'') and the
+agent plans and submits the transactions. Transactions are irreversible, so the question that matters is not whether
+the agent is usually right, but \emph{what reaches the chain when it is wrong}.
+
+Recent work frames this as an open problem. Per-transaction policy verified by a smart account (PACE~\cite{pace2026})
+leaves ``multi-step agent loops that compose policy-valid legs into a harmful sequence'' as ``the most important next
+target''. Off-chain safety invariants for wallet agents~\cite{yin2026invariants} name plan transactionality as the
+open problem most worth attacking. Off-chain exactly-once schemes~\cite{caplease2026,aidguard2026} note that
+exactly-once physical effects require an idempotent sink, which a blockchain transaction is not. Benchmarks that execute agent
+transactions on forks and score state~\cite{evmquestbench2026,intent2tx2026} evaluate generated code or single
+transactions, not deployed frameworks under faults.
+
+We study the full path: a deployed framework, a real model, a pinned mainnet fork, injected faults (a hidden
+receipt, an adverse price move), and the control layers that sit between the agent and the chain. Our claim is about
+\emph{containment}: under which controls do unsafe effects reach the chain, and at what cost in refused legitimate
+steps and gas. We do not claim that agents become reliable.
+
+\textbf{Contributions.}
+\begin{enumerate}
+\item A benchmark and harness for transacting agents: pinned fork, scripted user, egress proxy with spending caps and
+a call ledger, fault-injecting RPC proxy, chain-state oracle, and an independent verifier with tamper tests
+(Sec.~\ref{sec:bench}).
+\item A failure study of ElizaOS~v2 with trace evidence: 28 findings in six classes, and two agent-level failure
+patterns (duplicate sale; goal used as the input amount) (Sec.~\ref{sec:failures}).
+\item An expressiveness result: what signing-time caveats can and cannot guarantee across a multi-step plan
+(Sec.~\ref{sec:gap}).
+\item Two enforcers for the deployed MetaMask delegation framework v1.3.0~\cite{metamaskdelegation,erc7710}
+that make order, once-only success and absolute floors chain-enforced (Sec.~\ref{sec:design}).
+\item A containment evaluation with ablations: a compromised-agent matrix, an agent-error suite through the
+framework's own wallet path, live development runs, and gas (Sec.~\ref{sec:eval}).
+\end{enumerate}
+
+\section{Background}
+
+\textbf{Agent frameworks.} ElizaOS~v2 composes a message pipeline, a planner that calls tools natively, an
+evaluator that decides whether to continue, and plugins. Its wallet plugin routes swaps and transfers and requires
+the user to confirm each financial action; a confirmation binds the action's parameters. Output validators check
+that replies about holdings and completed actions are grounded in tool results.
+
+\textbf{Delegation and caveats.} In MetaMask's delegation framework (ERC-7710~\cite{erc7710}), a user's smart account
+(here a HybridDeleGator) signs delegations to an agent key. Each delegation carries caveats; at redemption the
+DelegationManager calls each caveat enforcer's hooks around the execution, and any revert refuses it. The v1.3.0
+deployment has 32 built-in enforcers: targets, methods, calldata, value caps, call limits, time and block windows, and
+relative balance-change checks, among others.
+
+\section{Failure and threat model}\label{sec:threat}
+
+A user's intent is a \emph{plan}: ordered steps $s_0,\dots,s_{n-1}$ with prerequisites, each to succeed at most
+once, plus constraints on the final state: reserves $\mathrm{bal}_X \ge R$ and goals $\mathrm{bal}_Y \ge G$. We
+consider two agents. An \emph{honest but faulty} agent follows the task but loses receipts, repeats steps, misreads
+amounts or misreports outcomes; these are the failures we recorded. A \emph{compromised} agent controls the agent
+key, for example after key theft or prompt injection, and sends any execution it likes under the delegations it holds,
+bypassing the framework. The user, the plan's author, is trusted: we assume the plan is correct, and we treat plan
+authoring as a limitation (Sec.~\ref{sec:limits}).
+
+\section{The expressiveness gap}\label{sec:gap}
+
+Consider a two-step plan signed at time $t_0$: step 1 sells a fixed amount of ETH for $X$, delivering $q_1$; step 2
+swaps $a$ of $X$ for $Y$. The account starts with $x_0$ of $X$. After step 2 it must hold $\mathrm{bal}_X \ge R$ and
+$\mathrm{bal}_Y \ge G$. Step 1's delivery is unknown at $t_0$; the agent's own slippage tolerance allows any
+$q_1 \in [q^-, q^+]$ with $q^- < q^+$.
+
+A \emph{signing-time spend bound} is a caveat on step 2 that refuses a redemption when the amount of $X$ spent
+exceeds a constant $c$ fixed at $t_0$. This covers ERC20BalanceChange with a decrease bound, transfer-amount caps, and
+any other bound on the change that is fixed at signing.
+
+\begin{proposition}[No fixed bound is both sound and complete]
+Let $F(q_1)=\{a : a \le x_0 + q_1 - R \text{ and } \mathrm{out}(a) \ge G\}$ be the feasible step-2 spends after
+outcome $q_1$, and suppose some $q^\star$ has a feasible $a^\star \in F(q^\star)$ with
+$a^\star > x_0 + q^- - R$. Then for every constant $c$, either (i) some admitted step 2 breaks the reserve, or
+(ii) some feasible step 2 is refused.
+\end{proposition}
+\begin{proof}
+Soundness at $q_1=q^-$ requires $c \le x_0 + q^- - R$, otherwise spending $c$ leaves less than $R$. Completeness at
+$q^\star$ requires $c \ge a^\star > x_0 + q^- - R$. Both cannot hold.
+\end{proof}
+
+The hypothesis is mild. It holds whenever step 1 can over-deliver, or the account holds extra $X$, while step 2's price
+worsens. Our \emph{price-worse} state is a concrete witness, observed on the fork (Table~\ref{tab:matrix}). The
+dual case also occurs: in the \emph{shortfall} state, the bound $c$ = the budget expected at signing admits a
+reserve breach. An absolute floor checked after the execution ($\mathrm{bal}_X \ge R$) is sound and complete for this
+constraint by construction, because it does not depend on $q_1$.
+
+\textbf{Precedence.} To our reading of the 32 v1.3.0 enforcers, none conditions a redemption on whether a
+\emph{different} delegation has been redeemed. LimitedCalls counts redemptions of one delegation; IdEnforcer gives
+mutual exclusion among delegations that share an id, not precedence; time and block windows order by clock, not by
+completion. Hence ``step 2 only after step 1 succeeded'' is not expressible with the deployed set. We observe the
+consequence when the account already holds the step-2 input: built-in caveats admit step 2 before step 1.
+
+\section{Design}\label{sec:design}
+
+\textbf{PlanStepEnforcer} (56 lines of Solidity). Its terms are $(\mathit{planId}, i, \mathit{prereqMask})$. In
+\texttt{beforeHook} it requires that step $i$ is not yet complete and that all prerequisite bits are set. It then sets bit $i$
+in state keyed by (delegation manager, delegator, planId). Because a redemption is atomic, a reverted execution rolls
+the bit back and the step can be retried; a step can \emph{succeed} at most once. Try-mode executions are refused,
+because a failed call in try mode does not revert and would mark the step complete without effect. The enforcer gives
+the chain the idempotency that off-chain exactly-once schemes must assume of the sink~\cite{caplease2026,aidguard2026}: a
+re-proposed step reverts.
+
+\textbf{BalanceFloorEnforcer} (43 lines). Its terms are $(\mathit{token}, \mathit{floor})$. In
+\texttt{afterAllHook} it requires $\mathrm{bal}_{\mathit{token}}(\mathit{delegator}) \ge \mathit{floor}$. One instance
+expresses the reserve and another the goal. Because the check runs after all executions of a redemption,
+intermediate balances inside a batch do not matter.
+
+\textbf{Plan-bound wallet mode.} In our ElizaOS fork, the wallet's plan mode holds the user's signed delegations
+and executes each swap by \texttt{redeemDelegations} from the agent key. The user's funds stay in the smart account.
+The framework's confirmation gate is unchanged; the chain makes the final decision. A plan is signed once, before
+step 1, alongside built-in target, method and recipient caveats.
+
+\section{Benchmark and harness}\label{sec:bench}
+
+\textbf{Fork and tasks.} We use a pinned Anvil fork of Ethereum mainnet at block 26{,}250{,}601, routed through
+Uniswap~V2~\cite{uniswapv2}. Task D1 (development) sells 0.1~ETH for USDC, then must hold
+$\ge$37.31~DAI while keeping $\ge$178.23~USDC. Three held-out tasks (H1--H3) vary the pair, the sizes and the
+direction. Task numbers come from a calibration rule fixed before any run.
+
+\textbf{Scenarios.} \emph{normal}; \emph{receipt\_hidden}, where the RPC proxy hides the sale's receipt for 200\,s
+against the wallet's 60\,s wait (the classic trigger for a duplicate); and \emph{price\_change\_feasible} and
+\emph{price\_change\_infeasible}, a scheduled market move after the sale, after which the goal is still reachable or
+no longer reachable.
+
+\textbf{Harness.} Each episode runs in a fresh process with an in-memory database, localhost-only networking and a
+neutral random identity. A scripted user sends the task, answers ``Yes, confirm'' to any confirmation request (the
+worst case for duplicates), and finally asks for a COMPLETED / INFEASIBLE / IN\_PROGRESS declaration. All model
+traffic passes an egress proxy. The proxy enforces per-cohort and cumulative spending caps by worst-case reservation,
+records every request and response, and refuses any request that carries a harness label (the blinding check).
+Embeddings are computed locally and deterministically.
+
+\textbf{Scoring and audit.} Outcomes come from chain state: sales count, step-2 execution, goal and reserve. They are
+reported separately from the declared outcome. The verifier recomputes everything from the raw records, and it checks
+source and harness hashes, ledger arithmetic, caps, turn policy and blinding. Nine tamper tests (for example an edited
+response, a deleted call, a changed price) must each be rejected.
+
+\textbf{Control layers.} \emph{stock}: the agent key holds the funds and only the framework's gate applies.
+\emph{per\_tx\_policy}: target, method, recipient, value cap, and relative balance-change bounds on step 2, all
+stateless (PACE-like). \emph{existing\_controls}: per\_tx\_policy plus LimitedCalls~=~1 on every step: our plan
+built from built-in caveats. \emph{plan\_guard}: target, method and recipient caveats plus our two enforcers. There are two
+ablations: \emph{floor-only} and \emph{order-only}.
+
+\section{Evaluation}\label{sec:eval}
+
+\subsection{Compromised agent}
+
+The agent key holds every signed delegation and sends 18 crafted actions per cell straight to the chain. Each
+action starts from an isolated snapshot. The actions include repeats, reordering, exfiltration (output to an attacker,
+direct transfer, attacker approval), an unlisted asset, reserve breaches, goal misses, B2 (the goal number as the
+input) and the legitimate steps. In-plan versus off-plan labels follow from the user's constraints in that state, fixed
+before execution. Table~\ref{tab:matrix} aggregates the four tasks; Table~\ref{tab:kinds} breaks the admitted
+actions down by kind. The run is deterministic: reruns produce byte-identical results.
+
+\begin{table}[t]
+\centering
+\caption{Compromised agent, all four tasks: off-plan actions admitted (of 60, or 64 in price-worse) / legitimate
+actions refused (of 12, or 8). Every action starts from an isolated snapshot.}
+\label{tab:matrix}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccc}
+\toprule
+Layer & calibr. & shortf. & prefund. & price-w. & total \\
+\midrule
+none (agent key holds funds) & 56\,/\,0 & 56\,/\,0 & 60\,/\,0 & 64\,/\,0 & 236\,/\,0 \\
+per\_tx\_policy (stateless) & 12\,/\,0 & 20\,/\,0 & 16\,/\,0 & 16\,/\,4 & 64\,/\,4 \\
+existing\_controls (built-ins) & 0\,/\,0 & 8\,/\,0 & 4\,/\,0 & 4\,/\,4 & 16\,/\,4 \\
+floor-only (ablation) & 15\,/\,0 & 12\,/\,0 & 16\,/\,0 & 16\,/\,0 & 59\,/\,0 \\
+order-only (ablation) & 20\,/\,0 & 20\,/\,0 & 20\,/\,0 & 24\,/\,0 & 84\,/\,0 \\
+\textbf{plan\_guard} & \textbf{0\,/\,0} & \textbf{0\,/\,0} & \textbf{0\,/\,0} & \textbf{0\,/\,0} & \textbf{0\,/\,0} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Off-plan actions admitted by kind (all tasks and states).}
+\label{tab:kinds}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccccc}
+\toprule
+Layer & repeat & order & reserve & goal & budget & asset & exfil. \\
+ & /64 & /16 & /32 & /28 & /8 & /16 & /80 \\
+\midrule
+none & 64 & 8 & 32 & 28 & 8 & 16 & 80 \\
+per\_tx\_policy & 48 & 8 & 4 & 0 & 4 & 0 & 0 \\
+existing\_controls & 0 & 8 & 4 & 0 & 4 & 0 & 0 \\
+floor-only & 59 & 0 & 0 & 0 & 0 & 0 & 0 \\
+order-only & 0 & 0 & 32 & 28 & 8 & 16 & 0 \\
+\textbf{plan\_guard} & \textbf{0} & \textbf{0} & \textbf{0} & \textbf{0} & \textbf{0} & \textbf{0} & \textbf{0} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Reading.}
+\begin{itemize}
+\item Without on-chain controls, the compromised key performs every off-plan action that has funds behind it. In
+64 cases it moves funds to the attacker.
+\item Every guarded layer stops exfiltration: target, method and recipient caveats suffice.
+\item The stateless policy admits repeated sales (B1). Built-in caveats stop repeats with LimitedCalls but admit:
+\begin{itemize}
+\item two reserve breaches under shortfall (an overspend, and spending the budget fixed at signing);
+\item step 2 before step 1 when the account is prefunded.
+\end{itemize}
+They also refuse the feasible step 2 when Y gets dearer (the relative cap, Proposition~1).
+\item The ablations show that both enforcers are needed. Floors alone admit repeated sales and a repeated step 2.
+Order alone admits reserve and goal violations, B2, and a swap into an asset the plan never names; the goal floor is
+what pins the output asset.
+\item plan\_guard admits none of the 244 off-plan actions and refuses none of the 44 legitimate ones.
+\end{itemize}
+
+\subsection{Agent errors through the framework}
+
+We also replay a fixed sequence of wallet requests through stock ElizaOS's own WALLET router, each confirmed as a user
+would confirm it (no model). The sequence covers step 2 before step 1, step 1, repeated sales, a transfer to a new
+address, overspends, a goal miss, the true surplus, and a repeated step 2. It runs on all four tasks in three states.
+\begin{itemize}
+\item The framework's gate alone (stock) admits 6 or 7 off-plan requests per cell.
+\item Built-in caveats admit one per cell in the shortfall and prefunded states, and then refuse the correct step 2 as a
+consequence.
+\item plan\_guard admits 0 and refuses 0 in all 12 cells.
+\end{itemize}
+The confirmation gate never refuses a repeated sale: it binds a request, not a plan.
+
+\subsection{Who writes the plan?}
+
+The enforcers guarantee adherence to the signed plan, not that the plan is right. We asked four models to turn each
+task's request into the plan specification, 3 times per task (48 requests, no tools), and scored the result field by
+field.
+\begin{itemize}
+\item GPT-6 Luna, Claude Haiku~5.5 and Claude Sonnet~5.5 produced a fully correct plan in 36 of 36 cases.
+\item GPT-4.1-mini got the sale, the order edge and both floors right in 12 of 12, but left step~2's input asset
+open in 9 of 12. The request never says which asset pays for step~2, so this is a literal but looser plan: signed as
+is, it would let the agent spend other assets on step~2 while the floors still hold.
+\end{itemize}
+So the residual risk is under-specification rather than wrong numbers, and a plan-review screen that shows each step's
+input and output asset addresses it.
+
+\subsection{Live development runs}
+
+These are development data at one or two repetitions per cell. They are counts, not rates.
+
+\textbf{Live checks.} We ran two live checks with Claude Haiku~5.5 and GPT-6~Luna on D1 \emph{normal}, before and
+after fixing five framework defects found in the first check (L1--L5). Episodes that completed the on-chain task
+went from 2 of 4 to 4 of 4. Declarations matching chain state went from 0 of 4 to 3 of 4; the fourth ran out of
+budget after finishing. No episode sold twice.
+
+\textbf{Fault sweep.} \pending{D1, four scenarios, stock / existing\_controls / plan\_guard, Luna and Haiku at r=2,
+Sonnet~5.5 on receipt\_hidden, GPT-4.1-mini at r=1: duplicates, reserve and goal violations, refused steps,
+declared vs.\ actual}.
+
+\subsection{Gas}
+
+Table~\ref{tab:gas} gives the gas used by the legitimate steps in the compromised-agent run. All layers start from
+the same calibrated fork state. Deploying the two enforcers costs 399{,}478 and 304{,}337 gas, once per chain.
+
+\begin{table}[t]
+\centering
+\caption{Gas of the legitimate steps, same fork state (task D1, calibrated).}
+\label{tab:gas}
+\begin{tabular}{lrr}
+\toprule
+Layer & Sale & Step 2 \\
+\midrule
+none (direct from the agent key) & 130{,}205 & 188{,}092 \\
+per\_tx\_policy & 282{,}521 & 397{,}518 \\
+existing\_controls & 329{,}925 & 444{,}973 \\
+floor-only & 282{,}557 & 356{,}950 \\
+order-only & 331{,}538 & 342{,}620 \\
+\textbf{plan\_guard} & 331{,}550 & 388{,}894 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Most of the cost is the delegation framework itself: about 152k gas per redemption over a direct transaction. Against
+that baseline, plan\_guard's sale costs the same as the built-in call limit (+49k). Its step 2 is 56k cheaper than
+the built-in plan, because one floor check replaces two balance-change checks plus a call counter.
+
+\section{Failure study: ElizaOS v2}\label{sec:failures}
+
+Making the framework transact on a fork at all, then completing the task, surfaced 28 numbered findings
+(Table~\ref{tab:defects}). Each has trace evidence, and 25 are fixed with a regression test or replay. We report
+classes rather than individual bugs.
+
+\begin{table}[t]
+\centering
+\caption{Framework findings by class (IDs overlap; not independent counts).}
+\label{tab:defects}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{2.6cm}p{5.3cm}}
+\toprule
+Class & Examples \\
+\midrule
+Provider-API drift & A1: GPT-6 tool calls rejected without \texttt{reasoning\_effort} none (every call 400); A11: Sonnet/Opus~5.5 reject forced tool choice (every planner call 400); A12: GPT-6.1 Sol unusable through Chat Completions (open); H6 \\
+Missing chain primitives & A4: no fork-usable swap route; H7: no receipt or balance read; A5: token holdings absent \\
+Stale or lost state & L2: earlier transaction hashes lost across turns; A6, A8/H8, L5: stale balances; H4/L7: earlier effects lack current proof \\
+Over-eager safety layers & L1: credential redaction masks token addresses, which the model copies back; A9/H1/H2/L4/L6: honest replies rejected as ungrounded; H3: no effect receipt for a submitted trade \\
+Confirmation binding & L3: ``yes'' does not execute when the chain alias or an echoed recipient differs \\
+Tool surface & A2, A7, H9, H5, A10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three lessons matter for containment:
+\begin{itemize}
+\item \textbf{Off-chain safety layers mostly cost progress.} The framework's validators and redaction rejected honest
+replies, hid the assets the agent had to name, and lost the agent's record of its own effects. In one development
+run this led to a duplicate sale.
+\item \textbf{The confirmation gate approved every duplicate it was shown.} It binds parameters, not plan state.
+\item \textbf{Provider drift silently disables whole model families.} Two of the four current frontier families
+could not call tools through the stock framework at all.
+\end{itemize}
+Fixing the framework is necessary to measure it, but it does not remove the need for containment: after all fixes,
+agents still re-proposed completed steps (B1) and used the goal as the input amount (B2).
+
+\section{Related work}
+
+\textbf{Fork-based evaluation.} EVM-QuestBench~\cite{evmquestbench2026} runs multi-turn generated code on a BSC fork
+with final-state scoring. Intent2Tx~\cite{intent2tx2026} scores one-shot transactions by state effect.
+DeFiFlowBench~\cite{defiflowbench2026} checks synthesized workflows statically. None runs a deployed framework under
+injected faults or measures duplicate effects.
+
+\textbf{Guards for agent actions.} PACE~\cite{pace2026} verifies per-transaction policy on-chain.
+Yin~\cite{yin2026invariants} enforces off-chain invariants in a custom wallet agent. CapLease and
+AID-Guard~\cite{caplease2026,aidguard2026} provide off-chain exactly-once authorization. ChainClaw~\cite{chainclaw2026}
+guards multi-step workflows off-chain, and Proof of Execution~\cite{poe2026} makes traces tamper-evident. We move
+sequence-level guarantees on-chain and compare layers under the same faults.
+
+\textbf{Attacks and surveys.} Context-manipulation attacks on ElizaOS~\cite{craibench2025,cryptoland2025} motivate
+our compromised-agent model. Surveys~\cite{alqithami2026,sokcommerce2026} call for reproducible, finance-specific
+harnesses. Market studies~\cite{papergains2026} describe deployed agents' economics, not their failures.
+
+\section{Limitations and discussion}\label{sec:limits}
+
+\begin{itemize}
+\item \textbf{Plan authoring is trusted.} The enforcers guarantee adherence to the signed plan, not that the plan is
+right. Our probe found models reliable on numbers and order, with one model under-specifying the input asset; the
+probe uses one phrasing and two-step plans.
+\item \textbf{Scope.} We study one chain, one DEX route (a small on-chain Uniswap~V2 route added to the stock
+framework, which otherwise quotes only through HTTP aggregators), one framework family, and two-step plans.
+\item \textbf{Evidence.} The live data are development runs at small $r$. The compromised-agent and agent-error
+results are deterministic but constructed. The enforcers are not audited, and within one batched redemption,
+prerequisites follow the manager's hook order.
+\item \textbf{Configurations.} Our stock condition runs the hardened framework; a minimal-fix configuration is
+planned.
+\end{itemize}
+
+\section{Conclusion}
+
+Off-chain safeguards and per-transaction policies do not contain the failures that multi-step transacting agents
+actually produce. Signing-time caveats provably cannot express an absolute reserve or step precedence. Two small
+enforcers on a deployed delegation framework close that gap: they admit no off-plan action and refuse no legitimate
+one in our matrix, at no more gas than the plan built from built-in caveats.
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\end{document}

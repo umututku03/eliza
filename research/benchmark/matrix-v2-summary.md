@@ -81,7 +81,7 @@ Legitimate-step gas, calibrated state (sale / step 2):
 ## Reading
 
 - **plan_guard** admitted 0 of 244 off-plan actions and refused 0 of 44 legitimate ones, on all four tasks and in all four states.
-- **existing_controls** (the strongest plan MetaMask's built-in caveats can express) admitted 16 and refused 4 legitimate ones:
+- **existing_controls** (our plan built from MetaMask's built-in caveats: call limits plus relative balance caps) admitted 16 and refused 4 legitimate ones:
   - under shortfall, the reserve-breaking overspend and the signing-time budget (8);
   - under prefunding, step 2 before step 1 (4 + 4);
   - under price_worse, it also refused the feasible step 2 (4), as Proposition 1 predicts.
