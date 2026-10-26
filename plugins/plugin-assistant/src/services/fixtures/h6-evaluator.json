@@ -1,0 +1,6 @@
+{
+  "source": "results-dev4-haiku-stock/llm/calls/6-response.json",
+  "sha256": "c49281d3476c5f44e95ea1248c2cc8ce96d60411375ab96b8fcafee01fadde81",
+  "response": "```json\n{\n  \"factMemory\": {\n    \"facts\": []\n  },\n  \"preferences\": {\n    \"ops\": []\n  },\n  \"relationships\": {\n    \"relationships\": []\n  },\n  \"identities\": {\n    \"identities\": []\n  },\n  \"success\": {\n    \"success\": false,\n    \"reason\": \"The 0.1 ETH sale was prepared but not submitted (WALLET_SWAP returned walletActionSucceeded=false, awaitingUserInput=true). The DAI acquisition and the 178.23 USDC retention requirement were not started, so the requested outcome is incomplete.\"\n  },\n  \"experiencePatterns\": {\n    \"experiences\": []\n  }\n}\n```",
+  "diagnostic": "Post-turn evaluator: provider rejected schema-constrained output; disabling schema requests for this runtime (json_object fallback) (streak=1)"
+}

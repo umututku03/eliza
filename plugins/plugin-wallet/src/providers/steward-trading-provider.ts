@@ -32,6 +32,11 @@ function serviceFromRuntime(
   return null;
 }
 
+// Unavailable Steward trading covers only these venues. Without the scope, a model read "Steward Trading
+// Unavailable" as "no trading", and did not attempt an on-chain WALLET swap that does not use Steward.
+const SCOPE_NOTE =
+  "Scope: Hyperliquid and Polymarket only. On-chain wallet swaps and transfers (WALLET) do not use Steward.";
+
 function summarizeCapability(capability: TradingCapability): string {
   if (!capability.canTrade) return `Unavailable: ${capability.reason}`;
   return `${capability.kind} configured for agent ${capability.agentId ?? "unknown"}`;
@@ -59,7 +64,7 @@ export const stewardTradingProvider: Provider = {
     const service = serviceFromRuntime(runtime);
     if (!service) {
       return {
-        text: "## Steward Trading\nSteward trading service is not running.",
+        text: `## Steward Trading\nSteward trading service is not running. ${SCOPE_NOTE}`,
         values: { stewardTradingReady: false },
       };
     }
@@ -67,7 +72,7 @@ export const stewardTradingProvider: Provider = {
     const capability = service.capability();
     if (!capability.canTrade) {
       return {
-        text: `## Steward Trading\n${summarizeCapability(capability)}`,
+        text: `## Steward Trading\n${summarizeCapability(capability)}. ${SCOPE_NOTE}`,
         values: {
           stewardTradingReady: false,
           stewardTradingCapability: capability.kind,

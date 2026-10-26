@@ -128,7 +128,10 @@ export interface PlannerRuntime {
 	getModelRegistrations?(): ModelRegistrationInfo[];
 	supportsModelAttemptPreparation?: boolean;
 	/** Reauthorize deferred provider reads before restoring model context. */
-	restoreProviderContext?(context: ContextObject): Promise<ContextObject>;
+	restoreProviderContext?(
+		context: ContextObject,
+		refreshProviders?: readonly string[],
+	): Promise<ContextObject>;
 	/** Optional per-agent setting lookup used by guarded runtime features. */
 	getSetting?(key: string): string | boolean | number | null;
 	reportError?(
@@ -178,6 +181,8 @@ export interface InferredSubactionDispatch {
 }
 
 export interface PlannerToolResult {
+	/** Trusted action-owned invalidation, never inferred from model arguments or prose. */
+	refreshProviders?: ActionResult["refreshProviders"];
 	/** Tool-owned inventory observation; preserve it until scoped final egress. */
 	emptyTrackedState?: ActionResult["emptyTrackedState"];
 	success: boolean;

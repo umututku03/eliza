@@ -310,6 +310,10 @@ function pinDiscriminatorForVirtual(
 			sliced.push({
 				...discriminatorRest,
 				description: pinnedDiscriminatorDescription(subaction),
+				// H9: sibling examples must not contradict the pinned discriminator.
+				descriptionCompressed: pinnedDiscriminatorDescription(subaction),
+				compressedDescription: pinnedDiscriminatorDescription(subaction),
+				examples: undefined,
 				required: false,
 				schema: {
 					...baseSchema,

@@ -753,6 +753,17 @@ function supportsEffortParameter(modelName: ModelName): boolean {
 }
 
 /**
+ * Models whose Messages API rejects forced tool choice (`any` / `tool`) with a
+ * 400: "tool_choice: type "tool" and "any" are not supported for this model."
+ * Live-probed 2026-10-26 on claude-sonnet-5-5 and claude-opus-5-5; the API
+ * documents the same for claude-fable-5-1 / claude-mythos-5-1.
+ */
+function rejectsForcedToolChoice(modelName: ModelName): boolean {
+  const name = modelName.toLowerCase();
+  return ["sonnet-5-5", "opus-5-5", "fable-5-1", "mythos-5-1"].some((id) => name.includes(id));
+}
+
+/**
  * Whether a model accepts the xhigh/max effort tiers. Mirrors the server-side
  * model catalog (packages/agent/src/api/model-catalog.ts): fable-5 and
  * opus >= 4.7 take the full range; everything else caps at high — sending
@@ -1485,6 +1496,21 @@ async function generateTextWithModel(
   modelType: TextModelType
 ): Promise<string | TextStreamResult> {
   const paramsWithAttachments = toAnthropicTextParams(params);
+  const responseFormat = paramsWithAttachments.responseFormat;
+  if (
+    !paramsWithAttachments.responseSchema &&
+    (responseFormat === "json_object" ||
+      (typeof responseFormat === "object" && responseFormat?.type === "json_object"))
+  ) {
+    // H6: native JSON output requires a schema; refuse explicitly so callers
+    // can choose a plain-JSON prompt without losing later schema support.
+    throw new ElizaError(
+      "Anthropic json_object response schema mode is unsupported; supply responseSchema",
+      {
+        code: "ANTHROPIC_JSON_OBJECT_UNSUPPORTED",
+      }
+    );
+  }
   const shouldReturnNativeResult = usesNativeTextResult(paramsWithAttachments);
   const systemPrompt = resolveEffectiveSystemPrompt({
     params: paramsWithAttachments,
@@ -1657,8 +1683,18 @@ async function generateTextWithModel(
       ? applyToolsCacheBreakpoint(paramsWithAttachments.tools, toolsCacheControl)
       : paramsWithAttachments.tools
     : undefined;
-  const sanitizedToolChoice = paramsWithAttachments.toolChoice
-    ? deepToWellFormedUnicode(paramsWithAttachments.toolChoice)
+  // A forced choice on a model that rejects it would 400 every planner call;
+  // `auto` keeps the tools and lets the prompt steer the call.
+  const requestedToolChoice =
+    paramsWithAttachments.toolChoice &&
+    rejectsForcedToolChoice(modelName) &&
+    (paramsWithAttachments.toolChoice === "required" ||
+      (typeof paramsWithAttachments.toolChoice === "object" &&
+        paramsWithAttachments.toolChoice.type === "tool"))
+      ? "auto"
+      : paramsWithAttachments.toolChoice;
+  const sanitizedToolChoice = requestedToolChoice
+    ? deepToWellFormedUnicode(requestedToolChoice)
     : undefined;
   // Sanitize the plain response schema BEFORE it is wrapped in the native
   // output shape. Once wrapped, responseFormat is a Promise that defeats the

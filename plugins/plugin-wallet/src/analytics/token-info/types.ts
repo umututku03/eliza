@@ -20,6 +20,9 @@ export const TOKEN_INFO_SUBACTIONS = [
 ] as const;
 
 export type TokenInfoSubaction = (typeof TOKEN_INFO_SUBACTIONS)[number];
+export type TokenInfoAvailability =
+  | { readonly available: true }
+  | { readonly available: false; readonly reason: string };
 
 export interface TokenInfoParams {
   readonly target?: string;
@@ -38,6 +41,7 @@ export interface TokenInfoParams {
 }
 
 export interface TokenInfoProviderMetadata {
+  readonly availability?: TokenInfoAvailability;
   readonly name: string;
   readonly aliases: readonly string[];
   readonly supportedSubactions: readonly TokenInfoSubaction[];
@@ -45,6 +49,7 @@ export interface TokenInfoProviderMetadata {
 }
 
 export interface TokenInfoProvider extends TokenInfoProviderMetadata {
+  getAvailability?(runtime: IAgentRuntime): TokenInfoAvailability;
   execute(context: TokenInfoDispatchContext): Promise<ActionResult>;
 }
 
@@ -67,6 +72,7 @@ export type TokenInfoRouteResult =
       readonly ok: false;
       readonly error:
         | "UNSUPPORTED_PROVIDER"
+        | "PROVIDER_UNAVAILABLE"
         | "UNSUPPORTED_SUBACTION"
         | "INVALID_PARAMS"
         | "EXECUTION_FAILED";

@@ -144,6 +144,7 @@ import {
   ambientTurnProviderExclusions,
   selectV5PlannerStateProviderNames,
 } from "./provider-state.ts";
+import { mergeRefreshedProviders } from "./refreshed-providers.ts";
 import {
   createV5ReplyStrategyResult,
   deliveredTextsCoverReply,
@@ -1643,14 +1644,23 @@ export async function runV5MessageRuntimeStage1(
       getModelRegistrations: () => args.runtime.getModelRegistrations?.() ?? [],
       supportsModelAttemptPreparation:
         runtimeWithOptionalServices.supportsModelAttemptPreparation,
-      restoreProviderContext: async (original) => {
+      restoreProviderContext: async (original, refreshProviders) => {
         getStreamingContext()?.abortSignal?.throwIfAborted();
         const freshState = await args.runtime.composeState(
           args.message,
           plannerProviderNames,
           true,
           false,
+          refreshProviders ? [...refreshProviders] : null,
         );
+        plannerState.data = {
+          ...plannerState.data,
+          providers: mergeRefreshedProviders(
+            plannerState.data?.providers,
+            freshState.data?.providers,
+            refreshProviders,
+          ),
+        };
         const fresh = await createV5MessageContextObject({
           ...args,
           includeContextCatalog: contextCatalogRead,

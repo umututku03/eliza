@@ -10,6 +10,7 @@
  * address and per-chain balances exclusively from `EVMService`'s
  * background-refreshed cache so RPC latency never enters prompt composition.
  */
+
 import * as path from "node:path";
 import {
   type IAgentRuntime,
@@ -36,13 +37,16 @@ import {
   createWalletClient,
   formatUnits,
   http,
+  isAddress,
+  parseAbi,
   publicActions,
   walletActions,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as viemChains from "viem/chains";
+import { recentWalletSubmissions, walletSubmissionLines } from "../../wallet-submissions";
 import { DEFAULT_CHAINS, EVM_SERVICE_NAME } from "../constants";
-import { requireProviderSpec } from "../generated/specs/spec-helpers";
+import { planGuardFromSettings } from "../plan-guard";
 import {
   initRPCProviderManager,
   type RPCProviderName,
@@ -127,6 +131,8 @@ export class WalletProvider {
   private readonly cacheKey = "evm/wallet";
   private _chains: Record<string, Chain>;
   private _account: PrivateKeyAccount;
+  /** Address that holds the funds when it differs from the signer (plan-guard mode). */
+  private _holder?: Address;
   private readonly _runtime: IAgentRuntime;
   private readonly _rpcConfigs: Record<string, ChainRpcConfig>;
   /** Chains where Cloud RPC returned a non-transient auth error (401/403) and should not be retried this session. */
@@ -144,8 +150,13 @@ export class WalletProvider {
     this._rpcConfigs = rpcConfigs;
   }
 
+  /** The address whose funds the agent manages: the signer, or the plan account in plan-guard mode. */
   getAddress(): Address {
-    return this._account.address;
+    return this._holder ?? this._account.address;
+  }
+
+  setHolderAddress(holder: Address): void {
+    this._holder = holder;
   }
 
   get chains(): Record<string, Chain> {
@@ -287,7 +298,7 @@ export class WalletProvider {
   async getWalletBalanceForChain(chainName: SupportedChain): Promise<string> {
     const client = this.getPublicClient(chainName);
     try {
-      const balance = await client.getBalance({ address: this._account.address });
+      const balance = await client.getBalance({ address: this.getAddress() });
       // Native decimals are chain-specific (e.g. Tempo uses 6); viem's chain
       // definition is authoritative.
       return formatUnits(balance, this.getChainConfigs(chainName).nativeCurrency.decimals);
@@ -562,7 +573,10 @@ export async function initWalletProvider(runtime: IAgentRuntime): Promise<Wallet
   }
 
   const validatedKey = PrivateKeySchema.parse(privateKey);
-  return new WalletProvider(validatedKey, runtime, chains, rpcConfigs);
+  const provider = new WalletProvider(validatedKey, runtime, chains, rpcConfigs);
+  const plan = planGuardFromSettings(runtime);
+  if (plan) provider.setHolderAddress(plan.account);
+  return provider;
 }
 
 class LazyTeeWalletProvider extends WalletProvider {
@@ -686,10 +700,78 @@ class LazyTeeWalletProvider extends WalletProvider {
   }
 }
 
-const spec = requireProviderSpec("wallet");
+/**
+ * ERC-20 balances of the wallet for the tokens in `EVM_WALLET_TRACKED_TOKENS` ("chain:address" entries,
+ * comma-separated; a bare address uses the first configured chain), read on-chain at call time. This gives
+ * the agent its token holdings without an external token-data service.
+ */
+export async function trackedTokenBalances(
+  runtime: IAgentRuntime
+): Promise<{ lines: string[]; holdings: EvmHolding[] }> {
+  const raw = runtime.getSetting("EVM_WALLET_TRACKED_TOKENS");
+  if (typeof raw !== "string" || raw.trim() === "") return { lines: [], holdings: [] };
+  const walletProvider = await initWalletProvider(runtime);
+  const owner = walletProvider.getAddress();
+  const defaultChain = Object.keys(walletProvider.chains)[0];
+  const erc20 = parseAbi([
+    "function symbol() view returns (string)",
+    "function decimals() view returns (uint8)",
+    "function balanceOf(address) view returns (uint256)",
+  ]);
+  const lines: string[] = [];
+  const holdings: EvmHolding[] = [];
+  for (const entry of raw
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean)) {
+    const [chainPart, addressPart] = entry.includes(":") ? entry.split(":") : [defaultChain, entry];
+    const chainName = chainPart as SupportedChain;
+    if (!walletProvider.chains[chainName] || !isAddress(addressPart)) {
+      lines.push(`${entry}: invalid tracked token entry`);
+      continue;
+    }
+    try {
+      const client = walletProvider.getPublicClient(chainName);
+      const read = (functionName: "symbol" | "decimals") =>
+        client.readContract({
+          address: addressPart,
+          abi: erc20,
+          functionName,
+          authorizationList: undefined,
+        });
+      const [symbol, decimals, balance] = await Promise.all([
+        read("symbol"),
+        read("decimals"),
+        client.readContract({
+          address: addressPart,
+          abi: erc20,
+          functionName: "balanceOf",
+          args: [owner],
+          authorizationList: undefined,
+        }),
+      ]);
+      const amount = formatUnits(balance as bigint, Number(decimals));
+      lines.push(`${chainName}: ${amount} ${String(symbol)} (token ${addressPart})`);
+      holdings.push({ chain: chainName, symbol: String(symbol), amount, token: addressPart });
+    } catch {
+      lines.push(`${chainName}: token ${addressPart} balance unavailable (RPC error)`);
+    }
+  }
+  return { lines, holdings };
+}
+
+/** One balance of the configured wallet, as observed this turn; the message runtime grounds holdings claims in these. */
+interface EvmHolding {
+  chain: string;
+  symbol: string;
+  amount: string;
+  token?: string;
+}
 
 export const evmWalletProvider: Provider = {
-  name: spec.name,
+  // The spec name "wallet" collides with plugin-wallet's top-level address-only `wallet` provider; the
+  // runtime keeps the first registration and silently skips this one, so balances never reached context.
+  name: "evm-wallet",
   description: "EVM wallet address and balances",
   descriptionCompressed: "EVM wallet address and balances.",
   contexts: ["finance", "crypto", "wallet"],
@@ -750,14 +832,32 @@ export const evmWalletProvider: Provider = {
         ...unavailableChains.map((chain) => `${chain.chainName}: balance unavailable (RPC error)`),
       ].join("\n");
 
+      const tracked = await trackedTokenBalances(runtime);
+      const trackedLines = tracked.lines;
+      const trackedText = trackedLines.length
+        ? `\n\nToken balances (read on-chain now):\n${trackedLines.join("\n")}`
+        : "";
+      const submissions = await recentWalletSubmissions(runtime);
+      const submissionText = submissions.length
+        ? `\n\nTransactions this wallet submitted, most recent first (check one with action=tx_status):\n${walletSubmissionLines(submissions).join("\n")}`
+        : "";
       return {
-        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}`,
+        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}${trackedText}${submissionText}`,
         data: {
           address: walletData.address,
           chains,
           unavailableChains,
+          submissions,
           chainCount: walletData.chains.length,
           displayedChainCount: chains.length,
+          holdings: [
+            ...chains.map((chain) => ({
+              chain: chain.name,
+              symbol: chain.symbol,
+              amount: chain.balance,
+            })),
+            ...tracked.holdings,
+          ],
         },
         values: {
           address: walletData.address,

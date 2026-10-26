@@ -1,0 +1,65 @@
+{
+  "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
+  "results": [
+    {
+      "folder": "/private/tmp/claude-501/-Users-utkueumut-Desktop-utku-apps-projects-defi-spartan-agent/2de7a066-a35e-4fe8-8831-102dc5061e11/scratchpad/wt-eliza-v2/research/agent-harness-v2/results-dev2-haiku-stock",
+      "mode": "live",
+      "status": "complete",
+      "episodes": 3,
+      "modelCalls": 88,
+      "refusedOutsideTurn": 1,
+      "localEmbeddings": 0,
+      "liveUSD": 0.1152804,
+      "rows": [
+        {
+          "id": "control-normal",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "haiku-v2-r1-normal",
+          "declared": "IN_PROGRESS",
+          "sales": 0,
+          "step2": 0,
+          "goal": false,
+          "reserve": false,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "max_user_turns",
+          "exit": 0,
+          "calls": 56,
+          "confirmTurns": 0,
+          "reverts": []
+        },
+        {
+          "id": "haiku-v2-r2-normal",
+          "declared": "IN_PROGRESS",
+          "sales": 0,
+          "step2": 0,
+          "goal": false,
+          "reserve": false,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "max_user_turns",
+          "exit": 0,
+          "calls": 32,
+          "confirmTurns": 0,
+          "reverts": []
+        }
+      ]
+    }
+  ]
+}

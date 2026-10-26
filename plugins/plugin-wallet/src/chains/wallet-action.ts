@@ -14,6 +14,7 @@
 import type {
   Action,
   ActionResult,
+  AppliedEffectReceipt,
   HandlerCallback,
   HandlerOptions,
   IAgentRuntime,
@@ -24,6 +25,11 @@ import type {
 } from "@elizaos/core";
 import { walletSearchAddressHandler } from "../analytics/birdeye/actions/wallet-search-address.js";
 import { tokenInfoHandler } from "../analytics/token-info/action.js";
+import { parseTokenInfoParams } from "../analytics/token-info/params.js";
+import {
+  TOKEN_INFO_SERVICE_TYPE,
+  type TokenInfoService,
+} from "../analytics/token-info/service.js";
 import {
   assertEvmTransferRecipientAuthorized,
   assertSolanaTransferRecipientAuthorized,
@@ -50,6 +56,12 @@ import {
   isWalletRouterSubaction,
   parseWalletRouterParams,
 } from "../types/wallet-router.js";
+import {
+  evmBalanceHandler,
+  evmTxStatusHandler,
+  walletSubmissionCacheKey,
+} from "./evm/actions/onchain-read.js";
+import { recordWalletSubmission } from "./wallet-submissions.js";
 
 const LEGACY_SWAP_ACTIONS = new Set([
   "SWAP",
@@ -82,7 +94,12 @@ const LEGACY_SEARCH_ADDRESS_ACTIONS = new Set([
 ]);
 const GOV_OPS = new Set(["propose", "vote", "queue", "execute"]);
 
-const ANALYTICS_SUBACTIONS = ["token_info", "search_address"] as const;
+const ANALYTICS_SUBACTIONS = [
+  "token_info",
+  "search_address",
+  "tx_status",
+  "balance",
+] as const;
 type WalletAnalyticsSubaction = (typeof ANALYTICS_SUBACTIONS)[number];
 
 const WALLET_SUBACTIONS = [
@@ -393,6 +410,39 @@ function resultText(result: WalletRouterResult): string {
   return `Submitted ${execution.subaction} on ${result.handler.chain}${id ? `: ${id}` : "."}`;
 }
 
+/** H3: bind submission claims to a confirmed, non-dry-run transaction id.
+ * Without this receipt, reply recovery can lose the record of a completed effect. */
+function walletSubmissionReceipt(
+  routed: WalletRouterResult,
+): AppliedEffectReceipt | null {
+  if (!routed.ok) return null;
+  const execution = routed.result;
+  const id = execution.transactionHash ?? execution.signature;
+  const unconfirmed =
+    (execution.metadata as { confirmationStatus?: unknown } | undefined)
+      ?.confirmationStatus === "unconfirmed";
+  if (
+    execution.status !== "submitted" ||
+    execution.mode !== "execute" ||
+    execution.dryRun ||
+    !id ||
+    unconfirmed
+  ) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  return {
+    receiptId: `wallet:${routed.handler.chain}:${execution.subaction}:${id}`,
+    operation: `wallet.${execution.subaction}`,
+    resource: { kind: `wallet.${routed.handler.chain}.transaction`, id },
+    artifacts: [],
+    idempotency: { key: null, replayed: false },
+    observedAt: now,
+    outcome: "applied",
+    commit: { kind: "provider_accepted", id, committedAt: now },
+  };
+}
+
 function serviceFromRuntime(
   runtime: IAgentRuntime,
 ): WalletBackendService | null {
@@ -509,10 +559,24 @@ async function runWalletRouter(
     };
   }
 
+  // Bind the confirmation to the resolved chain, not its spelling: a model that
+  // proposes on "mainnet" and confirms on "ethereum" otherwise gets a fresh
+  // prompt instead of an execution (live check: re-asks in 3 of 4 episodes).
   const confirmationGate = await gateWalletFinancialExecution({
     runtime,
     message,
-    params,
+    params: {
+      ...params,
+      chain: service.resolveChainKey(executionParams) ?? params.chain,
+      // An EVM swap pays out to the wallet itself (or the plan account): its
+      // SwapParams carry no recipient, so a model echoing its own address as
+      // recipient on one call and omitting it on the next must not split the
+      // confirmation. Transfers and bridges still bind their recipient.
+      ...(params.subaction === "swap" &&
+      service.resolveSignerKind(executionParams) === "evm"
+        ? { recipient: undefined }
+        : {}),
+    },
     callback,
   });
   if (!confirmationGate.proceed) {
@@ -542,9 +606,35 @@ async function runWalletRouter(
     },
   });
 
+  const receipt = walletSubmissionReceipt(routed);
+  if (receipt && routed.ok) {
+    // Lets a later tx_status read name the operation behind this hash.
+    await runtime.setCache(walletSubmissionCacheKey(receipt.resource.id), {
+      chain: routed.handler.chain,
+      subaction: routed.result.subaction,
+    });
+    await recordWalletSubmission(runtime, {
+      transactionHash: receipt.resource.id,
+      chain: routed.handler.chain,
+      subaction: routed.result.subaction,
+      amount: routed.result.amount,
+      fromToken: routed.result.fromToken,
+      toToken: routed.result.toToken,
+      to: routed.result.to,
+      submittedAt: receipt.observedAt,
+    });
+  }
   return {
     success: routed.ok,
     text,
+    ...(receipt
+      ? {
+          effectReceipts: [receipt],
+          ...(routed.ok && routed.handler.signer.kind === "evm"
+            ? { refreshProviders: ["evm-wallet"] }
+            : {}),
+        }
+      : {}),
     values: routed.ok
       ? {
           walletActionSucceeded:
@@ -570,9 +660,9 @@ async function runWalletRouter(
 export const walletRouterAction: Action = {
   name: "WALLET",
   description:
-    "Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address).",
+    "Route wallet operations through registered chain handlers and analytics providers. Use action=transfer|swap|bridge|gov|pump_fun_buy for on-chain ops (params: target, toChain, fromToken, toToken, amount, recipient, slippageBps, mode, dryRun; pump_fun_buy takes toToken and amount and no target); action=token_info for token/market data (params: operation, target, query, address, chain, limit); action=search_address for Birdeye wallet/portfolio lookup (param: address); action=tx_status reads a transaction's on-chain status (params: target, transactionHash); action=balance reads the configured wallet's native and tracked token balances on-chain now (param: target).",
   descriptionCompressed:
-    "WALLET transfer|swap|bridge|gov|pump_fun_buy|token_info|search_address; chain ops + market/portfolio",
+    "WALLET transfer|swap|bridge|gov|pump_fun_buy|token_info|search_address|tx_status|balance; chain ops + market/portfolio + on-chain reads",
   contexts: ["finance", "crypto", "wallet"],
   contextGate: { anyOf: ["finance", "crypto", "wallet"] },
   roleGate: { minRole: "ADMIN" },
@@ -609,6 +699,8 @@ export const walletRouterAction: Action = {
         "pump_fun_buy",
         "token_info",
         "search_address",
+        "tx_status",
+        "balance",
       ],
     },
     {
@@ -762,6 +854,14 @@ export const walletRouterAction: Action = {
       examples: ["base", "ethereum", "solana"],
     },
     {
+      name: "transactionHash",
+      description:
+        "tx_status only: the 0x-prefixed hash of the transaction to check, for example one this wallet submitted earlier.",
+      required: false,
+      subactions: ["tx_status"],
+      schema: { type: "string" },
+    },
+    {
       name: "operation",
       description:
         "token_info only: which lookup to run. token looks up one token by address or query; search matches query text; trending, boosted, and profiles list tokens; new_pairs lists new pairs (optional chain); chain_pairs lists the top pairs on chain. When omitted, a call with address or query runs token. On target coingecko, token takes query as the coin id, or address with chain.",
@@ -798,6 +898,18 @@ export const walletRouterAction: Action = {
     const raw = extractRawParams(message, state, options);
     if (raw) {
       const subaction = resolveSubaction(raw);
+      if (subaction === "search_address" || subaction === "token_info") {
+        const analytics = _runtime.getService(
+          TOKEN_INFO_SERVICE_TYPE,
+        ) as TokenInfoService | null;
+        const params = parseTokenInfoParams(message, state, options);
+        return (
+          analytics?.hasAvailableProvider?.(
+            subaction === "search_address" ? "wallet" : params.subaction,
+            subaction === "search_address" ? "birdeye" : params.target,
+          ) ?? false
+        );
+      }
       if (isWalletSubaction(subaction)) {
         return true;
       }
@@ -819,6 +931,12 @@ export const walletRouterAction: Action = {
 
     if (subaction === "token_info") {
       return tokenInfoHandler(runtime, message, state, options, callback);
+    }
+    if (subaction === "tx_status") {
+      return evmTxStatusHandler(runtime, raw);
+    }
+    if (subaction === "balance") {
+      return evmBalanceHandler(runtime, raw);
     }
     if (subaction === "search_address") {
       return walletSearchAddressHandler(

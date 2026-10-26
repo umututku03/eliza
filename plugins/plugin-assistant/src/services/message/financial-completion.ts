@@ -3,8 +3,8 @@
  * operation from this turn. Router preparation and balance observations are
  * not evidence of submission; an unrelated successful operation is not proof.
  */
-import type { ActionResult } from "@elizaos/core";
-import { isObjectRecord } from "@elizaos/core";
+import type { Action, ActionResult } from "@elizaos/core";
+import { isObjectRecord, promotedSubactionDescription } from "@elizaos/core";
 
 type FinancialOperation = "transfer" | "swap" | "bridge" | "order" | "gov";
 type FinancialClaim = {
@@ -17,6 +17,10 @@ const COMPLETION =
   /\b(?:submitted|sent|transferred|swapped|bridged|executed|completed|placed|queued|voted|proposed|confirmed|settled|finalized|filled)\b/i;
 const NON_ASSERTION =
   /\b(?:not|never|failed|rejected|unable|cannot|can't|couldn't|didn't|hasn't|haven't|wasn't|weren't|isn't|aren't|if|unless|once|when|whether|would|could|should|will|can|may|might)\b/i;
+
+// The user's own approval ("before you had confirmed it") is not a claim that
+// the operation settled.
+const USER_SUBJECT = /\byou(?:'ve|'d|\s+(?:have|had|already|just))*\s+$/i;
 
 function financialClaims(reply: string): FinancialClaim[] {
   const claims: FinancialClaim[] = [];
@@ -36,7 +40,9 @@ function financialClaims(reply: string): FinancialClaim[] {
       (match) =>
         /\b(?:transferred|swapped|bridged|executed|completed|queued|voted|confirmed|settled|finalized|filled)\b/i.test(
           match[0],
-        ) && !NON_ASSERTION.test(sentence.slice(0, match.index)),
+        ) &&
+        !NON_ASSERTION.test(sentence.slice(0, match.index)) &&
+        !USER_SUBJECT.test(sentence.slice(0, match.index)),
     );
     if (
       /\b(?:governance|onchain|on-chain)\s+(?:proposal|vote)|\bproposal\b/i.test(
@@ -87,16 +93,43 @@ function nonemptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/** Core records the dispatched child identity, not its umbrella's name. */
+function isWalletResult(
+  result: ActionResult,
+  actions: readonly Action[],
+): boolean {
+  const name = result.data?.actionName;
+  if (name === "WALLET") return true;
+  const action = actions.find((candidate) => candidate.name === name);
+  const promoted = action && promotedSubactionDescription(action);
+  return (
+    promoted?.parent === "WALLET" &&
+    promoted.subaction === result.data?.subaction
+  );
+}
+
 function resultProvesClaim(
   result: ActionResult,
   claim: FinancialClaim,
+  actions: readonly Action[],
 ): boolean {
   if (result.success !== true) return false;
+  const data = result.data;
+  if (!data) return false;
+  // An on-chain read this turn of a transaction this wallet submitted proves
+  // that operation, including its settlement, whichever turn submitted it.
+  if (
+    claim.operation !== "order" &&
+    claim.operation !== "gov" &&
+    isWalletResult(result, actions) &&
+    data.subaction === "tx_status" &&
+    data.receiptStatus === "success" &&
+    data.operation === claim.operation
+  )
+    return true;
   // The existing router results prove provider submission, not confirmation
   // or settlement. Do not promote a transaction identifier into finality.
   if (claim.requiresSettlement) return false;
-  const data = result.data;
-  if (!data) return false;
   if (claim.operation === "order") {
     return (
       data.actionName === "TRADE" &&
@@ -107,7 +140,7 @@ function resultProvesClaim(
     );
   }
   if (
-    data.actionName !== "WALLET" ||
+    !isWalletResult(result, actions) ||
     data.subaction !== claim.operation ||
     data.status !== "submitted" ||
     data.mode !== "execute" ||
@@ -128,6 +161,7 @@ function resultProvesClaim(
 export function financialCompletionIsUngrounded(
   reply: string,
   results: readonly ActionResult[],
+  actions: readonly Action[],
   request?: string,
 ): boolean {
   // Unqualified orders and transfers also exist outside finance. Only the
@@ -136,14 +170,14 @@ export function financialCompletionIsUngrounded(
   const financialContext =
     results.some(
       (result) =>
-        result.data?.actionName === "WALLET" ||
-        result.data?.actionName === "TRADE",
+        isWalletResult(result, actions) || result.data?.actionName === "TRADE",
     ) ||
     /\b(?:wallet|crypto|on-?chain|governance|Hyperliquid|Polymarket|SOL|ETH|BTC|USDC|USDT)\b/i.test(
       `${request ?? ""}\n${reply}`,
     );
   if (!financialContext) return false;
   return financialClaims(reply).some(
-    (claim) => !results.some((result) => resultProvesClaim(result, claim)),
+    (claim) =>
+      !results.some((result) => resultProvesClaim(result, claim, actions)),
   );
 }

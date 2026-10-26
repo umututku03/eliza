@@ -36,6 +36,7 @@ import {
   encodeFunctionData,
   formatUnits,
   type Hex,
+  isAddress,
   parseAbi,
   parseUnits,
 } from "viem";
@@ -57,6 +58,13 @@ import {
 import { parseEvmBaseUnits } from "../exact-units";
 import { requireActionSpec } from "../generated/specs/spec-helpers";
 import {
+  approvalFor,
+  candidateSteps,
+  executeThroughPlan,
+  type PlanGuardConfig,
+  planGuardFromSettings,
+} from "../plan-guard";
+import {
   type ChainBalanceState,
   initWalletProvider,
   type WalletProvider,
@@ -74,6 +82,7 @@ import {
   type SwapParams,
   type SwapQuote,
   type Transaction,
+  type UniswapV2RouteData,
 } from "../types";
 import { buildSendTxParams, createEvmActionValidator } from "./helpers";
 export const DEFAULT_EVM_SWAP_FETCH_TIMEOUT_MS = 10000;
@@ -81,8 +90,63 @@ const legacySpec = requireActionSpec("EVM_SWAP");
 const spec = { ...legacySpec, name: "WALLET" };
 
 export { swapTemplate };
+
+const UNISWAP_V2_ROUTER_ABI = parseAbi([
+  "function WETH() view returns (address)",
+  "function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)",
+  "function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable returns (uint256[] amounts)",
+  "function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)",
+  "function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)",
+]);
+
+/**
+ * Optional on-chain route. With `uniswapV2Router` set, swaps can be quoted with the router's
+ * `getAmountsOut` and executed on it. This route needs no HTTP API, so it also works on a local
+ * mainnet fork, where aggregator quotes describe live mainnet state instead of the fork.
+ * `exclusive` skips the HTTP aggregators.
+ */
+export interface SwapRouteOptions {
+  readonly uniswapV2Router?: Address;
+  readonly exclusive?: boolean;
+  /** Plan-guard mode: swaps run as redemptions of the user's signed plan (see plan-guard.ts). */
+  readonly planGuard?: PlanGuardConfig;
+}
+
+/** Reads EVM_SWAP_UNISWAP_V2_ROUTER and EVM_SWAP_AGGREGATORS ("uniswapV2" makes the route exclusive). */
+export function swapRouteOptionsFromSettings(runtime: IAgentRuntime): SwapRouteOptions {
+  const router = runtime.getSetting("EVM_SWAP_UNISWAP_V2_ROUTER");
+  const aggregators = runtime.getSetting("EVM_SWAP_AGGREGATORS");
+  if (router === null || router === undefined || router === "") {
+    if (aggregators === "uniswapV2") {
+      throw new EVMError(
+        EVMErrorCode.INVALID_PARAMS,
+        "EVM_SWAP_AGGREGATORS=uniswapV2 requires EVM_SWAP_UNISWAP_V2_ROUTER"
+      );
+    }
+    return {};
+  }
+  if (typeof router !== "string" || !isAddress(router)) {
+    throw new EVMError(
+      EVMErrorCode.INVALID_PARAMS,
+      `Invalid EVM_SWAP_UNISWAP_V2_ROUTER: ${String(router)}`
+    );
+  }
+  const planGuard = planGuardFromSettings(runtime) ?? undefined;
+  if (planGuard && aggregators !== "uniswapV2") {
+    // HTTP aggregator routes send from the signer, which holds no funds in plan-guard mode.
+    throw new EVMError(
+      EVMErrorCode.INVALID_PARAMS,
+      "EVM_PLAN_GUARD_PLAN requires EVM_SWAP_AGGREGATORS=uniswapV2"
+    );
+  }
+  return { uniswapV2Router: router, exclusive: aggregators === "uniswapV2", planGuard };
+}
+
 export class SwapAction {
-  constructor(private readonly walletProvider: WalletProvider) {
+  constructor(
+    private readonly walletProvider: WalletProvider,
+    private readonly routeOptions: SwapRouteOptions = {}
+  ) {
     const lifiChains: ExtendedChain[] = [];
     for (const config of Object.values(this.walletProvider.chains)) {
       const blockExplorerUrls = config.blockExplorers?.default?.url
@@ -196,6 +260,9 @@ export class SwapAction {
             case "kyberswap":
               result = await this.executeKyberSwapQuote(quote, resolvedParams);
               break;
+            case "uniswapV2":
+              result = await this.executeUniswapV2Quote(quote, resolvedParams);
+              break;
           }
           if (result) {
             logger.info(`✅ Swap succeeded via ${quote.aggregator}!`);
@@ -218,6 +285,35 @@ export class SwapAction {
       EVMErrorCode.CONTRACT_REVERT,
       `All swap attempts failed after ${attemptCount} tries. ${lastError?.message ?? "Unknown error"}`
     );
+  }
+  /**
+   * Best current quote for a swap, without signing or sending anything: the route that `swap()` would try
+   * first at this slippage. `expectedOutputAmount` is reported when the route gives a pre-slippage quote.
+   */
+  async quote(params: SwapParams): Promise<{
+    aggregator: SwapQuote["aggregator"];
+    minOutputAmount: string;
+    expectedOutputAmount: string | null;
+    path: readonly string[] | null;
+  }> {
+    const walletClient = this.walletProvider.getWalletClient(params.chain);
+    const [fromAddress] = await walletClient.getAddresses();
+    const chainId = this.walletProvider.getChainConfigs(params.chain).id;
+    const resolved: SwapParams = {
+      ...params,
+      fromToken: (await this.resolveTokenAddress(params.fromToken, chainId)) as Address,
+      toToken: (await this.resolveTokenAddress(params.toToken, chainId)) as Address,
+    };
+    const slippage =
+      params.slippageBps === undefined ? DEFAULT_SLIPPAGE_PERCENT : params.slippageBps / 10000;
+    const [best] = await this.getSortedQuotes(fromAddress, resolved, slippage);
+    const route = best.aggregator === "uniswapV2" ? (best.swapData as UniswapV2RouteData) : null;
+    return {
+      aggregator: best.aggregator,
+      minOutputAmount: best.minOutputAmount,
+      expectedOutputAmount: route ? route.amountOut : null,
+      path: route ? route.path : null,
+    };
   }
   private isRecoverableError(error: Error): boolean {
     const message = error.message;
@@ -255,16 +351,21 @@ export class SwapAction {
     // Parsed here, outside the per-aggregator catch blocks, so an amount the
     // token cannot hold is refused instead of reported as "No routes found".
     const fromAmount = parseEvmBaseUnits(params.amount, fromTokenDecimals).toString();
-    const quotesPromises: Promise<SwapQuote | undefined>[] = [
-      this.getLifiQuote(fromAddress, params, fromAmount, slippage),
-      // The current Bebop request does not carry an enforceable slippage
-      // bound. Keep it available for the legacy default path, but never let
-      // it win a quote the user confirmed with an explicit tolerance.
-      ...(params.slippageBps === undefined
-        ? [this.getBebopQuote(fromAddress, params, fromAmount)]
-        : []),
-      this.getKyberSwapQuote(fromAddress, params, fromAmount, slippage),
-    ];
+    const quotesPromises: Promise<SwapQuote | undefined>[] = this.routeOptions.exclusive
+      ? []
+      : [
+          this.getLifiQuote(fromAddress, params, fromAmount, slippage),
+          // The current Bebop request does not carry an enforceable slippage
+          // bound. Keep it available for the legacy default path, but never let
+          // it win a quote the user confirmed with an explicit tolerance.
+          ...(params.slippageBps === undefined
+            ? [this.getBebopQuote(fromAddress, params, fromAmount)]
+            : []),
+          this.getKyberSwapQuote(fromAddress, params, fromAmount, slippage),
+        ];
+    if (this.routeOptions.uniswapV2Router) {
+      quotesPromises.push(this.getUniswapV2Quote(params, fromAmount, slippage));
+    }
     const quotesResults = await Promise.all(quotesPromises);
     const sortedQuotes = quotesResults.filter((quote): quote is SwapQuote => quote !== undefined);
     sortedQuotes.sort((a, b) => (BigInt(a.minOutputAmount) > BigInt(b.minOutputAmount) ? -1 : 1));
@@ -626,6 +727,167 @@ export class SwapAction {
       data: tx.data as Hex,
       chainId: this.walletProvider.getChainConfigs(params.chain).id,
     };
+  }
+  private async getUniswapV2Quote(
+    params: SwapParams,
+    fromAmount: string,
+    slippage: number
+  ): Promise<SwapQuote | undefined> {
+    const router = this.routeOptions.uniswapV2Router;
+    if (!router) return undefined;
+    try {
+      const publicClient = this.walletProvider.getPublicClient(params.chain);
+      const weth = await publicClient.readContract({
+        address: router,
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "WETH",
+        authorizationList: undefined,
+      });
+      const fromNative = params.fromToken === NATIVE_TOKEN_ADDRESS;
+      const toNative = params.toToken === NATIVE_TOKEN_ADDRESS;
+      const from = fromNative ? weth : (params.fromToken as Address);
+      const to = toNative ? weth : (params.toToken as Address);
+      if (from.toLowerCase() === to.toLowerCase()) return undefined;
+      // Token-to-token swaps route through WETH, as the router's deepest pools do.
+      const path: Address[] =
+        from.toLowerCase() === weth.toLowerCase() || to.toLowerCase() === weth.toLowerCase()
+          ? [from, to]
+          : [from, weth, to];
+      const amounts = await publicClient.readContract({
+        address: router,
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "getAmountsOut",
+        args: [BigInt(fromAmount), path],
+        authorizationList: undefined,
+      });
+      const amountOut = amounts[amounts.length - 1];
+      const amountOutMin = (amountOut * BigInt(10000 - Math.round(slippage * 10000))) / 10000n;
+      const swapData: UniswapV2RouteData = {
+        router,
+        path,
+        amountIn: fromAmount,
+        amountOut: amountOut.toString(),
+        amountOutMin: amountOutMin.toString(),
+        fromNative,
+        toNative,
+      };
+      return { aggregator: "uniswapV2", minOutputAmount: amountOutMin.toString(), swapData };
+    } catch (error) {
+      logger.error(
+        "Error in getUniswapV2Quote:",
+        error instanceof Error ? error.message : String(error)
+      );
+      return undefined;
+    }
+  }
+  private async executeUniswapV2Quote(
+    quote: SwapQuote,
+    params: SwapParams
+  ): Promise<Transaction | undefined> {
+    const route = quote.swapData as UniswapV2RouteData;
+    const walletClient = this.walletProvider.getWalletClient(params.chain);
+    const publicClient = this.walletProvider.getPublicClient(params.chain);
+    const account = walletClient.account;
+    if (!account) {
+      throw new EVMError(EVMErrorCode.WALLET_NOT_INITIALIZED, "Wallet account is not available");
+    }
+    const amountIn = BigInt(route.amountIn);
+    const amountOutMin = BigInt(route.amountOutMin);
+    const path = [...route.path];
+    const plan = this.routeOptions.planGuard;
+    const recipient = plan ? plan.account : account.address;
+    // Deadline from chain time: a fork's clock need not match the wall clock.
+    const deadline = (await publicClient.getBlock()).timestamp + 1200n;
+    let value = 0n;
+    let data: Hex;
+    if (route.fromNative) {
+      value = amountIn;
+      data = encodeFunctionData({
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: "swapExactETHForTokens",
+        args: [amountOutMin, path, recipient, deadline],
+      });
+    } else {
+      if (plan) await this.approveThroughPlan(plan, params, path[0], route.router, amountIn);
+      else
+        await this.handleTokenApproval(publicClient, walletClient, path[0], route.router, amountIn);
+      data = encodeFunctionData({
+        abi: UNISWAP_V2_ROUTER_ABI,
+        functionName: route.toNative ? "swapExactTokensForETH" : "swapExactTokensForTokens",
+        args: [amountIn, amountOutMin, path, recipient, deadline],
+      });
+    }
+    if (plan) {
+      const from = route.fromNative ? NATIVE_TOKEN_ADDRESS : path[0];
+      const to = route.toNative ? NATIVE_TOKEN_ADDRESS : path[path.length - 1];
+      const contexts = candidateSteps(plan, from, to, amountIn).map((s) => s.permissionContext);
+      const hash = await executeThroughPlan(
+        this.walletProvider,
+        params.chain,
+        plan,
+        contexts,
+        { to: route.router, value, data },
+        `swap ${params.amount} ${from} -> ${to}`
+      );
+      return {
+        hash,
+        from: plan.account,
+        to: route.router,
+        value,
+        data,
+        chainId: this.walletProvider.getChainConfigs(params.chain).id,
+      };
+    }
+    const hash = await walletClient.sendTransaction(
+      buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain })
+    );
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+    });
+    if (receipt.status === "reverted") {
+      throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${hash}`);
+    }
+    return {
+      hash,
+      from: account.address,
+      to: route.router,
+      value,
+      data,
+      chainId: this.walletProvider.getChainConfigs(params.chain).id,
+    };
+  }
+  /** In plan-guard mode the plan account approves the router through its signed approval delegation. */
+  private async approveThroughPlan(
+    plan: PlanGuardConfig,
+    params: SwapParams,
+    token: Address,
+    spender: Address,
+    amount: bigint
+  ): Promise<void> {
+    const publicClient = this.walletProvider.getPublicClient(params.chain);
+    const allowance = await publicClient.readContract({
+      address: token,
+      abi: parseAbi(["function allowance(address,address) view returns (uint256)"]),
+      functionName: "allowance",
+      args: [plan.account, spender],
+      authorizationList: undefined,
+    });
+    if (allowance >= amount) return;
+    const approval = approvalFor(plan, token, spender);
+    const data = encodeFunctionData({
+      abi: parseAbi(["function approve(address,uint256)"]),
+      functionName: "approve",
+      args: [spender, amount],
+    });
+    await executeThroughPlan(
+      this.walletProvider,
+      params.chain,
+      plan,
+      approval ? [approval.permissionContext] : [],
+      { to: token, value: 0n, data },
+      `approve ${token} for ${spender}`
+    );
   }
   private async handleTokenApproval(
     publicClient: ReturnType<WalletProvider["getPublicClient"]>,

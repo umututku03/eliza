@@ -1011,6 +1011,8 @@ export type EmptyTrackedStateObservation =
 
 /** Result returned by an action for chaining, grounding, and state management. */
 export interface ActionResult {
+	/** Provider snapshots changed by this settled action; explicitly refresh only these names. */
+	refreshProviders?: readonly string[];
 	/** Complete current read evidence for scoped absence claims; not an effect receipt. */
 	emptyTrackedState?: EmptyTrackedStateObservation;
 	/** Whether the action succeeded */

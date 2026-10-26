@@ -28,6 +28,7 @@ import { DexScreenerService } from "./analytics/dexscreener/service.js";
 import { TokenInfoService } from "./analytics/token-info/service.js";
 import evmPlugin from "./chains/evm/index.js";
 import solanaPlugin from "./chains/solana/index.js";
+import { analyticsAvailabilityProvider } from "./providers/analytics-availability-provider.js";
 import { stewardTradingProvider } from "./providers/steward-trading-provider.js";
 import { walletProvider } from "./providers/wallet-provider.js";
 import { StewardTradingService } from "./services/steward-trading-service.js";
@@ -40,7 +41,11 @@ const coreWalletPlugin: Plugin = {
   name: "wallet-backend",
   description: "Wallet backend service + wallet provider (Steward / local).",
   services: [WalletBackendService, StewardTradingService],
-  providers: [walletProvider, stewardTradingProvider],
+  providers: [
+    walletProvider,
+    stewardTradingProvider,
+    analyticsAvailabilityProvider,
+  ],
   actions: [tradeRouterAction],
 };
 function concatServices(

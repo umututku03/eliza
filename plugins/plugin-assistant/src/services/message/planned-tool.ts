@@ -350,6 +350,7 @@ export async function executeV5PlannedToolCall(
   ) {
     const subResult = await runSubPlanner({
       runtime: args.runtime as IAgentRuntime & PlannerRuntime,
+      plannerRuntime: args.plannerRuntime,
       action,
       context: args.plannerContext,
       ctx: executorCtx,
@@ -590,6 +591,9 @@ export function subPlannerResultToPlannerToolResult(
   const effectReceipts = mergeEffectReceipts(
     ...allSteps.map((step) => step.result?.effectReceipts),
   );
+  const refreshProviders = [
+    ...new Set(allSteps.flatMap((step) => step.result?.refreshProviders ?? [])),
+  ];
   const terminalUserFacingEffectReceiptIds =
     typeof terminalResult?.userFacingText === "string" &&
     typeof userFacingText === "string" &&
@@ -624,6 +628,7 @@ export function subPlannerResultToPlannerToolResult(
     transcriptVisibility: lastStep?.result?.transcriptVisibility,
     ...(internalTerminalPayload ? {} : { userFacingText }),
     ...(effectReceipts.length > 0 ? { effectReceipts } : {}),
+    ...(refreshProviders.length > 0 ? { refreshProviders } : {}),
     ...(terminalResult?.replyFailure
       ? { replyFailure: terminalResult.replyFailure }
       : {}),

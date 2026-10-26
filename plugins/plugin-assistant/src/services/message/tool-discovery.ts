@@ -165,31 +165,36 @@ export function createPlannerToolDiscoveryAction(
       },
       {
         name: "query",
-        description: `Find operations by intent without knowing names. Registered domain names in the query scope the search when contexts is omitted. Cannot combine with names. Selects up to ${DEFAULT_PLANNER_QUERY_TOOL_LIMIT} ranked complete operations; remaining matches stay available through exact names or a narrower search.`,
+        description: `Find operations by intent without knowing names. Registered domain names in the query scope the search when contexts is omitted. Cannot combine with nonempty names. Selects up to ${DEFAULT_PLANNER_QUERY_TOOL_LIMIT} ranked complete operations; remaining matches stay available through exact names or a narrower search.`,
         required: false,
         schema: { type: "string", minLength: 1 },
       },
       {
         name: "contexts",
-        description: `Optional exact domain IDs to scope search. Without a query, load ranks the current task; describe lists domain members. Selects up to ${DEFAULT_PLANNER_QUERY_TOOL_LIMIT} operations. Cannot combine with names.`,
+        description: `Optional exact domain IDs to scope search. Without a query, load ranks the current task; describe lists domain members. Selects up to ${DEFAULT_PLANNER_QUERY_TOOL_LIMIT} operations. Cannot combine with nonempty names.`,
         required: false,
         schema: { type: "array", items: { type: "string" } },
       },
     ],
     validate: async () => true,
     handler: async (runtime, message, _state, callOptions) => {
-      const mode = isObjectRecord(callOptions?.parameters)
-        ? callOptions.parameters.mode
+      const parameters = isObjectRecord(callOptions?.parameters)
+        ? callOptions.parameters
         : undefined;
-      let names = isObjectRecord(callOptions?.parameters)
-        ? callOptions.parameters.names
-        : undefined;
-      let query = isObjectRecord(callOptions?.parameters)
-        ? callOptions.parameters.query
-        : undefined;
-      const contexts = isObjectRecord(callOptions?.parameters)
-        ? callOptions.parameters.contexts
-        : undefined;
+      // Strict provider schemas encode omitted optional selectors as null.
+      // An empty names list contributes no exact-name selector to a search;
+      // nonempty names still cannot be combined with query or contexts.
+      const mode = parameters?.mode ?? undefined;
+      let names = parameters?.names ?? undefined;
+      let query = parameters?.query ?? undefined;
+      const contexts = parameters?.contexts ?? undefined;
+      if (
+        Array.isArray(names) &&
+        names.length === 0 &&
+        (query !== undefined || contexts !== undefined)
+      ) {
+        names = undefined;
+      }
       const emptyLoad =
         mode !== "describe" &&
         query === undefined &&

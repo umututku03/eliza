@@ -1,0 +1,47 @@
+{
+  "block": 26250601,
+  "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+  "agentEth": "1",
+  "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+  "path": [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+  ],
+  "saleEth": "0.1",
+  "proceedsUsdcUnits": "237636476",
+  "clampUsdcUnits": "59409119",
+  "reserveUsdc": "178.23",
+  "budgetUsdcUnits": "59406476",
+  "baselineDaiOutWei": "59046981018462803274",
+  "goalDai": "37.31",
+  "goalRatio": 0.6318806419257773,
+  "factors": {
+    "price_change_feasible": 0.73,
+    "price_change_infeasible": 0.58
+  },
+  "moves": {
+    "price_change_feasible": {
+      "moverEthWei": "320443000000000000000",
+      "budgetDaiOutWei": "43104321247992288053",
+      "feasible": true
+    },
+    "price_change_infeasible": {
+      "moverEthWei": "588689000000000000000",
+      "budgetDaiOutWei": "34247269288640879956",
+      "feasible": false
+    }
+  },
+  "riskConfig": {
+    "targetVol": 0.5,
+    "maxWalletPct": 0.25,
+    "kellyFraction": 0.5,
+    "hfFloor": 1.5,
+    "enforce": true,
+    "volFallback": 0.8
+  },
+  "regime": {
+    "realizedVol": 0.8,
+    "source": "fallback"
+  }
+}

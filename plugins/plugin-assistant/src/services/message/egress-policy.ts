@@ -683,7 +683,12 @@ export function evaluatePlannedReplyEgress(args: {
     return { verdict: "reject", kind: "view_navigation" };
   }
   if (
-    financialCompletionIsUngrounded(reply, args.actionResults, args.request)
+    financialCompletionIsUngrounded(
+      reply,
+      args.actionResults,
+      args.actions,
+      args.request,
+    )
   ) {
     return { verdict: "reject", kind: "financial_completion" };
   }

@@ -1,0 +1,11 @@
+{
+  "name": "plan-guard-benchmark",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark v1 for plan-bound execution (research only; resolves @elizaos/* from the monorepo root)",
+  "dependencies": {
+    "@metamask/delegation-abis": "2.0.0",
+    "@metamask/smart-accounts-kit": "2.0.0",
+    "viem": "2.56.9"
+  }
+}

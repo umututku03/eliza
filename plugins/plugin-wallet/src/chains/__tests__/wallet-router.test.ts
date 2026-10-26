@@ -8,6 +8,7 @@ import {
   type HandlerOptions,
   type IAgentRuntime,
   type Memory,
+  normalizeEffectReceipts,
   validateToolArgs,
 } from "@elizaos/core";
 import { decodeFunctionData, parseAbi } from "viem";
@@ -20,6 +21,8 @@ import type {
 } from "../../types/wallet-router";
 import { registerDefaultWalletChainHandlers } from "../registry";
 import { walletRouterAction } from "../wallet-action";
+import { recentWalletSubmissions } from "../wallet-submissions";
+import recordedSale from "./fixtures/h8-sale.json";
 
 const USDC_EVM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -216,6 +219,41 @@ async function run(
 }
 
 describe("wallet router action", () => {
+  it("refreshes turn context after the recorded dev4 sale, but never for its proposal or an unconfirmed/tampered result", async () => {
+    const { runtime, service } = createService();
+    const evm = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(evm);
+    const parameters = {
+      ...recordedSale.submitted,
+      action: "swap",
+      target: "mainnet",
+    };
+    const proposal = await run(runtime, parameters);
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    expect(proposal?.refreshProviders).toBeUndefined();
+    vi.mocked(evm.execute).mockResolvedValueOnce(
+      recordedSale.submitted as WalletRouterExecution,
+    );
+    const result = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(result?.refreshProviders).toEqual(["evm-wallet"]);
+    expect(result?.effectReceipts).toContainEqual(
+      expect.objectContaining({
+        commit: expect.objectContaining({ id: recordedSale.transaction.hash }),
+      }),
+    );
+    vi.mocked(evm.execute).mockResolvedValueOnce({
+      ...recordedSale.submitted,
+      metadata: { confirmationStatus: "unconfirmed" },
+    } as WalletRouterExecution);
+    const uncertain = await runConfirmed(runtime, parameters);
+    expect(uncertain?.refreshProviders).toBeUndefined();
+    expect(uncertain?.effectReceipts).toBeUndefined();
+  });
   it("routes gov through the default EVM handler and discloses the vote before signing", async () => {
     const { runtime, service } = createService();
     runtime.character.settings = { chains: { evm: ["base"] } };
@@ -593,6 +631,92 @@ describe("wallet router action", () => {
     );
   });
 
+  it("proves a submitted swap with an applied receipt, and a proposal with none", async () => {
+    const { runtime, service } = createService();
+    service.registerChainHandler(handler("base", "Base", "8453", "evm"));
+    const parameters = {
+      subaction: "swap",
+      chain: "8453",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC_EVM,
+      amount: "1",
+      mode: "execute",
+    };
+
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message("please swap"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    expect(proposal?.effectReceipts).toBeUndefined();
+
+    const result = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      { parameters } as HandlerOptions,
+    );
+    expect(result?.effectReceipts).toEqual([
+      expect.objectContaining({
+        receiptId: "wallet:base:swap:0xtest",
+        operation: "wallet.swap",
+        resource: { kind: "wallet.base.transaction", id: "0xtest" },
+        outcome: "applied",
+        commit: expect.objectContaining({
+          kind: "provider_accepted",
+          id: "0xtest",
+        }),
+      }),
+    ]);
+    // The submission joins the cross-turn history shown in the wallet context.
+    await expect(recentWalletSubmissions(runtime)).resolves.toEqual([
+      expect.objectContaining({
+        transactionHash: "0xtest",
+        chain: "base",
+        subaction: "swap",
+        amount: "1",
+      }),
+    ]);
+    // A later tx_status read can name the operation behind the hash.
+    await expect(runtime.getCache("wallet:submitted:0xtest")).resolves.toEqual({
+      chain: "base",
+      subaction: "swap",
+    });
+    // The message runtime normalizes every receipt; this one survives intact.
+    expect(normalizeEffectReceipts(result?.effectReceipts)).toEqual(
+      result?.effectReceipts,
+    );
+  });
+
+  it("gives no receipt for a submission whose confirmation is uncertain", async () => {
+    const { runtime, service } = createService();
+    const base = handler("base", "Base", "8453", "evm");
+    vi.mocked(base.execute).mockImplementationOnce(async (params) => ({
+      status: "submitted",
+      chain: "base",
+      chainId: "8453",
+      subaction: params.subaction,
+      dryRun: false,
+      mode: params.mode,
+      transactionHash: "0xtest",
+      metadata: { confirmationStatus: "unconfirmed" },
+    }));
+    service.registerChainHandler(base);
+
+    const result = await runConfirmed(runtime, {
+      subaction: "swap",
+      chain: "8453",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC_EVM,
+      amount: "1",
+      mode: "execute",
+    });
+    expect(result?.text).toContain("Confirmation uncertain");
+    expect(result?.effectReceipts).toBeUndefined();
+  });
+
   it("routes Solana transfer and swap through the Solana handler", async () => {
     const { runtime, service } = createService();
     const solana = handler("solana", "Solana", "solana-mainnet", "solana");
@@ -700,6 +824,112 @@ describe("wallet router action", () => {
     expect(result?.success).toBe(false);
     expect(result?.data?.error).toBe("UNSUPPORTED_CHAIN");
     expect(base.execute).not.toHaveBeenCalled();
+  });
+
+  it("binds a confirmation to the resolved chain, not its spelling", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    const base = handler("base", "Base", "8453", "evm");
+    service.registerChainHandler(mainnet);
+    service.registerChainHandler(base);
+    const swap = (chain: string) => ({
+      subaction: "swap",
+      chain,
+      fromToken: USDC_EVM,
+      toToken: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      amount: "59.406476",
+      mode: "execute",
+    });
+    const ask = (chain: string, text: string) =>
+      walletRouterAction.handler(runtime, message(text), undefined, {
+        parameters: swap(chain),
+      } as HandlerOptions);
+
+    // Recorded live: proposed on "ethereum", confirmed on "mainnet".
+    expect(
+      (await ask("ethereum", "please swap"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    const confirmed = await ask("mainnet", "yes, confirm");
+    expect(confirmed?.data?.requiresConfirmation).toBeUndefined();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
+
+    // A different chain is a different request: it is asked again, not executed.
+    expect(
+      (await ask("mainnet", "please swap"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    expect(
+      (await ask("base", "yes, confirm"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    expect(base.execute).not.toHaveBeenCalled();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not split an EVM swap confirmation on an echoed recipient", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(mainnet);
+    const swap = (extra: Record<string, unknown>) => ({
+      parameters: {
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: USDC_EVM,
+        toToken: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        amount: "59.406476",
+        mode: "execute",
+        ...extra,
+      },
+    });
+    // Recorded live (gpt-6-luna): proposed without a recipient, re-sent with its own address.
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message("please swap"),
+      undefined,
+      swap({}) as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    const confirmed = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      swap({
+        recipient: "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      }) as HandlerOptions,
+    );
+    expect(confirmed?.data?.requiresConfirmation).toBeUndefined();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("still binds a transfer confirmation to its recipient", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(mainnet);
+    const transfer = (recipient: string) => ({
+      parameters: {
+        subaction: "transfer",
+        chain: "mainnet",
+        fromToken: "ETH",
+        amount: "0.01",
+        recipient,
+        mode: "execute",
+      },
+    });
+    const a = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+    const b = "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0";
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message(`please send to ${a} and ${b}`),
+      undefined,
+      transfer(a) as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    const other = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      transfer(b) as HandlerOptions,
+    );
+    expect(other?.data?.requiresConfirmation).toBe(true);
+    expect(mainnet.execute).not.toHaveBeenCalled();
   });
 
   it("routes chain eth to Ethereum mainnet with the default EVM chains", async () => {

@@ -100,6 +100,12 @@ simile for connector discovery, not a separate planner registry;
 simile: persisted or older model calls resolve to the same admitted action,
 while new native schemas advertise only `DISCOVER_ACTIONS`.
 
+Financial replies recognize a wallet's registered promoted action and its pinned
+operation, such as `WALLET_SWAP`, as well as the `WALLET` umbrella. A successful
+execute-mode submission with a transaction identifier supports a submission
+report only. Preparation, simulation, failure, another operation, and unregistered
+lookalike action names do not prove submission or settlement.
+
 Planner work continues across distinct operations and tool discovery by default.
 Explicit `maxToolCalls` and `maxMemorySearchRounds` ceilings remain available;
 discovery does not consume the domain-call ceiling. The default cumulative

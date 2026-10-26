@@ -1,0 +1,11 @@
+{
+  "name": "agent-harness-v2",
+  "private": true,
+  "type": "module",
+  "description": "Fork experiment harness for stock ElizaOS v2 (research only; resolves @elizaos/* from the monorepo root)",
+  "dependencies": {
+    "@metamask/delegation-abis": "2.0.0",
+    "@metamask/smart-accounts-kit": "2.0.0",
+    "viem": "2.56.9"
+  }
+}

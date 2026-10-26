@@ -1,0 +1,7 @@
+node_modules/
+results-*/
+dryrun-*/
+*.log
+
+# Local dryrun audit sidecars; published live audits stay tracked.
+dryrun-*.verified.audit.json

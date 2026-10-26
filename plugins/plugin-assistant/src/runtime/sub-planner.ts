@@ -274,6 +274,7 @@ function priorNonRetryableSubstep(
 
 export interface RunSubPlannerParams {
   runtime: IAgentRuntime & PlannerRuntime;
+  plannerRuntime?: PlannerRuntime;
   action: Action;
   context: ContextObject;
   ctx: ExecutePlannedToolCallContext;
@@ -370,7 +371,7 @@ export async function runSubPlanner(
   });
 
   return runPlannerLoop({
-    runtime: params.runtime,
+    runtime: params.plannerRuntime ?? params.runtime,
     context,
     config: params.config,
     evaluate: params.evaluate,
