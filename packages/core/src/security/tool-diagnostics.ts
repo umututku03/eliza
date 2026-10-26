@@ -78,8 +78,54 @@ export type ToolDiagnosticTextRedactor = (text: string) => string;
 
 const TOOLS_MODE: { mode: RedactSensitiveMode } = { mode: "tools" };
 
+/**
+ * Wallet fields that name an asset, not a credential. The generic `*token*`
+ * credential rule masks them, so a model sees `fromToken: "[REDACTED]"` in its
+ * own swap result and sends that literal back as the next token address.
+ */
+const CHAIN_ASSET_SIDE_KEYS: ReadonlySet<string> = new Set([
+	"basetoken",
+	"fromtoken",
+	"intoken",
+	"nativetoken",
+	"outtoken",
+	"quotetoken",
+	"tokena",
+	"tokenaddress",
+	"tokenb",
+	"tokenin",
+	"tokenmint",
+	"tokenout",
+	"totoken",
+]);
+/** Container names that hold asset records in wallet results (`token`, `tokens`). */
+const CHAIN_ASSET_CONTAINER_KEYS: ReadonlySet<string> = new Set([
+	"token",
+	"tokens",
+]);
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const BASE58_MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const ASSET_SYMBOL = /^[A-Za-z][A-Za-z0-9.]{0,9}$/;
+
+/**
+ * Public chain data under an asset field stays visible: an address, mint or
+ * symbol string, or a structure the walker descends into (its own keys are
+ * still checked, so a nested `access_token` remains masked). Any other string
+ * under these names keeps the credential mask.
+ */
+function isPublicChainAssetField(key: string, value: unknown): boolean {
+	const normalized = key.toLowerCase().replace(/[_\-. ]/g, "");
+	const side = CHAIN_ASSET_SIDE_KEYS.has(normalized);
+	if (!side && !CHAIN_ASSET_CONTAINER_KEYS.has(normalized)) return false;
+	if (value !== null && typeof value === "object") return true;
+	if (typeof value !== "string") return false;
+	if (EVM_ADDRESS.test(value)) return true;
+	return side && (BASE58_MINT.test(value) || ASSET_SYMBOL.test(value));
+}
+
 /** Durable transport/recovery state may contain context from a private audience. */
-function isPrivateToolField(key: string): boolean {
+function isPrivateToolField(key: string, value?: unknown): boolean {
+	if (isPublicChainAssetField(key, value)) return false;
 	return (
 		key === "chatIdempotency" ||
 		key === "replyRecoveryJson" ||
@@ -154,7 +200,7 @@ function projectValue(
 		let changed = false;
 		const projected: Record<string, unknown> = {};
 		for (const [key, entry] of Object.entries(value)) {
-			if (isPrivateToolField(key)) {
+			if (isPrivateToolField(key, entry)) {
 				projected[key] = TOOL_DIAGNOSTIC_MASK;
 				changed = true;
 				continue;
@@ -217,7 +263,7 @@ function projectCompleteModelValue(
 		let changed = false;
 		const projected: Record<string, unknown> = {};
 		for (const [key, entry] of Object.entries(value)) {
-			if (isPrivateToolField(key)) {
+			if (isPrivateToolField(key, entry)) {
 				projected[key] = TOOL_DIAGNOSTIC_MASK;
 				changed = true;
 				continue;
@@ -368,7 +414,7 @@ function projectJsonSchemaNode(
 			) {
 				// Both map keys and array values are schema property identifiers.
 				next = entry;
-			} else if (isPrivateToolField(key)) {
+			} else if (isPrivateToolField(key, entry)) {
 				next = TOOL_DIAGNOSTIC_MASK;
 			} else {
 				next = complete
@@ -462,7 +508,7 @@ function projectModelToolDefinition(
 					depth + 1,
 					complete,
 				);
-			} else if (isPrivateToolField(key)) {
+			} else if (isPrivateToolField(key, entry)) {
 				next = TOOL_DIAGNOSTIC_MASK;
 			} else {
 				next = complete
