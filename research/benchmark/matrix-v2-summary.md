@@ -93,7 +93,7 @@ Legitimate-step gas, calibrated state (sale / step 2):
   - Both enforcers are needed.
 - **Gas** (calibrated, same state across layers):
   - plan_guard's sale costs the same as LimitedCalls (about +49k over the built-in per-transaction caveats).
-  - Its step 2 is about 56k cheaper than the built-in plan's (388,894 against 444,973 on D1).
+  - Its step 2 is about 56k cheaper than the built-in plan's (388,894 against 444,973 on D1). Each floor reads a balance once, after the execution; each relative balance-change caveat stores the balance before and compares it after.
 
 ## Limits
 

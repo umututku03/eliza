@@ -103,31 +103,32 @@ authoring as a limitation (Sec.~\ref{sec:limits}).
 
 \section{The expressiveness gap}\label{sec:gap}
 
-Consider a two-step plan signed at time $t_0$: step 1 sells a fixed amount of ETH for $X$, delivering $q_1$; step 2
-swaps $a$ of $X$ for $Y$. The account starts with $x_0$ of $X$. After step 2 it must hold $\mathrm{bal}_X \ge R$ and
-$\mathrm{bal}_Y \ge G$. Step 1's delivery is unknown at $t_0$; the agent's own slippage tolerance allows any
-$q_1 \in [q^-, q^+]$ with $q^- < q^+$.
+Consider a two-step plan signed at time $t_0$: step~1 sells a fixed amount of ETH for $X$; step~2 swaps $a$ of
+$X$ for $Y$. After step~2 the account must hold $\mathrm{bal}_X \ge R$ and $\mathrm{bal}_Y \ge G$, with $R > 0$. Let
+$x$ be the account's $X$ balance just before step~2. It is unknown at $t_0$: step~1's delivery varies within the
+agent's slippage tolerance, and other funds may arrive. So $x$ ranges over $[x^-, x^+]$ with $x^- < x^+$.
 
-A \emph{signing-time spend bound} is a caveat on step 2 that refuses a redemption when the amount of $X$ spent
-exceeds a constant $c$ fixed at $t_0$. This covers ERC20BalanceChange with a decrease bound, transfer-amount caps, and
-any other bound on the change that is fixed at signing.
+A \emph{signing-time spend bound} is a caveat on step~2 that refuses a redemption when the amount of $X$ spent exceeds
+a constant $c$ fixed at $t_0$. This covers ERC20BalanceChange with a decrease bound, transfer-amount caps, and any other
+bound on the change that is fixed at signing.
 
 \begin{proposition}[No fixed bound is both sound and complete]
-Let $F(q_1)=\{a : a \le x_0 + q_1 - R \text{ and } \mathrm{out}(a) \ge G\}$ be the feasible step-2 spends after
-outcome $q_1$, and suppose some $q^\star$ has a feasible $a^\star \in F(q^\star)$ with
-$a^\star > x_0 + q^- - R$. Then for every constant $c$, either (i) some admitted step 2 breaks the reserve, or
-(ii) some feasible step 2 is refused.
+Let $F(x)=\{a : a \le x - R \text{ and } \mathrm{out}(a) \ge G\}$ be the feasible step-2 spends at balance $x$, and
+suppose some $x^\star$ has a feasible $a^\star \in F(x^\star)$ with $a^\star > x^- - R$. Then for every constant $c$,
+either (i) some admitted step~2 breaks the reserve, or (ii) some feasible step~2 is refused.
 \end{proposition}
 \begin{proof}
-Soundness at $q_1=q^-$ requires $c \le x_0 + q^- - R$, otherwise spending $c$ leaves less than $R$. Completeness at
-$q^\star$ requires $c \ge a^\star > x_0 + q^- - R$. Both cannot hold.
+If $c > x^- - R$, then at balance $x^-$ any spend in $(x^- - R,\ \min(c, x^-)]$ is admitted and leaves less than $R$;
+this interval is non-empty because $R > 0$. Otherwise $c \le x^- - R < a^\star$, so the feasible spend $a^\star$ at
+$x^\star$ is refused.
 \end{proof}
 
-The hypothesis is mild. It holds whenever step 1 can over-deliver, or the account holds extra $X$, while step 2's price
-worsens. Our \emph{price-worse} state is a concrete witness, observed on the fork (Table~\ref{tab:matrix}). The
-dual case also occurs: in the \emph{shortfall} state, the bound $c$ = the budget expected at signing admits a
-reserve breach. An absolute floor checked after the execution ($\mathrm{bal}_X \ge R$) is sound and complete for this
-constraint by construction, because it does not depend on $q_1$.
+The hypothesis is mild. It holds whenever more $X$ than the worst case can be available before step~2 while step~2's
+price worsens, so that a feasible step needs the extra. Our \emph{price-worse} state is a concrete witness, observed on
+the fork (Table~\ref{tab:matrix}). The \emph{shortfall} state realises case~(i): the bound set to the budget expected
+at signing admits a reserve breach. An absolute floor checked after the execution ($\mathrm{bal}_X \ge R$) does not
+depend on $x$, so it is sound and complete for this constraint by construction. For the goal, a fixed lower bound on the
+increase of $Y$ is exact only when the account's $Y$ balance before step~2 is known at signing.
 
 \textbf{Precedence.} To our reading of the 32 v1.3.0 enforcers, none conditions a redemption on whether a
 \emph{different} delegation has been redeemed. LimitedCalls counts redemptions of one delegation; IdEnforcer gives
@@ -192,8 +193,9 @@ ablations: \emph{floor-only} and \emph{order-only}.
 The agent key holds every signed delegation and sends 18 crafted actions per cell straight to the chain. Each
 action starts from an isolated snapshot. The actions include repeats, reordering, exfiltration (output to an attacker,
 direct transfer, attacker approval), an unlisted asset, reserve breaches, goal misses, B2 (the goal number as the
-input) and the legitimate steps. In-plan versus off-plan labels follow from the user's constraints in that state, fixed
-before execution. Table~\ref{tab:matrix} aggregates the four tasks; Table~\ref{tab:kinds} breaks the admitted
+input) and the legitimate steps. In-plan versus off-plan labels are computed from the user's constraints in that state. A first
+version labelled B2 off-plan by name, although in the shortfall state it met both constraints; we corrected the rule
+and kept that attempt on record. Table~\ref{tab:matrix} aggregates the four tasks; Table~\ref{tab:kinds} breaks the admitted
 actions down by kind. The run is deterministic: reruns produce byte-identical results.
 
 \begin{table}[t]
@@ -318,7 +320,8 @@ order-only & 331{,}538 & 342{,}620 \\
 
 Most of the cost is the delegation framework itself: about 152k gas per redemption over a direct transaction. Against
 that baseline, plan\_guard's sale costs the same as the built-in call limit (+49k). Its step 2 is 56k cheaper than
-the built-in plan, because one floor check replaces two balance-change checks plus a call counter.
+the built-in plan. Both use two balance checks and one stateful check, but each floor reads a balance once, after the
+execution, whereas each relative balance-change caveat records the balance before and compares it after.
 
 \section{Failure study: ElizaOS v2}\label{sec:failures}
 
