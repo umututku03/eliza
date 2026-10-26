@@ -1,3 +1,5 @@
+Status: 2026-10-26 — historical analytic check from 23 October; subsequent executed controls are in ../benchmark/suite-v1-summary.md and ../plan-guard/fork-test-results.json.
+
 # Controls check: would existing on-chain permission rules stop the recorded failures?
 
 23 October 2026. Free. This is an analytic check from saved records plus enforcer source. **Nothing has been executed on the fork yet.**

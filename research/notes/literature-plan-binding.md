@@ -1,3 +1,5 @@
+Status: 2026-10-26 — superseded by literature-update-2026-10-26.md; retained as the original literature pass.
+
 # Literature check: on-chain binding of an agent's multi-step plan
 
 23 October 2026. The question was whether "the user approves a multi-step plan once; a contract lets the agent execute each step at most once, in order, within the user's bounds" is already done for LLM agents.

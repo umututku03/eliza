@@ -1,3 +1,5 @@
+Status: 2026-10-26 — historical A/B findings with fix provenance; current H/L statuses are in hardening-backlog.md and live-check-2-2026-10-26.md.
+
 # Framework findings: stock ElizaOS v2 on a two-step DeFi task (pinned mainnet fork)
 
 October 2026. Every item comes from saved live traces or a fork check. The commit names where it was fixed in our fork. None has been reported upstream: under elizaOS `AGENTS.md`, agents must not file issues, so the user decides and writes them by hand.

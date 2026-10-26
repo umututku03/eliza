@@ -1,3 +1,5 @@
+Status: 2026-10-26 — historical development-run snapshot; later spending and live-check evidence are in live-check-2-2026-10-26.md.
+
 # Overnight report: 25–26 October 2026
 
 Branch `research/benchmark-v1` on our ElizaOS fork, built on Codex's fixes (`0e2d0d05bf`).

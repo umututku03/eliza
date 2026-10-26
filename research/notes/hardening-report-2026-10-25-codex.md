@@ -1,3 +1,5 @@
+Status: 2026-10-26 — historical hardening snapshot; current live-check and cleanup results are in codex-report-livecheck2-final-and-cleanup.md.
+
 # ElizaOS hardening report
 
 Work on `research/benchmark-v1`, starting at `29f3a4fb91`. Pinned Node 24.15.0 and Bun 1.4.2. No paid model calls, pushes, or upstream issue/PR activity. The raw archive remains local and unchanged at `/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-v2-run-archive`.

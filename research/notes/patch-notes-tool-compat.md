@@ -1,3 +1,5 @@
+Status: 2026-10-26 — historical tool-compatibility patch note, moved from agent-harness-v2 after a repository-wide reference check found no path references; see framework-changes.md for current provenance.
+
 # Local integration patch after live cohort 1c
 
 Base: `3635d598fe`. Patch branch: `fix/v2-tool-call-compat`.

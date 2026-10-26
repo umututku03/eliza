@@ -1,3 +1,5 @@
+Status: 2026-10-26 — roadmap retained; live check 2 is now complete, with L6/L7 still open. See live-check-2-2026-10-26.md and OVERVIEW.md in the parent directory for the updated review.
+
 # Where we are and what to do next (25 October 2026, evening)
 
 **Written for:** the user's review after the live check.
