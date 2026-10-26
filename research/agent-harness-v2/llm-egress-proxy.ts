@@ -47,6 +47,8 @@ export const PRICES: Record<string, {input: number; output: number; cacheWriteFa
   'gpt-6.1-sol': {input: 2, output: 10, cacheWriteFactor: 1.25},
   'claude-haiku-5-5': {input: 0.10, output: 0.50, cacheWriteFactor: 1},
   'claude-opus-5-5': {input: 4, output: 20, cacheWriteFactor: 1},
+  'gpt-4.1-mini': {input: 0.40, output: 1.60, cacheWriteFactor: 1},
+  'claude-sonnet-5-5': {input: 2, output: 10, cacheWriteFactor: 1},
 };
 const UPSTREAM: Record<string, string> = {openai: 'https://api.openai.com', anthropic: 'https://api.anthropic.com'};
 if (testUpstream) { UPSTREAM.openai = testUpstream; UPSTREAM.anthropic = testUpstream; }

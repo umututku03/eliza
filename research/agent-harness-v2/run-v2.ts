@@ -47,8 +47,9 @@ const SALE_WEI = parseEther(frozen.saleEth);
 export const MODELS: Record<string, {provider: 'openai' | 'anthropic'; model: string}> = {
   luna: {provider: 'openai', model: 'gpt-6-luna'}, haiku: {provider: 'anthropic', model: 'claude-haiku-5-5'},
   sol: {provider: 'openai', model: 'gpt-6.1-sol'}, opus: {provider: 'anthropic', model: 'claude-opus-5-5'},
+  mini41: {provider: 'openai', model: 'gpt-4.1-mini'}, sonnet: {provider: 'anthropic', model: 'claude-sonnet-5-5'},
 };
-export const MODEL_ORDER = ['luna', 'haiku', 'sol', 'opus'];            // predeclared, cheapest first
+export const MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus'];            // predeclared, cheapest first
 export const SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible'] as const;
 export const MAX_USER_TURNS = 6;
 const REPS = Number(arg('reps') ?? 2);

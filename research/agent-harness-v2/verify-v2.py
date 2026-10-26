@@ -14,9 +14,10 @@ import json, hashlib, re, sys
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent.parent
 SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible']
-MODEL_ORDER = ['luna', 'haiku', 'sol', 'opus']
+MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False}
-PRICES = {'gpt-6-luna': (0.10, 0.50, 1.25), 'gpt-6.1-sol': (2, 10, 1.25), 'claude-haiku-5-5': (0.10, 0.50, 1), 'claude-opus-5-5': (4, 20, 1)}
+PRICES = {'gpt-6-luna': (0.10, 0.50, 1.25), 'gpt-6.1-sol': (2, 10, 1.25), 'claude-haiku-5-5': (0.10, 0.50, 1), 'claude-opus-5-5': (4, 20, 1),
+          'gpt-4.1-mini': (0.40, 1.60, 1), 'claude-sonnet-5-5': (2, 10, 1)}
 SOURCE_TREES = {'core': 'packages/core/src', 'assistant': 'plugins/plugin-assistant/src', 'wallet': 'plugins/plugin-wallet/src',
                 'sql': 'plugins/plugin-sql/src', 'openai': 'plugins/plugin-openai', 'anthropic': 'plugins/plugin-anthropic'}
 SECRETS = [re.compile(r'sk-ant-api[0-9A-Za-z_-]{10,}'), re.compile(r'sk-(proj|svcacct)-[0-9A-Za-z_-]{20,}'), re.compile(r'alchemy\.com/v2/(?!<redacted>)[0-9A-Za-z_-]{8,}'),
