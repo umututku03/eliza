@@ -142,3 +142,15 @@ L1 has no masked asset values in the two new cells; only key fields remain maske
 | L6 (remaining L4 mechanism) | Plan_guard call 11's quote ends “58.13 minimum”; call 13 explicitly regenerates it after financial_holding rejection, and call 14 accepts the rewrite. The comma fragment matches the standalone quantity/symbol rule and minimum is treated as an asset label. The unchanged validator reproduces the rejection. | Open; recorded only, no fix in this task. |
 
 The earlier “L4 fixed” status is therefore incomplete for quote labels after a comma. Recovery repaired this instance within the same turn, so it is not an additional final grounding-failure event. No Task B changes or live replacements were made after the budget stop.
+
+## Live check 2 completed under corrected rule — 26 October 2026 UTC
+
+The earlier Haiku-only stop is retained. The corrected rule permits cohort refusals and stops on cumulative-ceiling or validation/run failures. Only the two remaining Luna cells ran at 277ddc5ebf, with framework sources unchanged from 12b6f99a02. Both audits PASS, both reject 9/9 tamper cases, and both declare COMPLETED on completed chain state. New Luna spend 0.118577250 USD; full check-2 spend 0.288868450 USD; cumulative 3.676216700 USD. No corrected stop condition was hit.
+
+L1/L2 and both L3 normalization subcases are exercised successfully. L4/L6 remain open. Same-turn post-write recovery for L5 is not exercised. One final REPLY_GROUNDING_FAILED occurs in Luna/stock and no EVALUATOR_INVALID_OUTPUT occurs, so the live finish line is not met.
+
+| ID | Symptom and evidence | Status |
+|---|---|---|
+| L7 (related to H4) | Luna/stock turn 3 follows completed trades but its direct reply has no current action results/effect receipts. Call 34 drafts completion; call 36 request says financial_completion, No action results available, providers={}; reply recovery fails and the turn records REPLY_GROUNDING_FAILED. Closing turn still declares COMPLETED correctly. | Open; no fix. This continuation evidence gap is not counted as an independent duplicate of H4. |
+
+See the completion addendum in live-check-2-2026-10-26.md for all four rows, call evidence and the unchanged counting rules. Task B is behavior-preserving cleanup only.
