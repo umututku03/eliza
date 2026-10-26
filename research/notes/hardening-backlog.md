@@ -162,3 +162,12 @@ See the completion addendum in live-check-2-2026-10-26.md for all four rows, cal
 | L8 (harness/toolchain, cause unproven) | The scheduled post-cleanup D1/stock mock failed before creating a manifest under Bun 1.4.2: @metamask/utils/dist/logging.mjs imported debug as an object, then threw TypeError: debug is not a function. Preserved local log: review-post-fc-dryrun-review-post-L15-D1-stock.log; the verifier sidecar records the missing manifest. The next scheduled D1/plan_guard and H1/existing_controls mocks pass at the same source. | Open; startup observation, not a demonstrated regression in a framework fix. No patch or replacement run. The failed invocation is excluded from oracle-deviation counts because no episodes exist. |
 
 All unit counts and the route control still match baseline. The required five-mock PASS baseline is not established if any scheduled invocation cannot start. A later scheduled duplicate D1 cell is separate evidence, not a replacement for this failure. Raw logs and any partial output stay local.
+
+## Model-compatibility probes before the 26 October sweep
+
+Single direct API probes (one tool, one question; under $0.001 in total, outside the harness ledger), 26 October 2026, about 00:50 EDT. ElizaOS v2's planner forces tool use on most calls: 21 of 47 recorded Haiku requests in live check 2 carry `tool_choice: {"type": "any"}`.
+
+| ID | Symptom and evidence | Status |
+|---|---|---|
+| A11 | `claude-sonnet-5-5` and `claude-opus-5-5` reject forced tool choice: "tool_choice: type "tool" and "any" are not supported for this model." With `auto`, both call the tool. `claude-haiku-5-5` accepts both. Stock v2 would therefore fail every forced planner call on the current Sonnet and Opus. | Fixed `5fd56e8e4d`: for those models (and Fable 5.1 / Mythos 5.1), plugin-anthropic sends `auto` in place of a forced choice. Wire test in `wire-well-formed.shape.test.ts` fails on the old code. Haiku is unchanged. |
+| A12 | `gpt-6.1-sol` and `gpt-6-astra` cannot use function tools through Chat Completions at all. Without `reasoning_effort` they return "Function tools with reasoning_effort are not supported … use /v1/responses or set reasoning_effort to 'none'"; with `none` they return "does not support 'none' with this model". plugin-openai's text path uses Chat Completions. `gpt-6-luna`, `gpt-6-sol` and `gpt-5.6-terra` accept `none`; `gpt-5.4-mini` and `gpt-4.1-mini` need nothing. | Open; not fixed (it needs a Responses API path). Those models are excluded from the sweep and recorded as a finding. |
