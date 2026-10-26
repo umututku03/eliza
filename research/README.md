@@ -7,7 +7,8 @@ Start with [OVERVIEW.md](OVERVIEW.md), then the [framework change map](notes/fra
 | Directory | Purpose |
 |---|---|
 | [agent-harness-v2/](agent-harness-v2/) | Driver, isolated agent processes, model/chain proxies, budget ledger, independent verifier and tamper checks. |
-| [benchmark/](benchmark/) | Draft pre-registration, calibrated D1/H1–H3 tasks and deterministic control matrix. |
+| [benchmark/](benchmark/) | Draft pre-registration, calibrated D1/H1–H3 tasks, the deterministic control suite, the compromised-agent matrix and the plan-authoring probe. |
+| [paper/](paper/) | Paper draft (IEEE conference format) and bibliography. |
 | [plan-guard/](plan-guard/) | Plan-step and absolute-balance-floor enforcers, compiled locally and tested on the fork. |
 | [notes/](notes/README.md) | Findings, live-check records, related work, current plans and historical reports. |
 
@@ -87,6 +88,17 @@ ANVIL_BIN="$ANVIL_BIN" bun --conditions=eliza-source --env-file="$FORK_ENV" \
   2>&1 | grep -v -i "alchemy\|https://"
 ```
 
+### Compromised-agent matrix
+
+No model and no ElizaOS runtime. It uses its own Anvil port (default 18745), so it can run beside a live cohort.
+
+```bash
+ANVIL_BIN="$ANVIL_BIN" bun --env-file="$FORK_ENV" research/benchmark/compromised-agent-matrix.ts \
+  --tasks=research/benchmark/tasks.json --task=D1 --out="$RESEARCH_OUT/compromised-D1.json" \
+  2>&1 | grep -v -i "alchemy\|https://"
+python3 -I research/benchmark/summarize-matrix.py "$RESEARCH_OUT"/compromised-D1.json
+```
+
 ### One mock cell, audit and tamper checks
 
 ```bash
@@ -102,7 +114,12 @@ Mock responses are scripted. They test execution, recording and auditing, not mo
 
 ## Results and scope
 
-- [Control matrix](benchmark/suite-v1-summary.md) and [enforcer fork cases](plan-guard/fork-test-results.json) are committed.
+- Committed summaries:
+  - [control suite](benchmark/suite-v1-summary.md);
+  - [compromised-agent matrix](benchmark/matrix-v2-summary.md);
+  - [plan-authoring probe](benchmark/plan-authoring-summary.md);
+  - [enforcer fork cases](plan-guard/fork-test-results.json).
+- Live cohorts are summarised with `python3 -I research/agent-harness-v2/analyze-sweep.py <results dirs> --md`.
 - [Live check 2](notes/live-check-2-2026-10-26.md) contains both live-check tables, exact spend, source commits and unresolved L6/L7. All live runs so far are development checks.
 - Small `results-livecheck*.audit.json` summaries are committed under `agent-harness-v2/`. Raw directories, console logs and dryrun audit sidecars stay local and ignored; the local run archive retains their checksums. No raw traces are published here.
 - Audits bind exact source/harness hashes. Re-audit historical raw data with its producing source version; formatting changes also change hashes. Current-code reproduction uses a new output folder.
