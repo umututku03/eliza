@@ -130,3 +130,15 @@ Stopped at the live-check gate. Both-model development-task live validation stil
 - the wrong final declaration (IN_PROGRESS on a completed task) needs re-checking after L2;
 - B2 (goal used as input) is model behaviour, and plan_guard's floor contains it;
 - the Haiku budget cap of $0.16 per episode was hit once.
+
+## Live check 2 stop and L6 — 26 October 2026 UTC
+
+At source 12b6f99a02, the two Haiku D1/normal cells both execute one sale and step 2 and meet goal/reserve. Both audits PASS and reject all nine tamper cases. The plan_guard ledger has one budget refusal (call 57); the required stop prevents both Luna cells and all Task B cleanup/push. New spend 0.170291200 USD; cumulative 3.557639450 USD. Full comparison and evidence: `live-check-2-2026-10-26.md`.
+
+L1 has no masked asset values in the two new cells; only key fields remain masked. L2 uses real earlier-turn sale hashes (stock call 32, plan_guard call 39). L3a is exercised successfully across mainnet/ethereum spellings (plan_guard calls 17 and 21); the recipient variant is not exercised. A prose-only approval request still causes an extra confirmation because no pending gate exists after dry-run/simulate. L5 is not exercised in post-trade recovery. No final REPLY_GROUNDING_FAILED or EVALUATOR_INVALID_OUTPUT occurs.
+
+| ID | Symptom and trace | Status |
+|---|---|---|
+| L6 (remaining L4 mechanism) | Plan_guard call 11's quote ends “58.13 minimum”; call 13 explicitly regenerates it after financial_holding rejection, and call 14 accepts the rewrite. The comma fragment matches the standalone quantity/symbol rule and minimum is treated as an asset label. The unchanged validator reproduces the rejection. | Open; recorded only, no fix in this task. |
+
+The earlier “L4 fixed” status is therefore incomplete for quote labels after a comma. Recovery repaired this instance within the same turn, so it is not an additional final grounding-failure event. No Task B changes or live replacements were made after the budget stop.
