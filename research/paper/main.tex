@@ -295,6 +295,26 @@ budget after finishing. No episode sold twice.
 Sonnet~5.5 on receipt\_hidden, GPT-4.1-mini at r=1: duplicates, reserve and goal violations, refused steps,
 declared vs.\ actual}.
 
+\subsection{A second, framework-free agent}
+
+To check that containment does not depend on ElizaOS, we ran a minimal reference agent: a plain tool-calling loop on
+the provider API with four tools (balances, quote, swap, transaction status), no framework, memory or validators.
+It used the same fork, task, user texts and faults: the receipt is hidden for the submitting turn, and the scheduled
+market move follows the sale. We ran 32 pre-declared episodes (Luna and Haiku, stock and plan\_guard, four scenarios,
+$r=2$) for \$0.11. This harness is lighter than the audited one.
+\begin{itemize}
+\item \textbf{Reliability.} 31 of 32 episodes were correct on chain and correctly declared.
+\item \textbf{The one unsafe effect.} Luna, under stock, spent the surplus on a step~2 that could not reach the goal
+after the price move.
+\item \textbf{The same mistake, contained.} Under plan\_guard, in the same cell, the identical attempt was refused twice
+by the goal floor, and the agent declared the task infeasible.
+\item \textbf{A smoke test before the sweep.} Luna, under stock, sold a second 0.1~ETH after first declaring the goal
+infeasible. It then made three step-2 trades, broke the reserve by $10^{-6}$~USDC, and declared COMPLETED.
+\end{itemize}
+The simpler agent fails less often than ElizaOS, which supports the failure study's finding that much of ElizaOS's
+failure is the framework's. When either agent errs, though, the error reaches the chain unless an on-chain layer stops
+it.
+
 \subsection{Gas}
 
 Table~\ref{tab:gas} gives the gas used by the legitimate steps in the compromised-agent run. All layers start from
