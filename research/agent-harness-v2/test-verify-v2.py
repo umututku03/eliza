@@ -20,7 +20,9 @@ cases = {
     'harness label in a request': lambda p: edit_json(p / 'llm' / 'calls' / f'{first_call}-request.json', lambda d: d['body'].update(note='receipt_hidden')),
     'call response removed': lambda p: (p / 'llm' / 'calls' / f'{first_call}-response.json').unlink(),
     'confirmation text changed': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['turns'][1].update(text='Yes, and sell more.')),
-    'declared word changed': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome'].update(declared='INFEASIBLE')),
+    # Always a different word: an episode that already declared INFEASIBLE made the old edit a no-op (sweep cohort 7).
+    'declared word changed': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome'].update(
+        declared='COMPLETED' if d['outcome']['declared'] == 'INFEASIBLE' else 'INFEASIBLE')),
     'transaction dropped': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome']['transactions'].pop()),
     'credential pasted': lambda p: (p / 'episodes' / f'{first_ep}.child-stderr.log').write_text('sk-ant-api03-' + 'x' * 40),
     'episode removed from marker': lambda p: edit_json(p / 'complete.json', lambda d: d['episodes'].pop()),

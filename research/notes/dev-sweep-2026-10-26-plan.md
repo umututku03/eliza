@@ -87,3 +87,15 @@ The enforcers guarantee adherence to a signed plan, not that the plan is right. 
 - **Scoring from chain state:** sales, step-2 executions, goal, reserve, the declaration, and refusals by the chain.
 
 **Limits:** this harness is lighter than the audited ElizaOS harness: no egress proxy, no verifier or tamper tests, and its own ledger. Results are reported as such.
+
+## Stop and resume record (03:45–03:50 EDT)
+
+**The stop.** The sweep stopped itself after cohort 7 (luna/plan_guard), under the rule above: its audit passed but only 8 of 9 tamper cases were rejected. The accepted case was "declared word changed".
+
+**The cause** was a defect in the tamper test, not in the data or the verifier. The case overwrote the first episode's declaration with INFEASIBLE, and that episode had already declared INFEASIBLE, so the edit changed nothing.
+
+**The fix.** The case now always writes a different word (`test-verify-v2.py`). With it:
+- cohort 7 rejects 9/9 (the original 8/9 log is kept beside the new one);
+- cohorts 1–6 still reject 9/9.
+
+**The resume.** Cohorts 8–10 had not started. They then ran as planned, with the same caps and ceilings, the ledger carried from cohort 7's marker, and no rerun of any completed cohort.
