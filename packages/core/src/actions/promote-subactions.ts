@@ -310,9 +310,7 @@ function pinDiscriminatorForVirtual(
 			sliced.push({
 				...discriminatorRest,
 				description: pinnedDiscriminatorDescription(subaction),
-				// Parent examples advertise sibling operations even after the enum is
-				// pinned (recorded WALLET_BRIDGE: action=swap/token_info). Keep every
-				// description channel and example consistent with the dispatch pin.
+				// H9: sibling examples must not contradict the pinned discriminator.
 				descriptionCompressed: pinnedDiscriminatorDescription(subaction),
 				compressedDescription: pinnedDiscriminatorDescription(subaction),
 				examples: undefined,
