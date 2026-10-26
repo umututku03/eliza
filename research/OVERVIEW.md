@@ -71,7 +71,7 @@ The rules enforce the plan the user signed, so a wrong plan is the remaining ris
 
 **Fault sweep (26 October, overnight).** D1 under all four scenarios, three protection setups, and four models (GPT-6 Luna, Claude Haiku 5.5 and Claude Sonnet 5.5 and GPT-4.1-mini), pre-declared in [the plan](notes/dev-sweep-2026-10-26-plan.md):
 
-SWEEP_RESULTS_PLACEHOLDER
+*Running at the time of writing; the results table is added when the sweep finishes. Early result (Luna, stock, 8 episodes): 2 of 8 correct on chain, and 9 unsafe effects reached the chain, including a second ETH sale, two trades that spent the goal number (37.31 USDC) as the input, and a trade that undid step 2 and broke the reserve.*
 
 ## What we learned about the framework
 
