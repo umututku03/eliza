@@ -176,6 +176,14 @@ export class WalletBackendService extends Service {
     return handlerResult.ok ? handlerResult.handler.chain : null;
   }
 
+  /** The signer family of the handler a request resolves to. */
+  resolveSignerKind(
+    params: WalletRouterParams,
+  ): WalletSignerMetadata["kind"] | null {
+    const handlerResult = this.resolveHandler(params);
+    return handlerResult.ok ? handlerResult.handler.signer.kind : null;
+  }
+
   /**
    * Why `execute` requests for a signer family are refused, or null when they
    * may run. Chain handlers sign with the runtime's local keys, so execution

@@ -864,6 +864,74 @@ describe("wallet router action", () => {
     expect(mainnet.execute).toHaveBeenCalledTimes(1);
   });
 
+  it("does not split an EVM swap confirmation on an echoed recipient", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(mainnet);
+    const swap = (extra: Record<string, unknown>) => ({
+      parameters: {
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: USDC_EVM,
+        toToken: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        amount: "59.406476",
+        mode: "execute",
+        ...extra,
+      },
+    });
+    // Recorded live (gpt-6-luna): proposed without a recipient, re-sent with its own address.
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message("please swap"),
+      undefined,
+      swap({}) as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    const confirmed = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      swap({
+        recipient: "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      }) as HandlerOptions,
+    );
+    expect(confirmed?.data?.requiresConfirmation).toBeUndefined();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("still binds a transfer confirmation to its recipient", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    service.registerChainHandler(mainnet);
+    const transfer = (recipient: string) => ({
+      parameters: {
+        subaction: "transfer",
+        chain: "mainnet",
+        fromToken: "ETH",
+        amount: "0.01",
+        recipient,
+        mode: "execute",
+      },
+    });
+    const a = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+    const b = "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0";
+    const proposal = await walletRouterAction.handler(
+      runtime,
+      message(`please send to ${a} and ${b}`),
+      undefined,
+      transfer(a) as HandlerOptions,
+    );
+    expect(proposal?.data?.requiresConfirmation).toBe(true);
+    const other = await walletRouterAction.handler(
+      runtime,
+      message("yes, confirm"),
+      undefined,
+      transfer(b) as HandlerOptions,
+    );
+    expect(other?.data?.requiresConfirmation).toBe(true);
+    expect(mainnet.execute).not.toHaveBeenCalled();
+  });
+
   it("routes chain eth to Ethereum mainnet with the default EVM chains", async () => {
     const { runtime, service } = createService();
     registerDefaultWalletChainHandlers(service, runtime);

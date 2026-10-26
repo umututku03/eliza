@@ -572,6 +572,14 @@ async function runWalletRouter(
     params: {
       ...params,
       chain: service.resolveChainKey(executionParams) ?? params.chain,
+      // An EVM swap pays out to the wallet itself (or the plan account): its
+      // SwapParams carry no recipient, so a model echoing its own address as
+      // recipient on one call and omitting it on the next must not split the
+      // confirmation. Transfers and bridges still bind their recipient.
+      ...(params.subaction === "swap" &&
+      service.resolveSignerKind(executionParams) === "evm"
+        ? { recipient: undefined }
+        : {}),
     },
     callback,
   });
