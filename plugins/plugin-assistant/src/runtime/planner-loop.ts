@@ -5746,9 +5746,8 @@ async function executeQueuedToolCall(params: {
     result,
   };
   params.trajectory.steps.push(completedStep);
-  // A turn cache remains reusable until an action explicitly changes its source.
-  // Replace the model prefix as well as evaluator context: refreshing the state
-  // cache alone leaves the planner's already-rendered balances stale (H8).
+  // H8: refreshing state alone leaves the planner prefix stale. Replace both
+  // planner and evaluator provider evidence after an explicit invalidation.
   if (
     result.refreshProviders?.length &&
     params.params.runtime.restoreProviderContext
