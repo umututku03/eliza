@@ -410,12 +410,8 @@ function resultText(result: WalletRouterResult): string {
   return `Submitted ${execution.subaction} on ${result.handler.chain}${id ? `: ${id}` : "."}`;
 }
 
-/**
- * Proof of a submitted on-chain transaction, for the message runtime's claim binding. Without a receipt, a
- * reply that truthfully reports the submission cannot be grounded: recovery then fails the turn after the
- * trade, and the agent loses the record of its own effect. Only a submitted, non-dry-run execution with a
- * transaction id qualifies; an unconfirmed submission does not.
- */
+/** H3: bind submission claims to a confirmed, non-dry-run transaction id.
+ * Without this receipt, reply recovery can lose the record of a completed effect. */
 function walletSubmissionReceipt(
   routed: WalletRouterResult,
 ): AppliedEffectReceipt | null {
