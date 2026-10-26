@@ -125,7 +125,10 @@ def audit(folder):
         else:
             if e['status'] in ('settled', 'http_error_reservation_kept', 'unsettled_usage_reservation_kept'): exp_files.add(f"{e['call']}-response.json")
             if e['status'] == 'settled':
-                r = read(p / 'llm' / 'calls' / f"{e['call']}-response.json")
+                rp = p / 'llm' / 'calls' / f"{e['call']}-response.json"
+                # A missing record is a rejection, not a crash: the inventory check below must get to report it.
+                need(rp.exists(), 'unexplained or missing call records', [rp.name])
+                r = read(rp)
                 need(r['httpStatus'] == 200, 'settled needs 200', e['call'])
                 cost = usage_cost(cohort['model'], cohort['provider'], r)
                 need(abs(cost - Decimal(str(e['estimatedUSD']))) < Decimal('1e-12'), 'settled cost differs from usage', e['call'])
