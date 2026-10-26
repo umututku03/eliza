@@ -1491,10 +1491,8 @@ async function generateTextWithModel(
     (responseFormat === "json_object" ||
       (typeof responseFormat === "object" && responseFormat?.type === "json_object"))
   ) {
-    // Anthropic's native JSON output requires a schema. Silently discarding
-    // json_object makes callers believe output is constrained when it isn't.
-    // A typed local refusal lets the evaluator explicitly select its plain-JSON
-    // prompt fallback while preserving support for later schema requests.
+    // H6: native JSON output requires a schema; refuse explicitly so callers
+    // can choose a plain-JSON prompt without losing later schema support.
     throw new ElizaError(
       "Anthropic json_object response schema mode is unsupported; supply responseSchema",
       {
