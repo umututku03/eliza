@@ -168,6 +168,15 @@ export class WalletBackendService extends Service {
   }
 
   /**
+   * The registry key of the handler a request resolves to, so aliases of one
+   * chain ("ethereum", "1", "mainnet") bind to the same confirmation.
+   */
+  resolveChainKey(params: WalletRouterParams): string | null {
+    const handlerResult = this.resolveHandler(params);
+    return handlerResult.ok ? handlerResult.handler.chain : null;
+  }
+
+  /**
    * Why `execute` requests for a signer family are refused, or null when they
    * may run. Chain handlers sign with the runtime's local keys, so execution
    * is refused whenever the wallet the user sees and funds is another one.

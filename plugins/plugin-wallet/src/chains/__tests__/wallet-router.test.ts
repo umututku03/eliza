@@ -21,6 +21,7 @@ import type {
 } from "../../types/wallet-router";
 import { registerDefaultWalletChainHandlers } from "../registry";
 import { walletRouterAction } from "../wallet-action";
+import { recentWalletSubmissions } from "../wallet-submissions";
 import recordedSale from "./fixtures/h8-sale.json";
 
 const USDC_EVM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -669,6 +670,15 @@ describe("wallet router action", () => {
         }),
       }),
     ]);
+    // The submission joins the cross-turn history shown in the wallet context.
+    await expect(recentWalletSubmissions(runtime)).resolves.toEqual([
+      expect.objectContaining({
+        transactionHash: "0xtest",
+        chain: "base",
+        subaction: "swap",
+        amount: "1",
+      }),
+    ]);
     // A later tx_status read can name the operation behind the hash.
     await expect(runtime.getCache("wallet:submitted:0xtest")).resolves.toEqual({
       chain: "base",
@@ -814,6 +824,44 @@ describe("wallet router action", () => {
     expect(result?.success).toBe(false);
     expect(result?.data?.error).toBe("UNSUPPORTED_CHAIN");
     expect(base.execute).not.toHaveBeenCalled();
+  });
+
+  it("binds a confirmation to the resolved chain, not its spelling", async () => {
+    const { runtime, service } = createService();
+    const mainnet = handler("mainnet", "Ethereum", "1", "evm");
+    const base = handler("base", "Base", "8453", "evm");
+    service.registerChainHandler(mainnet);
+    service.registerChainHandler(base);
+    const swap = (chain: string) => ({
+      subaction: "swap",
+      chain,
+      fromToken: USDC_EVM,
+      toToken: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      amount: "59.406476",
+      mode: "execute",
+    });
+    const ask = (chain: string, text: string) =>
+      walletRouterAction.handler(runtime, message(text), undefined, {
+        parameters: swap(chain),
+      } as HandlerOptions);
+
+    // Recorded live: proposed on "ethereum", confirmed on "mainnet".
+    expect(
+      (await ask("ethereum", "please swap"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    const confirmed = await ask("mainnet", "yes, confirm");
+    expect(confirmed?.data?.requiresConfirmation).toBeUndefined();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
+
+    // A different chain is a different request: it is asked again, not executed.
+    expect(
+      (await ask("mainnet", "please swap"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    expect(
+      (await ask("base", "yes, confirm"))?.data?.requiresConfirmation,
+    ).toBe(true);
+    expect(base.execute).not.toHaveBeenCalled();
+    expect(mainnet.execute).toHaveBeenCalledTimes(1);
   });
 
   it("routes chain eth to Ethereum mainnet with the default EVM chains", async () => {

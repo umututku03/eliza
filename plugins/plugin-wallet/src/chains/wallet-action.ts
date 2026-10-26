@@ -61,6 +61,7 @@ import {
   evmTxStatusHandler,
   walletSubmissionCacheKey,
 } from "./evm/actions/onchain-read.js";
+import { recordWalletSubmission } from "./wallet-submissions.js";
 
 const LEGACY_SWAP_ACTIONS = new Set([
   "SWAP",
@@ -562,10 +563,16 @@ async function runWalletRouter(
     };
   }
 
+  // Bind the confirmation to the resolved chain, not its spelling: a model that
+  // proposes on "mainnet" and confirms on "ethereum" otherwise gets a fresh
+  // prompt instead of an execution (live check: re-asks in 3 of 4 episodes).
   const confirmationGate = await gateWalletFinancialExecution({
     runtime,
     message,
-    params,
+    params: {
+      ...params,
+      chain: service.resolveChainKey(executionParams) ?? params.chain,
+    },
     callback,
   });
   if (!confirmationGate.proceed) {
@@ -601,6 +608,16 @@ async function runWalletRouter(
     await runtime.setCache(walletSubmissionCacheKey(receipt.resource.id), {
       chain: routed.handler.chain,
       subaction: routed.result.subaction,
+    });
+    await recordWalletSubmission(runtime, {
+      transactionHash: receipt.resource.id,
+      chain: routed.handler.chain,
+      subaction: routed.result.subaction,
+      amount: routed.result.amount,
+      fromToken: routed.result.fromToken,
+      toToken: routed.result.toToken,
+      to: routed.result.to,
+      submittedAt: receipt.observedAt,
     });
   }
   return {

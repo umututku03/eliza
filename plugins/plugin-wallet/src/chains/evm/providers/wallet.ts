@@ -44,6 +44,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as viemChains from "viem/chains";
+import { recentWalletSubmissions, walletSubmissionLines } from "../../wallet-submissions";
 import { DEFAULT_CHAINS, EVM_SERVICE_NAME } from "../constants";
 import { planGuardFromSettings } from "../plan-guard";
 import {
@@ -836,12 +837,17 @@ export const evmWalletProvider: Provider = {
       const trackedText = trackedLines.length
         ? `\n\nToken balances (read on-chain now):\n${trackedLines.join("\n")}`
         : "";
+      const submissions = await recentWalletSubmissions(runtime);
+      const submissionText = submissions.length
+        ? `\n\nTransactions this wallet submitted, most recent first (check one with action=tx_status):\n${walletSubmissionLines(submissions).join("\n")}`
+        : "";
       return {
-        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}${trackedText}`,
+        text: `${agentName}'s EVM Wallet Address: ${walletData.address}\n\nBalances:\n${balanceText}${trackedText}${submissionText}`,
         data: {
           address: walletData.address,
           chains,
           unavailableChains,
+          submissions,
           chainCount: walletData.chains.length,
           displayedChainCount: chains.length,
           holdings: [

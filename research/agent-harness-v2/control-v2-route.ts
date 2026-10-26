@@ -76,6 +76,9 @@ try {
   const balances = await walletRouterAction.handler(runtime, msg('what is in my wallet now?'), undefined, { parameters: { action: 'balance', target: 'mainnet' } } as HandlerOptions);
   const held = Object.fromEntries((((balances?.data as any)?.holdings ?? []) as any[]).map((h) => [h.symbol, h.amount]));
   const ethNow = formatUnits(await anvil.pub.getBalance({ address: AGENT }), 18);
+  // A later turn's wallet context must still name both trades' hashes (cross-turn submission history).
+  const s2Hash = String(s2?.data?.transactionHash ?? s2?.data?.execution?.transactionHash ?? '');
+  const laterContext = String((await evmWalletProvider.get(runtime, msg('where are we?'), { agentName: 'Agent' } as any))?.text ?? '');
 
   const checks = {
     step1Succeeded: s1?.success === true,
@@ -88,6 +91,7 @@ try {
     simulateIsQuoteOnly: sim?.success === true && simSentNothing && !(sim?.data as any)?.requiresConfirmation,
     quoteMatchesExecution: simSummary.expectedOutput === formatUnits(after2.dai, 18),
     txStatusReportsStep1Swap: (txStatus?.data as any)?.receiptStatus === 'success' && (txStatus?.data as any)?.operation === 'swap',
+    contextListsBothSubmissions: s1Hash.length === 66 && s2Hash.length === 66 && laterContext.includes(s1Hash) && laterContext.includes(s2Hash),
     balanceReadMatchesChain: held.ETH === ethNow && held.USDC === formatUnits(after2.usdc, 6) && held.DAI === formatUnits(after2.dai, 18),
   };
   failed = !Object.values(checks).every(Boolean);
