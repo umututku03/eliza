@@ -7,6 +7,7 @@ Status: 2026-10-26 — current review index. Historical notes remain intact; a d
 | [README.md](README.md) | current | Index of every note; historical bodies are retained. |
 | [hardening-backlog.md](hardening-backlog.md) | current | A/H/L progress, remaining L6/L7/L8 observations and live gate. |
 | [framework-changes.md](framework-changes.md) | current | Git-generated 58-file framework map with explicit provenance and test gaps. |
+| [overnight-report-2026-10-26b.md](overnight-report-2026-10-26b.md) | current | Overnight 26 October: what was done, what went wrong, spend, decisions. |
 | [dev-sweep-2026-10-26-plan.md](dev-sweep-2026-10-26-plan.md) | current | Pre-declared overnight sweep, addenda (plan-authoring probe, reference agent) and the stop/resume record. |
 | [dev-sweep-2026-10-26-results.md](dev-sweep-2026-10-26-results.md) | current | 59-episode fault sweep: unsafe effects by condition, chain refusals, caveats, per-episode table. |
 | [live-check-2-2026-10-26.md](live-check-2-2026-10-26.md) | current | Both live-check tables, counting rules, L verdicts, corrected stop rule and exact ledger. |

@@ -23,7 +23,7 @@ It runs a deployed framework (ElizaOS v2) on a pinned Ethereum mainnet fork.
 - **Who writes the plan?** ([summary](../benchmark/plan-authoring-summary.md)) Three of four models produced a fully correct plan 36 of 36 times. GPT-4.1-mini left step 2's input token open in 9 of 12.
 - **Live fault sweep** ([results](dev-sweep-2026-10-26-results.md)): 59 ElizaOS episodes across four models, every cohort audited.
   - With no on-chain controls, **15 unsafe effects** reached the chain: duplicate sales, reserve breaches, goal-missing trades and stray swaps.
-  - With MetaMask's built-in rules, or with ours: **0**.
+  - With MetaMask's built-in rules, or with ours: **0**. Part of this gap is behavioural: in protected mode the agents attempted fewer bad actions. The stolen-key matrix is what separates the layers.
   - Our rules refused **no legitimate step**.
 - **A second, framework-free agent** ([summary](../benchmark/reference-agent-summary.md)): 31 of 32 correct. The one mistake reached the chain only without our rules; with them, the chain refused it.
 
