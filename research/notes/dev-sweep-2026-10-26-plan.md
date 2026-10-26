@@ -99,3 +99,9 @@ The enforcers guarantee adherence to a signed plan, not that the plan is right. 
 - cohorts 1–6 still reject 9/9.
 
 **The resume.** Cohorts 8–10 had not started. They then ran as planned, with the same caps and ceilings, the ledger carried from cohort 7's marker, and no rerun of any completed cohort.
+
+**Second stop (04:17 EDT, after the last cohort).**
+- **What happened.** Cohort 10's audit passed, but the tamper script crashed: its first episode made no transaction, so "transaction dropped" had nothing to drop. Only 6/9 cases ran.
+- **The fix.** The tamper cases now target the first episode that recorded a transaction.
+- **The result.** All 10 cohorts: audit PASS, 9/9 tamper cases rejected (`*.tamper-final.log`; the original logs are kept).
+- **Nothing was skipped:** cohort 10 was the last.

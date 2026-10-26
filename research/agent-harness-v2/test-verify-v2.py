@@ -12,7 +12,9 @@ v.audit(src)  # the untouched folder must pass
 def edit_json(path, fn):
     d = json.loads(path.read_text()); fn(d); path.write_text(json.dumps(d))
 
-first_ep = next(n for n in json.loads((src / 'complete.json').read_text())['episodes'] if not n.startswith('control-'))
+eps = [n for n in json.loads((src / 'complete.json').read_text())['episodes'] if not n.startswith('control-')]
+# Edits need something to edit: target the first episode that recorded a transaction (sweep cohort 10's first had none).
+first_ep = next((n for n in eps if json.loads((src / 'episodes' / f'{n}.json').read_text())['outcome']['transactions']), eps[0])
 first_call = json.loads((src / 'llm' / 'ledger.jsonl').read_text().splitlines()[0])['call']
 cases = {
     'outcome flag flipped': lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome'].update(duplicateSale=not d['outcome']['duplicateSale'])),
