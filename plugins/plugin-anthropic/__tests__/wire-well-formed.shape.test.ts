@@ -84,12 +84,12 @@ function startCaptureServer(): Promise<string> {
   });
 }
 
-function buildRuntime(): IAgentRuntime {
+function buildRuntime(model = "claude-test"): IAgentRuntime {
   const settings: Record<string, string> = {
     ANTHROPIC_API_KEY: "test-key",
     ANTHROPIC_AUTH_MODE: "apikey",
     ANTHROPIC_BASE_URL: baseUrl,
-    ANTHROPIC_SMALL_MODEL: "claude-test",
+    ANTHROPIC_SMALL_MODEL: model,
   };
   return {
     getSetting: vi.fn((key: string) => settings[key]),
@@ -223,6 +223,33 @@ describe("#18025: Anthropic request bodies are well-formed strict JSON", () => {
     expect(parsed.stop_sequences).toContain("clean-stop");
     // The lone surrogate in the stop sequence was replaced with U+FFFD.
     expect(parsed.stop_sequences).toContain("bad�");
+  });
+
+  it("sends auto instead of a forced tool choice to models that reject it", async () => {
+    const tools = {
+      get_balance: {
+        name: "get_balance",
+        description: "Get a balance",
+        parameters: { type: "object", properties: {} },
+      },
+    };
+    for (const [model, expected] of [
+      ["claude-sonnet-5-5", "auto"],
+      ["claude-opus-5-5", "auto"],
+      ["claude-haiku-5-5", "any"],
+    ] as const) {
+      captured.length = 0;
+      // The capture server replies with text only; a forced choice then fails
+      // client-side after the request is on the wire, which is all this checks.
+      await handleTextSmall(buildRuntime(model), {
+        prompt: "use the tool",
+        tools,
+        toolChoice: "required",
+      } as never).catch(() => undefined);
+      expect(captured).toHaveLength(1);
+      const body = JSON.parse(captured[0].toString("utf8")) as { tool_choice?: { type?: string } };
+      expect(body.tool_choice?.type).toBe(expected);
+    }
   });
 
   it("sanitizes a lone surrogate in a tool description (#18081)", async () => {
