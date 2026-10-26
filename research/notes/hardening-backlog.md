@@ -98,3 +98,35 @@ Remaining lifecycle observation: H3/stock has 4 refused_outside_turn ledger entr
 Root repository verification is blocked by the filtered install's missing root Biome dependency; Anthropic's standalone type-check is blocked by workspace/imported-source diagnostics. Explicit pinned Biome checks and all required suites above pass. Full evidence and retained wrapper-error details: `hardening-report-2026-10-25-codex.md`.
 
 Stopped at the live-check gate. Both-model development-task live validation still needs fresh user spending approval; it has not been run. No benchmark-scale live run, push, or upstream issue/PR activity.
+
+## 25 October 2026 live check, and fixes L1–L5
+
+**Live check:** D1/normal, r = 1, both models, stock and plan_guard, at source `2cca02b446`. Spend $0.3682. All four audits PASS; 9/9 tamper cases rejected after `efeec47289`, which fixed a verifier crash on a deleted response.
+
+**Outcome:**
+- Both Luna episodes completed the on-chain task exactly, with no duplicate sale.
+- Neither Haiku episode reached step 2.
+- One `REPLY_GROUNDING_FAILED`; no `EVALUATOR_INVALID_OUTPUT`.
+
+**The finish line is not met yet:** the second live check after these fixes is pending approval.
+
+| # | Problem (evidence in `next-steps-2026-10-25.md` §2) | Fix | Tests |
+|---|---|---|---|
+| L1 | Credential redaction masked `fromToken`/`toToken`/`token`/`tokens`; models copied `"[REDACTED]"` into swaps | `0bf39964e2` (core): value-aware for asset fields; credentials under the same names stay masked | core `tool-diagnostics-chain-assets` 4 (fail on old code) |
+| L2 | Earlier turns' transaction hashes not in context; agent could not check its own trades | `3972fbad47`: wallet submission history in the `evm-wallet` context | `wallet-submissions` 2, router 1; fork route `contextListsBothSubmissions` |
+| L3a | Confirmation keyed on the chain's spelling ("ethereum" vs "mainnet") | `3972fbad47`: bind the resolved registry key | router 1 (fails on old code); a different chain is still re-asked |
+| L3b | Confirmation split by an echoed own-address `recipient` on EVM swaps | `0e15b8cb4b`: EVM swap binding ignores `recipient` (EVM SwapParams have none) | router 2: the swap test fails on old code; the transfer recipient guard is kept |
+| L4 | Holdings check read "should yield about 37 DAI" and "with 38 USDC" as holdings | `13c9389b3f` | 1 test from both live drafts (fails on old code); "left with 999 USDC" still rejected |
+| L5 | Reply grounding read pre-trade providers after a confirmed write | `2fed8141f6`: merge refreshed providers into the turn state | `refreshed-providers` 2 |
+
+**Validation after L1–L5, pinned toolchain:**
+- core 382/384: the 2 failures are `logger.native-esm`, which needs a built `dist/` and `tsx`, and fails identically before the change;
+- assistant 2,743/2,743;
+- wallet 230/230 (1 skipped);
+- fork route control 12/12;
+- mock D1 stock, D1 plan_guard and H1 existing_controls: all PASS, 9/9 tamper rejected, every episode matches its oracle.
+
+**Still open:**
+- the wrong final declaration (IN_PROGRESS on a completed task) needs re-checking after L2;
+- B2 (goal used as input) is model behaviour, and plan_guard's floor contains it;
+- the Haiku budget cap of $0.16 per episode was hit once.

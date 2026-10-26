@@ -38,11 +38,11 @@
 
 | # | Problem | Evidence | Status |
 |---|---|---|---|
-| **L1** | **Credential redaction masks wallet asset fields.** `log-redaction.ts` masks every key containing "token". `fromToken`, `toToken`, `token` and `tokens` reach the model as `"[REDACTED]"`, and the model sends that literal back as the next swap's token. | Haiku stock: 3 swaps refused with `fromToken "[REDACTED]"`. Up to 62 masked values per prompt. | **Fixed** in core (value-aware: addresses, mints and symbols only; credentials under the same names stay masked). Red/green tests added. Full suites pending. |
-| **L2** | **A turn forgets the transaction hashes of earlier turns.** Action results are per turn, so the first sale's hash never appears again after turn 2. | Luna stock turns 4–5: "I don't have the actual transaction hash"; called `tx_status` with no hash, then with a zero hash; declared IN_PROGRESS on a completed task. | Open. Proposed fix: a wallet "recent submissions" provider built from the submission record that `tx_status` already uses. |
-| **L3** | **"Yes, confirm" often does not execute; the agent re-proposes.** The pending key binds raw arguments (`chain` "mainnet" vs "ethereum"; probably also slippage and token spellings). | 3 of 4 episodes lost one or more turns to re-asks; two hit the turn limit. | Open. Proposed fix: bind the confirmation to the *resolved* request (canonical chain key, canonical token address), not the raw text. |
-| **L4** | **Holdings validator: hypothetical and order amounts read as holdings.** "should yield about 37 DAI"; "buying DAI with 38 USDC from your wallet". | Haiku stock drafts at calls 37 and 61; one turn lost. | Open; small fix ready after the suites finish. |
-| **L5** | **Recovery grounds on pre-trade provider data.** The H8 refresh reaches the planner but not the provider snapshot reply recovery uses: "0 USDC" right after the sale. | Haiku stock call 37 evidence. | Open. |
+| **L1** | **Credential redaction masks wallet asset fields.** `log-redaction.ts` masks every key containing "token". `fromToken`, `toToken`, `token` and `tokens` reach the model as `"[REDACTED]"`, and the model sends that literal back as the next swap's token. | Haiku stock: 3 swaps refused with `fromToken "[REDACTED]"`. Up to 62 masked values per prompt. | **Fixed** `0bf39964e2`. |
+| **L2** | **A turn forgets the transaction hashes of earlier turns.** Action results are per turn, so the first sale's hash never appears again after turn 2. | Luna stock turns 4–5: "I don't have the actual transaction hash"; called `tx_status` with no hash, then with a zero hash; declared IN_PROGRESS on a completed task. | **Fixed** `3972fbad47`: submission history in the wallet context. |
+| **L3** | **"Yes, confirm" often does not execute; the agent re-proposes.** The pending key binds raw arguments (`chain` "mainnet" vs "ethereum"; probably also slippage and token spellings). | 3 of 4 episodes lost one or more turns to re-asks; two hit the turn limit. | **Fixed** in two parts: the resolved chain key `3972fbad47`, and the echoed own-address recipient on EVM swaps `0e15b8cb4b`. |
+| **L4** | **Holdings validator: hypothetical and order amounts read as holdings.** "should yield about 37 DAI"; "buying DAI with 38 USDC from your wallet". | Haiku stock drafts at calls 37 and 61; one turn lost. | **Fixed** `13c9389b3f`. |
+| **L5** | **Recovery grounds on pre-trade provider data.** The H8 refresh reaches the planner but not the provider snapshot reply recovery uses: "0 USDC" right after the sale. | Haiku stock call 37 evidence. | **Fixed** `2fed8141f6`. |
 
 **Also seen (model behaviour, not framework):**
 - **B2 again:** Haiku planned to spend the 37.31 DAI goal as 37.31 USDC.
@@ -104,7 +104,7 @@ This is plan C, sharpened by the literature: the benchmark is the measurement in
 
 | By | Milestone | Cost |
 |---|---|---|
-| 1 Nov | Fix L1–L5 (free). Mock matrix passes. A second small live check, same design. | ~$0.40 |
+| 1 Nov | ~~Fix L1–L5~~ (done 25 Oct; all offline checks pass). A second small live check, same design. | ~$0.40 |
 | 8 Nov | Freeze the pre-registration (§8: commit and hashes). Benchmark spec v2: 3–4 task families (multi-step swap with reserve; ordered sequence; transfer to an allowlist; infeasible-must-refuse), ~6 calibrated instances each, held out. | free |
 | 15 Nov | **Go/no-go gate.** Families calibrated, controls suite extended to every family, replay-based containment matrix done (free). If behind: shrink to D1–H3 plus the matrix (option A+). | free |
 | 29 Nov | Held-out live runs: Haiku all cells, r = 2; Luna reduced. Second framework or minimal agent if time allows. | ~$5–15 (needs approval) |
