@@ -5,6 +5,7 @@ Status: 2026-11-14 — current review index. Historical notes remain intact; a d
 | Note | Status | Contents |
 |---|---|---|
 | [README.md](README.md) | current | Index of every note; historical bodies are retained. |
+| [live-distinguish-2026-11-14-results.md](live-distinguish-2026-11-14-results.md) | current | 36-episode live sweep in the distinguishing states: zero unsafe effects; signing-time layers refuse legitimate choices; refusal handling. |
 | [live-distinguish-2026-11-14-plan.md](live-distinguish-2026-11-14-plan.md) | current | Pre-registered live runs in the market states where control layers differ (36 episodes, three layers incl. checkpoint_approx). |
 | [hardening-backlog.md](hardening-backlog.md) | current | A/H/L progress, remaining L6/L7/L8 observations and live gate. |
 | [framework-changes.md](framework-changes.md) | current | Git-generated 58-file framework map with explicit provenance and test gaps. |

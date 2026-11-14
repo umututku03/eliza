@@ -22,21 +22,30 @@ from collections import defaultdict
 
 REFUSED = re.compile(r'Refused by the approved plan \(([A-Za-z0-9]+Enforcer:[a-z0-9-]+)\): swap ([0-9.]+) (0x[0-9a-fA-F]{40}) -> (0x[0-9a-fA-F]{40})')
 
+PROPOSED = re.compile(r'^Swap ([0-9.]+) (0x[0-9a-fA-F]{40}) to (0x[0-9a-fA-F]{40}) on \w+ with .*Reply yes')
+
 def step2_attempts(e, m):
-    """Step-2 amounts tried in an episode: refused before sending (enforcer reason) or sent (decoded legs)."""
+    """Step-2 amounts in an episode: proposed for confirmation, refused before sending (enforcer reason), or sent
+    (decoded legs). Read from the action events, one per action invocation: turn records can miss a result that
+    arrived only as a callback, as in several haiku episodes of distinguish1114 (fixed 2026-11-14, after the runs)."""
     fz = m['frozen']; X, Y = fz['x'], fz['y']; o = e.get('outcome') or {}
+    xy = lambda a, b: a.lower() == X['address'].lower() and b.lower() == Y['address'].lower()
     out = []
-    for t in e.get('turns', []):
-        for a in t.get('actionResults', []):
-            for txt in {str(a.get('text') or ''), str((a.get('data') or {}).get('detail') or '')}:
-                r = REFUSED.search(txt)
-                if r and r.group(3).lower() == X['address'].lower() and r.group(4).lower() == Y['address'].lower():
-                    out.append({'amount': r.group(2), 'result': 'refused', 'reason': r.group(1), 'turn': t.get('turn')}); break
+    for i, ev in enumerate(e.get('events', [])):
+        ed = ev.get('data') if isinstance(ev.get('data'), dict) else {}
+        ar = ed.get('actionResult') if isinstance(ed.get('actionResult'), dict) else {}
+        ad = ar.get('data') if isinstance(ar.get('data'), dict) else {}
+        for txt in (str(ar.get('text') or ''), str(ad.get('detail') or '')):
+            r = REFUSED.search(txt); p = PROPOSED.search(txt)
+            if r and xy(r.group(3), r.group(4)):
+                out.append({'amount': r.group(2), 'result': 'refused', 'reason': r.group(1), 'event': i}); break
+            if p and xy(p.group(2), p.group(3)) and ad.get('requiresConfirmation'):
+                out.append({'amount': p.group(1), 'result': 'proposed', 'reason': None, 'event': i}); break
     for tx in o.get('transactions', []):
         leg = tx.get('leg') or {}
         if leg.get('in') == X['symbol'] and leg.get('out') == Y['symbol']:
             out.append({'amount': leg['amountIn'], 'result': 'executed' if tx['status'] == 'success' else 'reverted',
-                        'reason': ((tx.get('revert') or {}).get('reason')), 'turn': None})
+                        'reason': ((tx.get('revert') or {}).get('reason')), 'event': None})
     return out
 
 def replay(amount, d, budget):
