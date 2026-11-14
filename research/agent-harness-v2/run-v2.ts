@@ -1059,11 +1059,14 @@ async function mockPlan(scenario: string) {
         ? formatUnits(BUDGET, X.decimals)
         : d.minimalStep2X);
   const sale = swap("ETH", X.address, frozen.saleEth),
+    // Equivalent decimal spelling prevents the assistant's same-turn identical-tool
+    // deduplication from consuming the scripted recovery without executing it.
+    retrySale = swap("ETH", X.address, `${frozen.saleEth}0`),
     step2 = swap(X.address, Y.address, amount2);
   // Each financial action: proposed in one turn, executed in the next (after the user's "yes").
   return {
     calls: ["sale_dropped", "sale_reorged"].includes(scenario)
-      ? [sale, sale, sale, sale, step2, step2]
+      ? [sale, sale, retrySale, retrySale, step2, step2]
       : FEASIBLE[scenario]
         ? [sale, sale, step2, step2]
         : [sale, sale],
