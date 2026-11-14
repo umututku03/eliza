@@ -33,6 +33,16 @@ cases = {
 pre_ep = next((n for n in eps if json.loads((src / 'episodes' / f'{n}.json').read_text()).get('preEpisode')), None)
 if pre_ep:
     cases['pre-episode amount forged'] = lambda p: edit_json(p / 'episodes' / f'{pre_ep}.json', lambda d: d['preEpisode'].update(ethWei=str(int(d['preEpisode']['ethWei']) + 1)))
+# Chain faults: removing the evidence of the active fault must be rejected.
+fault_ep = next((n for n in eps if any(j.get('event') in ('chain_reorg', 'dropped_send', 'stale_read')
+    for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
+if fault_ep:
+    def remove_fault(p):
+        def mutate(d):
+            index = next(i for i, j in enumerate(d['forkJournal']) if j.get('event') in ('chain_reorg', 'dropped_send', 'stale_read'))
+            d['forkJournal'].pop(index)
+        edit_json(p / 'episodes' / f'{fault_ep}.json', mutate)
+    cases['fault event removed'] = remove_fault
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
