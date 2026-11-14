@@ -208,3 +208,17 @@ null, pending and queued pool counts 0, head restored. Old sale block hash
 `0xd7b7298cb343c9067b631fcbb60a113d14c57e91cebfa5ae1facee6a5cc5a9b8`;
 replacement `0x73a980d6bccac67d39f899910c4208915b5b2270599b95e70bb3d4342dc01a45`.
 Implementation proceeds under the approved emulated-reorg amendment.
+
+### Completion (Codex, 2026-11-14)
+
+Implemented the three faults under the approved snapshot/revert amendment.
+All five acceptance checks passed with the specified baseline exceptions:
+core 382 passed plus 2 known environment failures; assistant 2743 passed;
+wallet 230 passed and 1 skipped; Anthropic 29 passed. New-fault stock and
+plan_guard audits PASS with 10/10 tamper rejections each; default regression
+PASS with 9/9; distinguishing regression PASS with 10/10. All new-fault
+controls and model episodes complete with one canonical sale. Manual stock
+review confirms fault journals, including the orphan's null receipt and
+restored X balance at reorg. Full exact outcome/audit/tamper outputs,
+implementation choices, development failures and artifact paths are appended
+to `codex-report-chain-faults.md`. All validation was mock-only; new model spend 0.
