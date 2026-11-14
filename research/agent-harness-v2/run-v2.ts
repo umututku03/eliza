@@ -1034,8 +1034,10 @@ async function mockPlan(scenario: string) {
   if (CHAIN_FAULTS.includes(scenario)) {
     const snap = await anvil.rpc("evm_snapshot");
     try {
+      const held = await balance(anvil.pub, X.address, W);
+      const proceeds = await quote(anvil.pub, SALE_WEI, [frozen.weth, X.address]);
       await moverSwap(SALE_WEI, [frozen.weth, X.address]);
-      const amount = await minimalXFor(BigInt(frozen.proceedsXUnits) - RESERVE);
+      const amount = await minimalXFor(held + proceeds - RESERVE);
       if (amount === null)
         throw new Error("Chain-fault mock task is not feasible");
       chainAmount = formatUnits(amount, X.decimals);
