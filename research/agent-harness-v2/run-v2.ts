@@ -4,7 +4,10 @@
 //
 //   bun --conditions=eliza-source research/agent-harness-v2/run-v2.ts --mode=mock|live --models=luna,haiku --dest=<dir>
 //        [--condition=stock|existing_controls|plan_guard|checkpoint_approx] [--task=<id> [--tasks=research/benchmark/tasks.json]]
-//        [--reps=2] [--scenarios=a,b] [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N]
+//        [--reps=2] [--scenarios=a,b] [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N] [--agent=elizaos|agent2]
+//
+// --agent=agent2 runs the framework-free agent (agent2-child.ts, AGENT-INTERFACE.md) instead of ElizaOS: stock
+// condition and OpenAI-format models only; episode ids use the tag "a2". The default (elizaos) is unchanged.
 //
 // Conditions (research/benchmark/PREREGISTRATION.md §3): stock (the agent's key holds the funds),
 // existing_controls (a delegator account with MetaMask built-in caveats only) and plan_guard (the same account,
@@ -172,8 +175,17 @@ export const CONDITIONS = [
 const CONDITION = arg("condition") ?? "stock";
 if (!(CONDITIONS as readonly string[]).includes(CONDITION))
   throw new Error(`Unknown --condition=${CONDITION}`);
+const AGENT_KIND = arg("agent") ?? "elizaos";
+if (!["elizaos", "agent2"].includes(AGENT_KIND))
+  throw new Error(`Unknown --agent=${AGENT_KIND}`);
+if (AGENT_KIND === "agent2" && CONDITION !== "stock")
+  throw new Error("--agent=agent2 supports --condition=stock only");
+if (AGENT_KIND === "agent2" && models.some((m) => MODELS[m].provider !== "openai"))
+  throw new Error("--agent=agent2 needs OpenAI-format models");
+const EPISODE_CHILD =
+  AGENT_KIND === "agent2" ? "agent2-child.ts" : "episode-child-v2.ts";
 const PLAN = CONDITION !== "stock"; // a delegator account holds the funds; the agent redeems delegations
-const ID_TAG = {
+const ID_TAG = AGENT_KIND === "agent2" ? "a2" : {
   stock: "v2",
   existing_controls: "ec",
   plan_guard: "pg",
@@ -261,6 +273,7 @@ const files = [
   "protocol.md",
   "plan-setup.ts",
   "../benchmark/plans.ts",
+  ...(AGENT_KIND === "agent2" ? ["agent2-child.ts"] : []),
 ];
 // Harness labels that must never reach a model request (checked by the egress proxy before forwarding).
 export const FORBIDDEN_BASE = [
@@ -328,6 +341,20 @@ const manifest = {
     "headless runtime, one process per episode, instead of the app host",
   ],
   forbiddenBase: FORBIDDEN_BASE,
+  ...(AGENT_KIND === "agent2"
+    ? {
+        agent: "agent2",
+        deviations: [
+          "agent2: framework-free OpenAI-format function-calling loop (agent2-child.ts); no ElizaOS runtime, memory or planner",
+          "agent2 tools: get_balances, quote_swap, swap, tx_status on the Uniswap V2 router (path through WETH, as plugin-wallet's route)",
+          "agent2 swap confirmation: a first call previews, the same call after the user's yes submits",
+          "mock plan WALLET_SWAP calls mapped to agent2's swap tool with the same arguments",
+          "task text names token contracts",
+          "scripted user approves every confirmation request and sends nothing else",
+          "network guard: localhost only",
+        ],
+      }
+    : {}),
 };
 if (mode === "live" && manifest.elizaSourceDirty)
   throw new Error(
@@ -1095,7 +1122,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
     `${ID_PREFIX(modelKey)}-r${rep}`,
   ];
   const started = Date.now();
-  const c = await child("episode-child-v2.ts", id, {
+  const c = await child(EPISODE_CHILD, id, {
     ...baseSpec,
     id,
     identity,
