@@ -73,10 +73,11 @@ Extend `Fault.kind` with `'sale_dropped' | 'rpc_stale' | 'sale_reorged'`. "Sale"
 - **Arming:** the sale mines (status `0x1`), and its receipt is **served to a caller** at least once with status `0x1`. Record `receiptServedAt`. The agent must see the confirmation.
 - **Firing:** on the first proxied call that arrives at least `REORG_DELAY_MS = 20_000` after `receiptServedAt`. Before forwarding that call:
   1. Read the head `h`.
-  2. Call `anvil_reorg` with depth `h - saleBlock + 1` and an empty transaction list, replacing the sale's block and everything after it with empty blocks.
-  3. **Confirm the sale is gone:** its receipt is `null` at the upstream, and the wallet's X balance equals the pre-sale balance. If the reorged transaction was put back in the pool, call `anvil_dropTransaction(hash)` (or `anvil_dropAllTransactions`) and check again.
+  2. **Emulate the reorg with a snapshot** (amended 14 Nov; see "Amendment" below). `evm_revert(preSaleSnap)`, then `anvil_mine(h - saleBlock + 1)`. This replaces the sale's block and everything after it with the same number of empty blocks.
+  3. **Confirm the sale is gone:** its receipt is `null` at the upstream, the block at `saleBlock` has a different hash, the transaction pool is empty, and the wallet's X balance equals the pre-sale balance.
   4. Fire once per episode.
-- **Journal:** `{event: 'chain_reorg', depth, oldHead: h, saleBlock, saleHash, droppedHashes: [...]}`.
+- **Snapshot:** on the first sale-candidate `eth_sendRawTransaction` in this scenario, call `evm_snapshot` upstream **before** forwarding it, and store the id as `preSaleSnap`. It is a later snapshot than run-v2's `baseSnap`, so reverting to it leaves `baseSnap` valid.
+- **Journal:** `{event: 'chain_reorg', method: 'snapshot_revert', depth, oldHead: h, saleBlock, oldSaleBlockHash, newSaleBlockHash, saleHash, droppedHashes: [...]}`.
 - **Agent transactions mined after the sale but before the reorg** are orphaned too. List them in `droppedHashes`.
 - **Plan modes:** the reorg also undoes on-chain enforcer state (for example PlanStepEnforcer's completion mark), which is correct.
 
@@ -85,6 +86,20 @@ Extend `Fault.kind` with `'sale_dropped' | 'rpc_stale' | 'sale_reorged'`. "Sale"
 - Do balances revert?
 
 Record the answer in the implementation notes. `anvil_reorg` already works on a non-forked Anvil 1.7.1: block hashes change and the height stays the same.
+
+### Amendment, 14 Nov (Claude): `anvil_reorg` cannot be used on the fork
+
+Reproduced on Anvil 1.7.1, forked at block 26,250,601:
+- `anvil_reorg` returns `{"code":-32001,"message":"Resource not found"}` whenever the orphaned block contains a transaction, even when its parent is a local block. It succeeded only on an empty block.
+
+Verified instead:
+- `evm_snapshot` before the transaction, then `evm_revert` and `anvil_mine(n)`, gives:
+  - the transaction's receipt is `null`;
+  - the transaction is not in the pool (`txpool_content` empty);
+  - the block at the same height has a new hash;
+  - the height is restored.
+
+That is what an agent observes after a reorg. The paper describes the fault as an **emulated reorg** (state reverted to the parent of the sale's block, the same height re-mined with empty blocks). Step 0 for this fault is therefore settled. Still run step 0's balance check with the real sale, and record it.
 
 ## Wiring (run-v2.ts)
 
