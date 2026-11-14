@@ -199,3 +199,12 @@ The 0.1 ETH sale succeeded at block 26250602, with USDC increasing from 0 to
 returned `{"code":-32001,"message":"Resource not found"}` on the pinned fork.
 Stopped before proxy code: orphaning, pool reinsertion, and balance restoration
 remain unverified. See the report follow-up for exact output and next steps.
+
+### Amended step 0 verified (Codex, 2026-11-14)
+
+Real sale on the pinned fork: X before 0, after sale 237636476, after revert 0.
+After snapshot/revert and one empty replacement block: receipt null, transaction
+null, pending and queued pool counts 0, head restored. Old sale block hash
+`0xd7b7298cb343c9067b631fcbb60a113d14c57e91cebfa5ae1facee6a5cc5a9b8`;
+replacement `0x73a980d6bccac67d39f899910c4208915b5b2270599b95e70bb3d4342dc01a45`.
+Implementation proceeds under the approved emulated-reorg amendment.
