@@ -462,3 +462,7 @@ is 0. Results remain local and ignored; only the allowed source and notes are
 committed. Secret scanning found no credential values or env assignments in
 the change set. Literal Infura references are the existing URL-redaction regex
 shown as removed/added by formatting, not credential-bearing endpoints.
+
+Artifact tracking clarification: result directories are ignored by the existing
+repository rules. Sibling `.audit.json` and `.tamper.txt` files are retained
+locally as untracked files, not committed or pushed. No ignore rules were changed.
