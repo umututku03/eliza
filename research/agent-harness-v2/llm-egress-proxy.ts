@@ -42,14 +42,20 @@ mkdirSync(join(dest, 'calls'), {recursive: true});
 
 // Upstream prices, USD per million tokens. Input is settled at the higher of the input and cache-write
 // rates (cache writes cost 1.25x on GPT-6.x when automatic caching applies), an upper bound.
-export const PRICES: Record<string, {input: number; output: number; cacheWriteFactor: number}> = {
+// upstream 'compat': an OpenAI-compatible host for open-weight models (e.g. Anyscale), reached at
+// COMPAT_BASE_URL with COMPAT_API_KEY; both come from the keys file and are never logged. The agent still talks
+// to /openai/v1 through this proxy, so blinding, caps and the ledger apply unchanged. Prices for compat models are
+// the host's per-token rates (credits or not), so the caps keep meaning.
+export const PRICES: Record<string, {input: number; output: number; cacheWriteFactor: number; upstream?: 'compat'}> = {
   'gpt-6-luna': {input: 0.10, output: 0.50, cacheWriteFactor: 1.25},
   'gpt-6.1-sol': {input: 2, output: 10, cacheWriteFactor: 1.25},
   'claude-haiku-5-5': {input: 0.10, output: 0.50, cacheWriteFactor: 1},
   'claude-opus-5-5': {input: 4, output: 20, cacheWriteFactor: 1},
   'gpt-4.1-mini': {input: 0.40, output: 1.60, cacheWriteFactor: 1},
   'claude-sonnet-5-5': {input: 2, output: 10, cacheWriteFactor: 1},
+  // Open-weight models on the compat host are added here once the host's model list and rates are confirmed.
 };
+const isCompat = (model: string) => PRICES[model]?.upstream === 'compat';
 const UPSTREAM: Record<string, string> = {openai: 'https://api.openai.com', anthropic: 'https://api.anthropic.com'};
 if (testUpstream) { UPSTREAM.openai = testUpstream; UPSTREAM.anthropic = testUpstream; }
 
@@ -295,14 +301,21 @@ Bun.serve({
     }
     usedUSD += reserved; entry.reservationUSD = reserved;
     const headers: Record<string, string> = {'content-type': 'application/json'};
-    if (provider === 'openai') headers.authorization = `Bearer ${process.env.OPENAI_API_KEY}`;
+    const compat = provider === 'openai' && isCompat(String(body.model));
+    if (compat && !(process.env.COMPAT_BASE_URL && process.env.COMPAT_API_KEY)) {
+      usedUSD -= reserved; entry.status = 'refused_config'; appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
+      return Response.json({error: {message: 'Refused by harness: compat host not configured.'}}, {status: 503});
+    }
+    if (compat) { headers.authorization = `Bearer ${process.env.COMPAT_API_KEY}`; entry.upstream = 'compat'; }
+    else if (provider === 'openai') headers.authorization = `Bearer ${process.env.OPENAI_API_KEY}`;
     else { headers['x-api-key'] = process.env.ANTHROPIC_API_KEY ?? ''; headers['anthropic-version'] = req.headers.get('anthropic-version') ?? '2023-06-01'; }
     const beta = req.headers.get('anthropic-beta'); if (beta) headers['anthropic-beta'] = beta;
     const started = performance.now();
     let status = 0, text = '', contentType = 'application/json';
     inFlight++;   // forwarded and not yet recorded; the runner waits for zero before shutting the proxy down
     try {
-      const r = await fetch(UPSTREAM[provider] + url.pathname.replace(/^\/(openai|anthropic)/, '') + url.search, {method: 'POST', headers, body: sent, signal: AbortSignal.timeout(300000)});
+      const base = compat ? (testUpstream ?? process.env.COMPAT_BASE_URL!.replace(/\/v1\/?$/, '')) : UPSTREAM[provider];
+      const r = await fetch(base + url.pathname.replace(/^\/(openai|anthropic)/, '') + url.search, {method: 'POST', headers, body: sent, signal: AbortSignal.timeout(300000)});
       status = r.status; text = await r.text(); contentType = r.headers.get('content-type') ?? contentType;
     } catch (e) {
       entry.status = 'transport_error_reservation_kept'; entry.error = (e as Error).name;
