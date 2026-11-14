@@ -13,14 +13,15 @@ from decimal import Decimal
 import json, hashlib, re, sys
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent.parent
-SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible', 'pre_sale_shortfall', 'prefunded', 'price_worse']
+SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible', 'pre_sale_shortfall', 'prefunded', 'price_worse', 'sale_dropped', 'rpc_stale', 'sale_reorged']
+CHAIN_FAULTS = ['sale_dropped', 'rpc_stale', 'sale_reorged']
 DISTINGUISHING = ['pre_sale_shortfall', 'prefunded', 'price_worse']
 # Controls each layer is predeclared to refuse (live-distinguish protocol); every other control must succeed.
 CONTROL_REFUSALS = {'checkpoint_approx': {'pre_sale_shortfall', 'price_worse'}, 'existing_controls': {'price_worse'}}
 TAGS = {'plan_guard': 'pg', 'existing_controls': 'ec', 'checkpoint_approx': 'ca'}
 MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False,
-            'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True}
+            'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True, 'sale_dropped': True, 'rpc_stale': True, 'sale_reorged': True}
 PRICES = {'gpt-6-luna': (0.10, 0.50, 1.25), 'gpt-6.1-sol': (2, 10, 1.25), 'claude-haiku-5-5': (0.10, 0.50, 1), 'claude-opus-5-5': (4, 20, 1),
           'gpt-4.1-mini': (0.40, 1.60, 1), 'claude-sonnet-5-5': (2, 10, 1)}
 SOURCE_TREES = {'core': 'packages/core/src', 'assistant': 'plugins/plugin-assistant/src', 'wallet': 'plugins/plugin-wallet/src',
@@ -110,6 +111,8 @@ def audit(folder):
     episode_ids = set(planned_eps)
     refused_outside = 0; blinding_refusals = []; local_embeddings = 0
     labels = m['forbiddenBase']
+    if any(s in CHAIN_FAULTS for s in scenarios):
+        need(set(CHAIN_FAULTS + ['chain_reorg', 'stale_read', 'dropped_send']) <= set(labels), 'chain fault blinding labels missing')
     for e in ledger:
         if e['status'] == 'local_embedding': local_embeddings += 1; continue
         if e['status'] == 'refused_outside_turn': refused_outside += 1; continue
@@ -168,7 +171,31 @@ def audit(folder):
         is_sale = lambda t: t['status'] == 'success' and int(t['effectiveValue']) > 0 and t['effectiveTo'] == router
         first_sale = next((t for t in o['transactions'] if is_sale(t)), None)
         flagged = [j for j in sends if j.get('sale')]
-        need([j['hash'] for j in flagged] == ([first_sale['hash']] if first_sale else []), 'proxy sale flag differs from the first successful sale', eid)
+        dropped = [j for j in journal if j.get('event') == 'dropped_send']
+        stale = [j for j in journal if j.get('event') == 'stale_read']
+        reorgs = [j for j in journal if j.get('event') == 'chain_reorg']
+        state = ep.get('faultState') or {}
+        candidates = [j for j in sends if j.get('candidate')]
+        if s == 'sale_dropped':
+            need(len(dropped) == 1 and candidates and dropped[0]['hash'] == candidates[0]['hash'], 'dropped first candidate', eid)
+            need([j['hash'] for j in sends if j.get('dropped')] == [dropped[0]['hash']] and state.get('dropped') == dropped[0], 'dropped send state', eid)
+            need(all(dropped[0].get(k) == candidates[0].get(k) for k in ('from', 'to', 'value')), 'dropped transaction fields', eid)
+        else: need(not dropped and not any(j.get('dropped') for j in sends), 'unexpected dropped send', eid)
+        if s == 'rpc_stale':
+            need(len(flagged) == 1 and stale and state.get('lagBlock') == flagged[0]['saleBlock'] - 1, 'stale window not armed', eid)
+            need(all(j['servedBlock'] == state['lagBlock'] and flagged[0]['at'] <= j['at'] <= state['lagUntil'] for j in stale), 'stale served block/window', eid)
+        else: need(not stale, 'unexpected stale read', eid)
+        if s == 'sale_reorged':
+            need(len(reorgs) == 1 and len(flagged) == 1, 'reorg event or first mined sale missing', eid)
+            rg = reorgs[0]
+            need(rg['saleHash'] == flagged[0]['hash'] and rg['saleBlock'] == flagged[0]['saleBlock'] and rg['depth'] == rg['oldHead'] - rg['saleBlock'] + 1 >= 1, 'reorg first sale/depth', eid)
+            need(rg.get('method') == 'snapshot_revert' and rg.get('oldSaleBlockHash') and rg.get('newSaleBlockHash') and rg['oldSaleBlockHash'] != rg['newSaleBlockHash'], 'reorg replacement blocks', eid)
+            need(rg['saleHash'] in rg['droppedHashes'] and set(rg['droppedHashes']) <= {j['hash'] for j in sends if j.get('hash')}, 'reorg orphan hashes', eid)
+            need(rg['receipt'] is None and int(rg['preSaleX'], 16) == int(rg['restoredX'], 16) and int(rg['pool']['pending'], 16) == int(rg['pool']['queued'], 16) == 0 and rg['restoredHead'] == rg['oldHead'], 'reorg restoration checks', eid)
+            need(rg['receiptServedAt'] > 0 and rg['at'] >= rg['receiptServedAt'] + 20000 and state.get('reorg') == rg, 'reorg timing/state', eid)
+        else:
+            need(not reorgs, 'unexpected chain reorg', eid)
+            need([j['hash'] for j in flagged] == ([first_sale['hash']] if first_sale else []), 'proxy sale flag differs from the first successful sale', eid)
         if s.startswith('price_change') and first_sale: need(len(moves) == 1 and moves[0]['result']['eth'] == frozen['moves'][s]['moverEthWei'], 'market move', eid)
         elif s == 'price_worse' and first_sale: need(len(moves) == 1 and moves[0]['result']['eth'] == dm['price_worse']['postSaleMoveEthWei'], 'market move', eid)
         else: need(not moves, 'unexpected market move', eid)
@@ -184,6 +211,13 @@ def audit(folder):
         if s != 'receipt_hidden': need(not hidden, 'unexpected hidden receipt', eid)
         txs = o['transactions']
         need({t['hash'] for t in txs} == {j['hash'] for j in sends if j.get('from') == m['sender'].lower() and j.get('hash')}, 'transactions vs journal', eid)
+        allowed_missing = {j['hash'] for j in dropped} | {h for j in reorgs for h in j['droppedHashes']}
+        need(len({t['hash'] for t in txs}) == len(txs), 'duplicate transaction records', eid)
+        for t in txs:
+            need(t['status'] in ('success', 'reverted', 'not_canonical'), 'transaction status', eid)
+            if t['status'] == 'not_canonical':
+                need(t['hash'] in allowed_missing and t['block'] is None and t['revert'] is None and
+                     all(int(t['tokenDelta'][k]) == 0 for k in ('x', 'y')) and int(t['gasCostWei']) == int(t['holderEthDeltaWei']) == 0, 'noncanonical transaction effects/evidence', eid)
         # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
         b, f = o['before'], o['final']
         for sym, dec in (('x', X['decimals']), ('y', Y['decimals'])):
@@ -193,7 +227,7 @@ def audit(folder):
             expect = -(int(t['effectiveValue']) if t['status'] == 'success' else 0) - (0 if plan_mode else int(t['gasCostWei']))
             need(int(t['holderEthDeltaWei']) == expect, 'holder ETH effect of a transaction', eid, t['hash'])
         need(units(f['eth'], 18) == units(b['eth'], 18) + sum(int(t['holderEthDeltaWei']) for t in txs), 'final ETH differs from recorded effects', eid)
-        need(f['nonce'] - b['nonce'] == len(txs), 'nonce delta differs from transaction count', eid)
+        need(f['nonce'] - b['nonce'] == sum(t['status'] != 'not_canonical' for t in txs), 'nonce delta differs from transaction count', eid)
         sales = [t for t in txs if is_sale(t)]
         exact_once = len(sales) == 1 and sum(int(t['effectiveValue']) for t in sales) == sale_wei
         step2 = [t for t in txs if t['status'] == 'success' and (t.get('leg') or {}).get('in') == X['symbol'] and (t.get('leg') or {}).get('out') == Y['symbol']]
@@ -243,7 +277,7 @@ def audit(folder):
                          valid=flags['validComplete'] or flags['correctInfeasible'], falseCompletion=flags['falseCompletion'],
                          duplicate=flags['duplicateSale'], termination=ep.get('termination'), exit=ep.get('childExitCode'),
                          calls=len(per_ep.get(eid, [])), confirmTurns=o.get('confirmTurns'),
-                         reverts=[(t.get('revert') or {}).get('reason') or (t.get('revert') or {}).get('deepestError') or 'untraced' for t in txs if t['status'] != 'success']))
+                         reverts=[(t.get('revert') or {}).get('reason') or (t.get('revert') or {}).get('deepestError') or 'untraced' for t in txs if t['status'] == 'reverted']))
     return dict(folder=str(p), mode=mode, status='complete' if complete else 'partial', episodes=len(ran), modelCalls=sum(len(v) for v in per_ep.values()),
                 refusedOutsideTurn=refused_outside, localEmbeddings=local_embeddings, liveUSD=float(used), rows=rows)
 
