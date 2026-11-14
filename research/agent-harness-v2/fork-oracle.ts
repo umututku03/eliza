@@ -42,7 +42,8 @@ export function clients(url = `http://127.0.0.1:${ANVIL_PORT}`) {
   };
 }
 
-export async function startAnvil(block: number) {
+// port: ANVIL_PORT plus run-v2's --port-base, so cohorts can run in parallel on disjoint ports.
+export async function startAnvil(block: number, port = ANVIL_PORT) {
   const url = process.env.MAINNET_FORK_RPC_URL;
   if (!url) throw new Error('Set MAINNET_FORK_RPC_URL in research/agent-flow-cohorts/.env');
   const bin = process.env.ANVIL_BIN;
@@ -50,10 +51,10 @@ export async function startAnvil(block: number) {
   // Provider throttling is respected (no --no-rate-limit) and fork reads are retried, so a transient RPC
   // failure cannot surface as an on-chain revert. Anvil's own log is kept for diagnosis.
   const log = process.env.ANVIL_LOG;
-  const proc = Bun.spawn([bin, '--host', '127.0.0.1', '--port', String(ANVIL_PORT), '--fork-url', url,
+  const proc = Bun.spawn([bin, '--host', '127.0.0.1', '--port', String(port), '--fork-url', url,
     '--fork-block-number', String(block), '--retries', '10', '--timeout', '60000'],
     {stdout: log ? Bun.file(log) : 'ignore', stderr: log ? Bun.file(log + '.err') : 'ignore', env: {PATH: process.env.PATH ?? '/usr/bin:/bin'}});
-  const c = clients();
+  const c = clients(`http://127.0.0.1:${port}`);
   for (let i = 0; i < 200; i++) { try { if (await c.rpc('eth_chainId') === '0x1') break; } catch {} await Bun.sleep(100); }
   if (await c.rpc('eth_chainId') !== '0x1') throw new Error('Fork did not start with chain id 1');
   const head = Number(await c.rpc('eth_blockNumber'));

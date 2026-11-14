@@ -43,6 +43,14 @@ if fault_ep:
             d['forkJournal'].pop(index)
         edit_json(p / 'episodes' / f'{fault_ep}.json', mutate)
     cases['fault event removed'] = remove_fault
+# Fault parameters: the journal's fault windows must match the recorded parameters (doubled here).
+timed_ep = next((n for n in eps if any(j.get('hiddenUntil') or j.get('lagBlock') is not None or j.get('event') == 'chain_reorg'
+    for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
+if timed_ep:
+    def double_params(d):
+        fp = d.get('faultParams') or {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000}
+        d['faultParams'] = {k: 2 * v for k, v in fp.items()}
+    cases['fault parameter edited'] = lambda p: edit_json(p / 'manifest.json', double_params)
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
