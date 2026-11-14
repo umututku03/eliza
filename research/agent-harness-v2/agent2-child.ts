@@ -35,7 +35,7 @@ const ROUTER = getAddress(spec.router), WETH = getAddress(spec.weth);
 const account = privateKeyToAccount(spec.privateKey);
 const WALLET = getAddress(spec.wallet ?? account.address);
 const transport = http(spec.forkProxyUrl, {retryCount: 0});
-const pub = createPublicClient({chain: mainnet, transport, pollingInterval: 1000});
+const pub = createPublicClient({chain: mainnet, transport});
 const signer = createWalletClient({chain: mainnet, transport, account});
 const RECEIPT_TIMEOUT_MS = 60_000; // plugin-wallet's TX_CONFIRMATION_TIMEOUT_MS, so both agents wait the same
 const MAX_STEPS = 12;              // model calls per user turn
@@ -90,9 +90,14 @@ async function route(args: any) {
   const amounts = await pub.readContract({address: ROUTER, abi: ROUTER_ABI, functionName: 'getAmountsOut', args: [amountIn, path]});
   return {from, to, amountIn, amount: formatUnits(amountIn, from.decimals), path, amountOut: amounts[amounts.length - 1]};
 }
+/** Polls for the receipt once a second for up to 60 s; null if none appeared. A plain poll: viem's
+ *  waitForTransactionReceipt throws at once when a mined transaction's receipt is missing. */
 async function waitReceipt(hash: `0x${string}`) {
-  try { return await pub.waitForTransactionReceipt({hash, timeout: RECEIPT_TIMEOUT_MS}); }
-  catch (e) { if ((e as any)?.name === 'WaitForTransactionReceiptTimeoutError') return null; throw e; }
+  for (const until = Date.now() + RECEIPT_TIMEOUT_MS; Date.now() < until; await Bun.sleep(1000)) {
+    const r = await pub.getTransactionReceipt({hash}).catch((e: any) => { if (e?.name === 'TransactionReceiptNotFoundError') return null; throw e; });
+    if (r) return r;
+  }
+  return null;
 }
 
 // Confirmation gate, like plugin-wallet's: a swap is first a proposal keyed by its parameters; it is submitted only
