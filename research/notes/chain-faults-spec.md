@@ -170,3 +170,17 @@ Bun v1.4.2 (macOS arm64)
 No conclusion about forked `anvil_reorg`, pool reinsertion, or balance restoration
 can be drawn. No proxy implementation was started. See
 `codex-report-chain-faults.md` for the blocker and proposed dependency repair.
+
+### Step 0 follow-up (Codex, 2026-11-14)
+
+With user approval, ran the frozen filtered install and a forced frozen reinstall,
+restored workspace symlinks, and checked harness dependencies. No tracked
+manifest or lockfile changed. Root-level `bun -e` could not resolve the probe's
+bare viem imports correctly; the same probe run from the harness directory
+resolved its installed local dependency and executed successfully up to reorg.
+
+The 0.1 ETH sale succeeded at block 26250602, with USDC increasing from 0 to
+237636476 base units. The required `anvil_reorg` call with params `[1, []]`
+returned `{"code":-32001,"message":"Resource not found"}` on the pinned fork.
+Stopped before proxy code: orphaning, pool reinsertion, and balance restoration
+remain unverified. See the report follow-up for exact output and next steps.

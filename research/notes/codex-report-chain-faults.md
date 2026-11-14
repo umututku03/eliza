@@ -64,3 +64,53 @@ changing any implementation design.
 - All three faults, their wiring, verification and tamper coverage remain open.
 - All five acceptance checks remain open.
 - No paid API calls were made. No existing result folders were changed.
+
+## Follow-up after authorized dependency repair (2026-11-14)
+
+Ran Bun 1.4.2 frozen filtered installation, harness frozen installation,
+workspace-symlink restoration, and a forced frozen filtered reinstall. The
+installs succeeded without changing tracked manifests or lockfiles.
+Selected exact outputs:
+
+```text
+77 packages installed [1058.00ms]
+Checked 49 installs across 48 packages (no changes) [31.00ms]
+2789 packages installed [17.37s]
+[ensure-workspace-symlinks] created=0 skipped=218 hoisted=0 missing-roots=0
+```
+
+The original root-level eval still failed on the bare viem account import.
+Running the probe in `research/agent-harness-v2`, where viem is installed as a
+local dependency, resolved that import. This changes only the probe execution
+location, not harness code, dependencies' declared versions, or the fault design.
+Import validation output:
+
+```text
+harness account import true
+```
+
+The fork started using the existing oracle and pinned block. An actual router
+sale succeeded. Exact output from the probe:
+
+```text
+{"stage":"sale","hash":"0xe8840f458f433603aadfb2b8abe7d1b68d4bdcac800aa7d3cc81ff5e13024759","status":"success","head":26250602,"saleBlock":26250602,"beforeX":"0","afterX":"237636476"}
+STEP0 ERROR: Error: anvil_reorg: {"code":-32001,"message":"Resource not found"}
+```
+
+The failing call was `anvil_reorg` with parameters `[1, []]`, because head and
+saleBlock were both 26250602. The probe returned exit 1 and stopped its own Anvil
+process in finally. No receipt-null, pool, or post-reorg balance observations
+were obtained. The successful sale is not evidence that reorg works.
+
+Current blocker: the mandatory forked reorg call fails on this Anvil/fork
+combination. The error alone does not establish whether the cause is missing
+fork data, a fork-mode implementation limit, or another Anvil issue.
+
+Proposed next step: investigate this forked `anvil_reorg` error and validate a
+supported invocation or Anvil version before implementation. If a different
+mechanism is needed, revise the spec explicitly; do not silently substitute
+snapshot/revert for the specified chain reorg.
+
+All five acceptance checks and chain-fault implementation remain open. No paid
+calls, proxy changes, or existing-results changes were made. This follow-up
+supersedes the earlier dependency blocker as the current stopping condition.
