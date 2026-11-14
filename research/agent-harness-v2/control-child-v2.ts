@@ -17,7 +17,7 @@ const {quote, balance} = await import('./fork-oracle');
 const X = spec.x, Y = spec.y, PATH = [X.address, spec.weth, Y.address] as Address[];
 /** Smallest X amount (cent steps) whose Y quote on the task's path reaches `target`, or null if `budget` cannot. */
 async function minimalXFor(target: bigint, budget: bigint) {
-  if (await quote(pub, budget, PATH) < target) return null;
+  if (budget <= 0n || await quote(pub, budget, PATH) < target) return null;
   const cent = 10n ** BigInt(X.decimals - 2);
   let lo = 0n, hi = budget / cent;
   while (lo < hi) { const mid = (lo + hi) / 2n; if (await quote(pub, mid * cent, PATH) >= target) hi = mid; else lo = mid + 1n; }
@@ -49,7 +49,7 @@ const confirmed = async (parameters: Record<string, unknown>) => {
 const brief = (r: any) => ({success: r?.success, error: r?.data?.error ?? null, text: String(r?.text ?? '').slice(0, 300)});
 
 const steps: any[] = [];
-let declared = 'INFEASIBLE', error: string | null = null;
+let declared = 'INFEASIBLE', error: string | null = null, refusal: string | null = null;
 try {
   const sale = await confirmed({action: 'swap', target: 'mainnet', fromToken: 'ETH', toToken: X.address, amount: spec.saleEth, slippageBps: 300});
   steps.push({sale: brief(sale)});
@@ -60,15 +60,27 @@ try {
       await Bun.sleep(1000);
     }
   }
-  const amount = await minimalXFor(parseUnits(spec.goalY, Y.decimals), BigInt(spec.budgetXUnits));
-  steps.push({oracleStep2X: amount === null ? null : formatUnits(amount, X.decimals)});
+  // Step 2 within the user's constraints: spend at most balance - reserve (the actual surplus, which equals the
+  // signing-time budget unless the market state moved it) and reach the goal with the smallest such amount.
+  // checkpoint_approx commits step 2's exact amount (the budget): a correct agent spends it when that meets the
+  // constraints; otherwise it tries the goal-reaching amount, which the layer is predeclared to refuse.
+  const goal = parseUnits(spec.goalY, Y.decimals), budget = BigInt(spec.budgetXUnits);
+  const held = await balance(pub, X.address as Address, spec.wallet), reserve = parseUnits(spec.reserveX, X.decimals);
+  const surplus = held > reserve ? held - reserve : 0n;
+  const budgetWithin = budget <= surplus && await quote(pub, budget, PATH) >= goal;
+  const amount = spec.condition === 'checkpoint_approx' && budgetWithin ? budget : await minimalXFor(goal, surplus);
+  steps.push({heldX: formatUnits(held, X.decimals), surplusX: formatUnits(surplus, X.decimals), budgetWithinConstraints: budgetWithin,
+    oracleStep2X: amount === null ? null : formatUnits(amount, X.decimals)});
   if (amount !== null) {
     const swap = await confirmed({action: 'swap', target: 'mainnet', fromToken: X.address, toToken: Y.address, amount: formatUnits(amount, X.decimals), slippageBps: 300});
     steps.push({swap: brief(swap)});
-    if (swap?.success !== true) throw new Error(`control step 2 failed: ${brief(swap).text}`);
+    if (swap?.success !== true) {
+      refusal = `${brief(swap).error ?? ''} ${brief(swap).text}`.trim();
+      throw new Error(`control step 2 failed: ${brief(swap).text}`);
+    }
     declared = 'COMPLETED';
   }
 } catch (e) { error = (e as Error).message; }
-writeFileSync(process.argv[3], JSON.stringify({steps, declared, error}, null, 2));
+writeFileSync(process.argv[3], JSON.stringify({steps, declared, error, refusal}, null, 2));
 await runtime.stop?.().catch(() => {});
 process.exit(0);

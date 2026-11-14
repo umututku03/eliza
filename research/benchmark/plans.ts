@@ -4,6 +4,9 @@
 //   existing_controls: MetaMask built-in caveats only: target/method/recipient, valueLte, limitedCalls = 1,
 //                      and on step 2 relative erc20BalanceChange caps (X decrease <= budget at signing,
 //                      Y increase >= goal).
+//   checkpoint_approx: our approximation of CheckpointAgent's on-chain profile (Lee, IEEE Access 2026), not its
+//                      artifact: PlanStepEnforcer (order, once-only success) + step 2's amount fixed at signing
+//                      (allowedCalldata on amountIn = budget) + the same relative erc20BalanceChange caps.
 // Both put the user's funds in a HybridDeleGator account (MetaMask delegation framework v1.3.0, deployed on
 // mainnet and so on the fork) and delegate each step to the agent's key. The wallet's plan mode
 // (plugin-wallet chains/evm/plan-guard.ts) redeems them; the chain decides.
@@ -17,7 +20,7 @@ import {toMetaMaskSmartAccount, Implementation, getSmartAccountsEnvironment, ROO
 import {createCaveatBuilder, encodeDelegations} from '@metamask/smart-accounts-kit/utils';
 import {USER_KEY} from '../agent-harness-v2/plan-setup';
 
-export type GuardKind = 'plan_guard' | 'existing_controls';
+export type GuardKind = 'plan_guard' | 'existing_controls' | 'checkpoint_approx';
 export interface BenchTask {
   id: string; block: number; router: Address; weth: Address; saleEth: string;
   x: {symbol: string; address: Address; decimals: number}; y: {symbol: string; address: Address; decimals: number};
@@ -45,7 +48,8 @@ export async function setupGuardedAccount(kind: GuardKind, task: BenchTask, anvi
     throw new Error(`setup tx not mined ${hash}`);
   };
   const enforcers: Record<string, Address> = {};
-  if (kind === 'plan_guard') for (const name of ['PlanStepEnforcer', 'BalanceFloorEnforcer']) {
+  const research = kind === 'plan_guard' ? ['PlanStepEnforcer', 'BalanceFloorEnforcer'] : kind === 'checkpoint_approx' ? ['PlanStepEnforcer'] : [];
+  for (const name of research) {
     const art = JSON.parse(readFileSync(join(PLAN_GUARD_BUILD, `${name}.json`), 'utf8'));
     enforcers[name] = (await mined(await ownerWallet.deployContract({abi: art.abi, bytecode: art.bytecode}))).contractAddress as Address;
   }
@@ -80,6 +84,13 @@ export async function setupGuardedAccount(kind: GuardKind, task: BenchTask, anvi
     step2 = await signed([...builtIn(step2Base), {enforcer: enforcers.PlanStepEnforcer, terms: stepTerms(1, 1n), args: '0x'},
       {enforcer: enforcers.BalanceFloorEnforcer, terms: floorTerms(task.x.address, reserve), args: '0x'},
       {enforcer: enforcers.BalanceFloorEnforcer, terms: floorTerms(task.y.address, goal), args: '0x'}]);
+  } else if (kind === 'checkpoint_approx') {
+    const relCaps = (b: any) => b
+      .addCaveat('erc20BalanceChange', {tokenAddress: task.x.address, recipient: account, balance: BigInt(task.budgetXUnits), changeType: BalanceChangeType.Decrease})
+      .addCaveat('erc20BalanceChange', {tokenAddress: task.y.address, recipient: account, balance: goal, changeType: BalanceChangeType.Increase});
+    const amountIs = (b: any) => b.addCaveat('allowedCalldata', {startIndex: 4, value: pad(numberToHex(BigInt(task.budgetXUnits)), {size: 32})});
+    sale = await signed([...builtIn(saleBase), {enforcer: enforcers.PlanStepEnforcer, terms: stepTerms(0, 0n), args: '0x'}]);
+    step2 = await signed([...builtIn(b => relCaps(amountIs(step2Base(b)))), {enforcer: enforcers.PlanStepEnforcer, terms: stepTerms(1, 1n), args: '0x'}]);
   } else {
     sale = await signed(builtIn(b => saleBase(b).addCaveat('limitedCalls', {limit: 1})));
     step2 = await signed(builtIn(b => step2Base(b).addCaveat('limitedCalls', {limit: 1})

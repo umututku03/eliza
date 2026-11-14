@@ -29,6 +29,10 @@ cases = {
     'credential pasted': lambda p: (p / 'episodes' / f'{first_ep}.child-stderr.log').write_text('sk-ant-api03-' + 'x' * 40),
     'episode removed from marker': lambda p: edit_json(p / 'complete.json', lambda d: d['episodes'].pop()),
 }
+# Distinguishing states: a forged pre-episode amount must be rejected.
+pre_ep = next((n for n in eps if json.loads((src / 'episodes' / f'{n}.json').read_text()).get('preEpisode')), None)
+if pre_ep:
+    cases['pre-episode amount forged'] = lambda p: edit_json(p / 'episodes' / f'{pre_ep}.json', lambda d: d['preEpisode'].update(ethWei=str(int(d['preEpisode']['ethWei']) + 1)))
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:

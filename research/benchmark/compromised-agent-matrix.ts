@@ -11,6 +11,9 @@
 //   pg_floor_only    target/method/recipient + BalanceFloorEnforcer floors only (ablation: no step order/once-only)
 //   pg_no_floor      target/method/recipient + PlanStepEnforcer only (ablation: no absolute floors)
 //   plan_guard       target/method/recipient + PlanStepEnforcer + BalanceFloorEnforcer
+//   checkpoint_approx our approximation of CheckpointAgent's on-chain profile (Lee, IEEE Access 2026): step order and
+//                    once-only (PlanStepEnforcer), the step-2 amount fixed in the signed plan (it commits each step's
+//                    exact calldata) and relative balance-change bounds (its balance_delta). Not the authors' artifact.
 // States:
 //   calibrated       the task as calibrated
 //   shortfall        a market move before the sale makes step 1 deliver 3% less X (within 3% slippage)
@@ -61,7 +64,7 @@ const selectorOf = (fn: 'swapExactETHForTokens' | 'swapExactTokensForTokens') =>
   encodeFunctionData({abi: ROUTER_ABI, functionName: fn as any, args: (fn === 'swapExactETHForTokens'
     ? [0n, [], ATTACKER, 0n] : [0n, 0n, [], ATTACKER, 0n]) as any}).slice(0, 10) as Hex;
 
-const LAYERS = ['none', 'per_tx_policy', 'existing_controls', 'pg_floor_only', 'pg_no_floor', 'plan_guard'] as const;
+const LAYERS = ['none', 'per_tx_policy', 'existing_controls', 'pg_floor_only', 'pg_no_floor', 'plan_guard', 'checkpoint_approx'] as const;
 const STATES = ['calibrated', 'shortfall', 'prefunded', 'price_worse'] as const;
 type Layer = typeof LAYERS[number];
 
@@ -149,6 +152,11 @@ try {
       if (layer === 'pg_floor_only') { sale = await sign(b(saleBase)); step2 = await sign([...b(step2Base), floorT(X, RESERVE), floorT(Y, GOAL)]); }
       if (layer === 'pg_no_floor') { sale = await sign([...b(saleBase), stepT(0, 0n)]); step2 = await sign([...b(step2Base), stepT(1, 1n)]); }
       if (layer === 'plan_guard') { sale = await sign([...b(saleBase), stepT(0, 0n)]); step2 = await sign([...b(step2Base), stepT(1, 1n), floorT(X, RESERVE), floorT(Y, GOAL)]); }
+      if (layer === 'checkpoint_approx') {
+        const amountIs = (c: any) => c.addCaveat('allowedCalldata', {startIndex: 4, value: pad(numberToHex(BUDGET), {size: 32})});
+        sale = await sign([...b(saleBase), stepT(0, 0n)]);
+        step2 = await sign([...b(c => relCaps(amountIs(step2Base(c)))), stepT(1, 1n)]);
+      }
       const approve = await sign(b(c => c.addCaveat('allowedTargets', {targets: [X]}).addCaveat('allowedMethods', {selectors: ['0x095ea7b3']})
         .addCaveat('allowedCalldata', {startIndex: 4, value: pad(ROUTER, {size: 32})})));
       plan = {sale, step2, approve};
