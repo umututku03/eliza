@@ -1035,7 +1035,10 @@ async function mockPlan(scenario: string) {
     const snap = await anvil.rpc("evm_snapshot");
     try {
       const held = await balance(anvil.pub, X.address, W);
-      const proceeds = await quote(anvil.pub, SALE_WEI, [frozen.weth, X.address]);
+      const proceeds = await quote(anvil.pub, SALE_WEI, [
+        frozen.weth,
+        X.address,
+      ]);
       await moverSwap(SALE_WEI, [frozen.weth, X.address]);
       const amount = await minimalXFor(held + proceeds - RESERVE);
       if (amount === null)
