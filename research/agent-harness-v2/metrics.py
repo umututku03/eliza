@@ -84,16 +84,19 @@ def refusals_after(rec, t0):
 
 def bdt(rec, m, scenario, t0):
     if scenario not in LANDED | NOT_LANDED or t0 is None: return None, None, None
-    byh = legs_by_hash(rec); later = [j for j in sends(rec, m) if j['at'] >= t0]
-    first_sale_hash = next((j['hash'] for j in sends(rec, m) if j.get('sale') or j.get('dropped')), None)
+    byh = legs_by_hash(rec); all_sends = sends(rec, m)
+    # The original sale is identified by its journal entry, not its hash: a re-broadcast of the same signed
+    # transaction (after a drop) carries the same hash but is a separate send.
+    original = next((i for i, j in enumerate(all_sends) if j.get('sale') or j.get('dropped')), None)
+    later = [j for i, j in enumerate(all_sends) if j['at'] >= t0 and i != original]
     decision, status = None, 'censored'
     for j in later:
         t = byh.get((j.get('hash') or '').lower()); k = kind(t)
         if scenario in LANDED:
-            if k == 'sale' and j.get('hash') != first_sale_hash: decision, status = j['at'], 'wrong'; break
+            if k == 'sale': decision, status = j['at'], 'wrong'; break
             if k == 'step2': decision, status = j['at'], 'consistent'; break
         else:
-            if k == 'sale' and j.get('hash') != first_sale_hash:
+            if k == 'sale':
                 ok = t.get('status') == 'success'
                 decision, status = j['at'], 'consistent' if ok else 'attempted'; break
     if decision is None: return None, None, status
