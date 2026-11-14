@@ -59,7 +59,7 @@ PY
 for cohort in "${COHORTS[@]}"; do
   read -r model condition <<<"$cohort"
   provider=$(provider_of "$model")
-  dest="$HERE/results-$TAG-$model-$condition"
+  dest="$PWD/$HERE/results-$TAG-$model-$condition"   # absolute: verify-v2.py resolves relative paths against its own folder
   [ -e "$dest" ] && die "$dest exists; never overwrite (resume by removing finished cohorts from COHORTS in a committed edit)"
   key=$([ "$provider" = openai ] && echo OPENAI_API_KEY || echo ANTHROPIC_API_KEY)
   has_key "$key" || die "$key is not set"
