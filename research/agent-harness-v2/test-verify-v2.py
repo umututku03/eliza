@@ -43,6 +43,14 @@ if fault_ep:
             d['forkJournal'].pop(index)
         edit_json(p / 'episodes' / f'{fault_ep}.json', mutate)
     cases['fault event removed'] = remove_fault
+# agent2 (run-v2.ts --agent=agent2): a swap submitted without a matching confirmed preview must be rejected.
+if json.loads((src / 'manifest.json').read_text()).get('agent') == 'agent2':
+    def forge_gate(p):
+        def mutate(d):
+            r = next(r for t in d['turns'] for r in t['actionResults'] if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation'])
+            r['gateKey'] += '|forged'
+        edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
+    cases['agent2 swap without confirmed preview'] = forge_gate
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:

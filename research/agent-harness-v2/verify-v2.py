@@ -19,6 +19,10 @@ DISTINGUISHING = ['pre_sale_shortfall', 'prefunded', 'price_worse']
 # Controls each layer is predeclared to refuse (live-distinguish protocol); every other control must succeed.
 CONTROL_REFUSALS = {'checkpoint_approx': {'pre_sale_shortfall', 'price_worse'}, 'existing_controls': {'price_worse'}}
 TAGS = {'plan_guard': 'pg', 'existing_controls': 'ec', 'checkpoint_approx': 'ca'}
+# Agent types (run-v2.ts --agent). agent2 (agent2-child.ts, AGENT-INTERFACE.md): stock only, OpenAI format, tag a2,
+# and exactly these tools in every request.
+AGENTS = ('elizaos', 'agent2')
+AGENT2_TOOLS = ['get_balances', 'quote_swap', 'swap', 'tx_status']
 MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False,
             'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True, 'sale_dropped': True, 'rpc_stale': True, 'sale_reorged': True}
@@ -74,7 +78,12 @@ def audit(folder):
     if mode == 'live': need(not m['elizaSourceDirty'], 'live run from uncommitted sources')
     models = [x['key'] for x in m['models']]
     need(models == [k for k in MODEL_ORDER if k in models], 'model order')
-    tag = TAGS.get(m.get('condition'), 'v2') + (f"-{m['taskId']}" if m.get('taskId') else '')
+    agent = m.get('agent', 'elizaos')
+    need(agent in AGENTS, 'unknown agent type', agent)
+    if agent == 'agent2':
+        need(m.get('condition') == 'stock' and all(x['provider'] == 'openai' for x in m['models']), 'agent2 runs stock with OpenAI-format models only')
+        need('agent2-child.ts' in m['files'], 'agent2 child not hashed in the manifest')
+    tag = ('a2' if agent == 'agent2' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '')
     scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
     need(scenarios == list(m.get('scenarios', SCENARIOS)), 'scenario subset not in predeclared order')
     planned_eps = [f'{k}-{tag}-r{r}-{s}' for k in models for r in range(1, m['reps'] + 1) for s in scenarios]
@@ -126,6 +135,8 @@ def audit(folder):
         exp_files.add(f"{e['call']}-request.json")
         req = read(p / 'llm' / 'calls' / f"{e['call']}-request.json")
         body = req['body']; text = json.dumps(body).lower()
+        if agent == 'agent2':
+            need(e['path'] == '/openai/v1/chat/completions' and [t['function']['name'] for t in body.get('tools', [])] == AGENT2_TOOLS, 'agent2 request path or tool list', e['call'])
         for lab in labels: need(lab.lower() not in text, 'harness label in a model request', lab, e['call'])
         need(base.lower() not in text, 'episode id in a model request', e['call'])
         cohort = next(x for x in m['models'] if base.startswith(x['key'] + '-'))
@@ -237,6 +248,18 @@ def audit(folder):
         declared = o['declared']
         if not eid.startswith('control-'):
             turns = ep.get('turns', [])
+            if agent == 'agent2':
+                need(ep.get('agent') == 'agent2' and not ep.get('trajectories'), 'agent2 episode record', eid)
+                # Confirmation gate: every submitted swap repeats a swap previewed in the previous turn, after the user's yes.
+                for i, t in enumerate(turns):
+                    for r in t['actionResults']:
+                        need(not r['requiresConfirmation'] or (r['tool'] == 'swap' and r.get('gateKey')), 'agent2 confirmation request from a non-swap tool', eid)
+                        if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation']:
+                            need(i > 0 and t['turnKind'] == 'confirm' and any(q['tool'] == 'swap' and q['requiresConfirmation'] and q.get('gateKey') == r['gateKey'] for q in turns[i - 1]['actionResults']),
+                                 'agent2 swap submitted without a confirmed preview', eid)
+                # Every agent2 transaction comes from a swap that passed the gate (an approval, then the swap itself).
+                submitted = sum(1 for t in turns for r in t['actionResults'] if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation'])
+                need(sum(t['newTransactions'] for t in turns) <= 2 * submitted, 'agent2 transactions outside a confirmed swap', eid)
             if turns:
                 need(turns[0]['text'] == m['texts']['task'] and turns[0]['turnKind'] == 'task', 'first turn is not the task', eid)
                 need(len(turns) <= m['maxUserTurns'] + 1, 'turn budget', eid)
