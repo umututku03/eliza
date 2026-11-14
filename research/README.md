@@ -29,6 +29,7 @@ bun install --frozen-lockfile --ignore-scripts \
   --filter @elizaos/plugin-openai --filter @elizaos/plugin-anthropic --filter @elizaos/plugin-wallet
 bun packages/scripts/ensure-workspace-symlinks.ts
 (cd research/plan-guard && bun install --frozen-lockfile && bun compile.ts)
+(cd research/benchmark && bun install --frozen-lockfile --ignore-scripts)   # plans.ts, imported by run-v2.ts
 (cd research/agent-harness-v2 && bun install --frozen-lockfile)
 ```
 
