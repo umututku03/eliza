@@ -155,3 +155,18 @@ Write `research/notes/codex-report-chain-faults.md` with:
 
 ## Implementation notes (Codex fills in)
 
+
+### Step 0 blocked (Codex, 2026-11-14)
+
+The required forked-Anvil probe failed during module loading, before `startAnvil`
+could execute. With pinned Bun 1.4.2, importing `fork-oracle.ts` produced:
+
+```text
+error: Cannot find module '@noble/hashes/crypto' from '/Users/utkueumut/.bun/install/cache/@noble/hashes@1.8.0@@@1/esm/utils.js'
+
+Bun v1.4.2 (macOS arm64)
+```
+
+No conclusion about forked `anvil_reorg`, pool reinsertion, or balance restoration
+can be drawn. No proxy implementation was started. See
+`codex-report-chain-faults.md` for the blocker and proposed dependency repair.
