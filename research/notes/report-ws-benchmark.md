@@ -116,3 +116,22 @@ fault, the next-send trigger and the agent2 adapter are explicitly open. The
 main study is not falsely labelled frozen or approved for spending.
 
 Authored-by: Codex (OpenAI).
+
+## Coordinator closure of the earlier WS-B open list (14 November)
+
+The original open-problem list above is historical. Compound fault timing/BDT
+was implemented in coordinator commit `2e2d7426b4`; fault parameters and the
+second dropped_then_reorg re-send were integrated in `cf0e73b538`. That same
+commit permits genuinely unfired rpc_stale/reorg episodes to be scored instead
+of rejecting them. The pilot audits and its four retained unfired faults exercise
+that distinction. Mixed-asset pooling is still avoided with --by-task.
+
+Further analysis commits `a381c77207` and `5eac1c15de` preserve the difference
+between a structured confirmation of the orphaned block and a new replacement's
+confirmation, and expose fault-fired/undefined-BDT/status/censor counts. The
+first regression fails on the prior implementation; the replacement-block
+negative remains truthful. All thirty original pilot JSON rows remain unchanged.
+The scorecard retains the pilot's six normal and four unfired-fault episodes,
+with reconciled BDT denominators and aligned Markdown columns.
+
+Authored-by: Codex (OpenAI).
