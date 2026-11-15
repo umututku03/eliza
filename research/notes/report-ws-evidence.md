@@ -576,3 +576,95 @@ PASS (rejected) agent2 swap without confirmed preview -> agent2 swap submitted w
 ```
 
 No paid calls were made by this recovery batch. Original worktrees and result folders are unchanged.
+
+## Agent-boundary and ablation review — Codex, 14 November 2026
+
+The preceding 16-cohort matrix was run against source `6d07cc65ea`; its
+worktree is retained unchanged for independent re-audit. The final integration
+adds the narrowly scoped fixes below in separate source snapshots. Do not
+relabel that earlier matrix as having run against these later sources.
+
+### Typed evidence at the wallet boundary (`1050c265fd`)
+
+Trace evidence: `results-wse-recovery-1114-full-stock/episodes/luna-v2-ev-r1-receipt_hidden.json`
+contained graded pending text but the ActionResult data exposed the generic
+EXECUTION_FAILED code and omitted the evidence snapshot. WalletBackendService's
+catch converted the module's EvidenceError to a generic router failure;
+wallet-action also discarded any typed record on that failure path. This mixed
+signal made the structured outcome weaker than the underlying layer.
+
+The service now forwards EVIDENCE_PENDING/EVIDENCE_UNRESOLVED only for the
+actual EvidenceError class with the layer enabled and grading active. The
+router type and ActionResult/callback retain the sanitized record. Flag-off,
+no_grading and impersonated plain-error data still follow the generic path.
+Signer and chain objects are excluded by evidenceSnapshot; no successful
+transaction receipt is invented for an unresolved operation.
+
+The regression constructed this boundary from the recorded ActionResult failure.
+Before: 1 failed, 31 passed (expected EVIDENCE_PENDING, got EXECUTION_FAILED).
+After: router plus evidence tests 62 passed; wallet 262 passed, 1 skipped.
+Positive typed propagation and negative flag-off/no_grading/forged-error cases
+are included. Assistant 2743 passed and Anthropic 29 passed on that snapshot.
+The Anthropic default test config cannot resolve unbuilt core exports in this
+fresh checkout; the source-alias Vite override produces the stated result.
+Failed configuration attempts are retained as diagnostics, not test passes.
+
+Local artifacts are under
+`/private/tmp/eliza-scorecard-recovery-1114/test-results/router-evidence-recovery-1114/`.
+The two five-state full-layer gates and eight targeted rpc_stale ablation gates
+have their own result folders and independent audit/tamper files there.
+
+### Binary lost-acknowledgement feedback (`94075c14b9`)
+
+The lost-ACK recovery fix retained nonce safety, but its first-send catch bypassed
+no_grading and disclosed graded feedback. A later hashless retry could print the
+string "undefined" as if it were a transaction hash. Both paths now render binary
+feedback under that ablation; the full-layer feedback and nonce policy are
+unchanged. This intentionally preserves the binary arm's possibility of false
+failure attribution; it does not change chain truth to match its wording.
+
+New negative regression: a fake chain mines the first send but loses its ACK;
+both binary messages are checked, no invented hash is allowed, retries remain
+at nonce 7,7 and canonical sales remain one. Before: 1 failed, 30 passed. After:
+wallet 263 passed, 1 skipped (including all 31 evidence tests). Biome 2.5.15:
+no errors, existing any/non-null warnings retained; the repository excludes the
+module itself from Biome, so one test file is checked. Production wallet tsc:
+exit 0 using pinned Node v24.15.0 and Bun 1.4.2 with a local Bun-types link.
+No dependency manifest, lockfile or compiler configuration was committed.
+
+An actual pinned-fork probe of the final no_grading path returned:
+
+```text
+attemptedNonces: [0,0]
+canonicalSales: 1
+heldX: 237636476
+first message: Transaction failed: submission was not acknowledged.
+retry message: Transaction failed: confirmation could not be established.
+```
+
+This is a controlled client-wrapper fault around a real fork transaction, with
+no paid model call. Exact output and the probe are in
+`/private/tmp/eliza-evidence-final-1114/test-results/final-evidence-gate-1114/`.
+The final source's two five-state mock gates are recorded separately below
+when complete; no earlier folder or manifest is overwritten.
+
+### Scope and remaining research gates
+
+Nonce pinning is the safety anchor in these scripted checks. No layer and
+no_nonce_pin stock arms each duplicate in 2/4 fault episodes; full, no_grading
+and no_refusal_decode each have 0/4. All plan_guard arms have 0/4, including
+no layer, because on-chain step enforcement is an independent protection.
+Full evidence reaches the goal with valid declarations in 4/4 episodes in each
+condition. These are one-repetition deterministic mock cells, not live-model
+rates or evidence that grading uniquely improves decisions.
+
+Guarantees remain process-local for unresolved tracked operations. Repeated
+completed swaps are still allowed; durable operation IDs/restart persistence
+are not implemented. A lost ACK with no known hash can need manual reconciliation;
+the layer must not claim automatic progress or lifetime exactly-once execution.
+
+The appended main-study readiness checklist keeps missing named baselines,
+reinclusion/next-send support and the agent2 evidence adapter open. No main-study
+freeze, new account integration, paid call or new spending approval is claimed.
+
+Authored-by: Codex (OpenAI).
