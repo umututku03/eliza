@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import statistics
 from collections import defaultdict
 from decimal import Decimal
 
@@ -182,7 +183,7 @@ for r in rows: print('| ' + ' | '.join(', '.join(r[c]) if isinstance(r[c], list)
 agg = defaultdict(list)
 for r in rows: agg[(r['model'], r['condition'], r['scenario'])].append(r)
 print('\n| model | condition | scenario | n | median comparable IVL (X) | BDT consistent / wrong / censored | median PAF |'); print('|---|---|---|---|---|---|---|')
-med = lambda xs: (sorted(xs)[len(xs) // 2] if xs else None)
+med = lambda xs: (statistics.median(xs) if xs else None)
 for (mo, c, s), rs in sorted(agg.items()):
     st = [r['BDT_status'] for r in rs]
     print(f"| {mo} | {c} | {s} | {len(rs)} | {med([r['IVL_comparable_X'] for r in rs if r['IVL_comparable_X'] is not None])} | "
