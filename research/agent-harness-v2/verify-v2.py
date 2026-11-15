@@ -200,12 +200,13 @@ def audit(folder):
     if 'arm' in m:
         need(m.get('armTag') == ARM_TAGS[arm], 'arm tag differs from the arm', arm)
         need(agent == 'elizaos' or arm == 'none', 'protected comparisons run on ElizaOS only')
-        x = frozen['x']
-        policy = {'router': frozen['router'], 'rules': [
-            {'tokenIn': '0x' + '0' * 40, 'tokenOut': x['address'], 'maxAmountIn': str(units(frozen['saleEth'], 18)), 'keepAtLeastIn': None, 'minAmountOut': None},
-            {'tokenIn': x['address'], 'tokenOut': frozen['y']['address'], 'maxAmountIn': None, 'keepAtLeastIn': str(units(frozen['reserveX'], x['decimals'])), 'minAmountOut': None}]}
         env = dict(m.get('armEnv') or {})
         if arm == 'pace_style':
+            # The policy is built only for pace_style: workflow tasks (A1) have no saleEth and run --arm=none only.
+            x = frozen['x']
+            policy = {'router': frozen['router'], 'rules': [
+                {'tokenIn': '0x' + '0' * 40, 'tokenOut': x['address'], 'maxAmountIn': str(units(frozen['saleEth'], 18)), 'keepAtLeastIn': None, 'minAmountOut': None},
+                {'tokenIn': x['address'], 'tokenOut': frozen['y']['address'], 'maxAmountIn': None, 'keepAtLeastIn': str(units(frozen['reserveX'], x['decimals'])), 'minAmountOut': None}]}
             need(json.loads(env.pop('EVM_PACE_POLICY', 'null')) == policy, 'pace_style policy differs from the task constraints')
         expected_env = ({'EVM_EVIDENCE_LAYER': '1', 'EVM_EVIDENCE_ABLATE': m.get('evidenceAblate', 'none')} if arm == 'full'
                         else {'EVM_EVIDENCE_MODE': arm} if arm in WALLET_MODES else {})
