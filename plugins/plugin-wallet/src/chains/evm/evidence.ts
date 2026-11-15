@@ -13,6 +13,10 @@
  *
  * `EVM_EVIDENCE_ABLATE` (research ablations): `no_nonce_pin` re-sends with a fresh nonce; `no_grading` reports
  * only a binary success or failure; `no_refusal_decode` keeps plan refusals raw (see plan-guard.ts).
+ *
+ * `EVM_EVIDENCE_DECISION_LOG=1` (research instrumentation, full layer only): each decision the layer returns to the
+ * agent is also written to stderr as one `[evidence-decision] {json}` line (see logDecision). Logging only: no
+ * decision, message or record changes, and nothing is written when the flag is unset.
  */
 import {
   type Address,
@@ -410,9 +414,13 @@ export async function checkOnce(pub: EvidencePublicClient, r: IntentRecord, deps
   const wasConfirmed = r.state === "confirmed";
   const d = decide(r, deps.now());
   // A confirmed intent changes only on positive reorg evidence, never on a (possibly stale) missing read.
-  if (wasConfirmed && d.decision !== "orphaned") return r;
+  if (wasConfirmed && d.decision !== "orphaned") {
+    if (countRound) logDecision("check", r, deps);
+    return r;
+  }
   apply(r, d);
   if (countRound) closeRound(r);
+  if (countRound) logDecision("check", r, deps);
   return r;
 }
 
@@ -465,6 +473,66 @@ export function evidenceSnapshot(r: IntentRecord): Record<string, unknown> {
   return bigintSafe({ ...r, request, message: evidenceMessage(r) }) as Record<string, unknown>;
 }
 
+// ---- decision log (EVM_EVIDENCE_DECISION_LOG=1; logging only) ------------------------------------------------
+/** Where a decision reached the agent: the end of a send's check loop, an unacknowledged send, a guard refusal (the
+ *  decision of the earlier, unresolved intent), or a tx_status check. */
+export type DecisionSite = "send" | "send_unacknowledged" | "guard" | "check";
+export const DECISION_LOG_PREFIX = "[evidence-decision] ";
+export const DECISION_LOG_VERSION = 1;
+export function decisionLogEnabled(): boolean {
+  return process.env.EVM_EVIDENCE_DECISION_LOG === "1";
+}
+/**
+ * The logged fields: the decision, the intent key and effect, every hash, and the latest observation (block numbers,
+ * block hash, confirmations, wall-clock time). Public chain data only: no signer, request, calldata or message text.
+ */
+export function decisionLogEntry(site: DecisionSite, r: IntentRecord, atMs: number): Record<string, unknown> {
+  const o = r.observations[r.observations.length - 1];
+  return bigintSafe({
+    v: DECISION_LOG_VERSION,
+    site,
+    atMs,
+    decision: r.decision,
+    waitReason: r.waitReason,
+    state: r.state,
+    key: r.key,
+    label: r.intent.label,
+    chainId: r.intent.chainId,
+    sender: r.intent.sender,
+    effect: r.intent.effect,
+    pinnedNonce: r.pinnedNonce,
+    hashes: r.hashes,
+    rounds: r.rounds,
+    landed: r.landed,
+    receiptSeen: r.receiptSeen,
+    observations: r.observations.length,
+    lastObservation: o
+      ? {
+          atMs: o.atMs,
+          head: o.head,
+          hash: o.hash,
+          receiptBlock: o.receiptBlock,
+          receiptBlockHash: o.receiptBlockHash,
+          receiptStatus: o.receiptStatus,
+          txKnown: o.txKnown,
+          txBlock: o.txBlock,
+          canonical: o.canonical,
+          orphanEvidence: o.orphanEvidence,
+          confirmations: o.confirmations,
+          nonceLatest: o.nonceLatest,
+          balanceEffectSeen: o.balanceEffectSeen,
+        }
+      : null,
+  }) as Record<string, unknown>;
+}
+/** Writes one decision line when EVM_EVIDENCE_DECISION_LOG=1; never throws and never changes the record. */
+function logDecision(site: DecisionSite, r: IntentRecord, deps: EvidenceDeps) {
+  if (!decisionLogEnabled()) return;
+  try {
+    process.stderr.write(`${DECISION_LOG_PREFIX}${JSON.stringify(decisionLogEntry(site, r, deps.now()))}\n`);
+  } catch {}
+}
+
 export type EvidenceErrorCode = "EVIDENCE_PENDING" | "EVIDENCE_UNRESOLVED";
 /** An EVMError whose code is one of the layer's codes; `data.evidence` carries the full record. */
 export class EvidenceError extends EVMError {
@@ -505,6 +573,7 @@ async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: Ev
         evidenceAblation() === "no_grading"
           ? `Transaction failed: an earlier ${r.intent.label} is not settled.`
           : `An earlier ${r.intent.label} is not resolved yet, so nothing else is sent: ${evidenceMessage(r)} Check its status with tx_status first.`;
+      logDecision("guard", r, deps);
       throw new EvidenceError("EVIDENCE_UNRESOLVED", msg, r);
     }
   }
@@ -591,6 +660,7 @@ export async function sendWithEvidence(o: {
         const message = ablation === "no_grading"
           ? "Transaction failed: submission was not acknowledged."
           : `Your ${o.intent.label} could not be acknowledged and may have been submitted. Do not start another transaction; check its status with tx_status. Retrying this same operation keeps its nonce.`;
+        logDecision("send_unacknowledged", r, deps);
         throw new EvidenceError("EVIDENCE_PENDING", message, r);
       }
     } else {
@@ -636,6 +706,7 @@ export async function sendWithEvidence(o: {
     await deps.sleep(CHECK_INTERVAL_MS);
   }
   closeRound(r);
+  logDecision("send", r, deps);
   const hash = (r.observations[r.observations.length - 1]?.hash ?? r.hashes[r.hashes.length - 1]) as Hex;
   if (r.decision === "confirmed" || r.decision === "failed") return { hash, decision: r.decision, record: r };
   if (ablation === "no_grading")
