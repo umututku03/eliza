@@ -1,5 +1,5 @@
 /**
- * Reproductions of counterexamples found by the TLA+ model of the evidence layer
+ * Reproductions of TLA+ counterexamples and related recovery negative cases for the model of the evidence layer
  * (research/formal/EvidenceLayer.tla, see research/formal/README.md). Each test states a property that must hold; the preserved before-fix run demonstrates the counterexample. evidence.ts is not changed here.
  */
 import { type Address, encodeFunctionData, type Hex, parseAbi } from "viem";
@@ -12,6 +12,7 @@ import {
   EvidenceError,
   type EvidenceIntent,
   latestIntent,
+  quorumClient,
   resetEvidenceLedgers,
   sendWithEvidence,
 } from "../evidence";
@@ -170,14 +171,22 @@ class Chain {
   }
 }
 
+const reader = (c: Chain) =>
+  process.env.EVM_EVIDENCE_MODE === "full_quorum"
+    ? quorumClient([
+        { role: "read0", client: c.pub as never },
+        { role: "read1", client: c.pub as never },
+      ])
+    : c.pub;
 const send = (c: Chain, tokenOut: Address, value: bigint) =>
   sendWithEvidence({
     walletClient: c.wallet,
-    publicClient: c.pub as never,
+    publicClient: reader(c) as never,
     request: { account: ACCOUNT, chain: mainnet, to: ROUTER, value, data: buyData(tokenOut) },
     intent: buyIntent(tokenOut, value),
     deps: c.deps(),
   });
+
 async function outcome(p: Promise<{ decision: string }>): Promise<string> {
   try {
     return (await p).decision;
@@ -197,7 +206,14 @@ afterEach(() => {
   delete process.env.EVM_EVIDENCE_LAYER;
 });
 
-describe("TLA+ counterexamples (research/formal)", () => {
+describe.each(["full", "full_quorum"])("recovery counterexamples (%s)", (mode) => {
+  beforeEach(() => {
+    delete process.env.EVM_EVIDENCE_LAYER;
+    process.env.EVM_EVIDENCE_MODE = mode;
+  });
+  afterEach(() => {
+    delete process.env.EVM_EVIDENCE_MODE;
+  });
   // Trace C1 (MC_full, NoActOnOrphan): hidden receipt -> re-send gets "nonce too low" -> landed + balance effect
   // -> confirmed without ever recording receiptSeen; a later reorg orphans the swap, and because the orphan rule
   // needs receiptSeen, the guard keeps it confirmed and lets the next intent take the freed nonce.
@@ -389,7 +405,7 @@ describe("TLA+ counterexamples (research/formal)", () => {
     c.txs.set(hash, tx);
     c.nonce++;
     c.balances.set(USDC.toLowerCase(), 100n);
-    await checkOnce(c.pub as never, record, c.deps());
+    await checkOnce(reader(c) as never, record, c.deps());
     expect(record.decision).toBe("wait");
     expect(record.state).toBe("included");
     expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_UNRESOLVED:wait");

@@ -418,8 +418,8 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
 //     history) but is never asked about anything above its own head.
 //  3. Facts. A claim about block B (a receipt in B, a transaction mined in B) is decided by the members that can see B
 //     (head >= B): supporters return the same (status, block, block hash); deniers return "not found" or another value.
-//     The claim is accepted when supporters > deniers, rejected when deniers > supporters, and the fact is unresolved
-//     when they tie (e.g. two endpoints at one head, one shows a receipt and the other says not found). Nonce and
+//     A strict majority of the members whose head reaches B must support or deny the claim; abstentions count
+//     against both sides. Otherwise the fact is unresolved (e.g. two endpoints at one head, one shows a receipt and the other says not found). Nonce and
 //     balance are read at the chosen head (blockNumber pinned) from the members whose head reaches it; the strict
 //     majority value is used, a tie is unresolved. A pending (not mined) transaction known to any member counts as
 //     known (it can only lead to "do not send again"). Block hashes for the canonical check come from the chosen
@@ -563,12 +563,16 @@ function agreeOnBlockClaim<T>(
     const x = reads[k];
     if (x.kind !== "value") return;
     const block = blockOf(x.v);
-    if (block === null) return;
+    if (block === null || view.heads[i]! < block) return;
     const id = key(x.v);
     const c = claims.get(id) ?? { v: x.v, block, by: [] };
     c.by.push(i);
     claims.set(id, c);
   });
+  if (!claims.size) {
+    const answered = reads.filter((x) => x.kind !== "abstain").length;
+    return { value: null, disagreed: false, unresolved: answered * 2 <= view.members.length };
+  }
   const accepted: T[] = [];
   let disagreed = false,
     unresolved = false;
@@ -579,20 +583,20 @@ function agreeOnBlockClaim<T>(
       return x.kind === "null" || (blockOf(x.v) === null ? true : key(x.v) !== id);
     }).length;
     if (deniers > 0) disagreed = true;
-    if (c.by.length > deniers) accepted.push(c.v);
-    else if (c.by.length === deniers) unresolved = true;
+    const eligible = view.members.filter((i) => view.heads[i]! >= c.block).length;
+    if (c.by.length * 2 > eligible) accepted.push(c.v);
+    else if (deniers * 2 <= eligible) unresolved = true;
   }
   if (accepted.length > 1) return { value: null, disagreed: true, unresolved: true };
   return { value: accepted[0] ?? null, disagreed, unresolved };
 }
 /** Rule 3 for state at the chosen head: the strict-majority value among the members whose head reaches it. */
-function majorityValue<T>(view: QuorumView, reads: Read<T>[], key: (v: T) => string): { value: T | null; disagreed: boolean; unresolved: boolean } {
+function majorityValue<T>(view: QuorumView, reads: Read<T>[], key: (v: T) => string, at = view.heads[view.chosen]!): { value: T | null; disagreed: boolean; unresolved: boolean } {
   const tally = new Map<string, { v: T; n: number }>();
-  let answered = 0;
+  const eligible = view.members.filter((i) => view.heads[i]! >= at).length;
   view.members.forEach((i, k) => {
     const x = reads[k];
-    if (view.heads[i]! < view.heads[view.chosen]! || x.kind !== "value") return;
-    answered++;
+    if (view.heads[i]! < at || x.kind !== "value") return;
     const id = key(x.v);
     const t = tally.get(id) ?? { v: x.v, n: 0 };
     t.n++;
@@ -600,7 +604,7 @@ function majorityValue<T>(view: QuorumView, reads: Read<T>[], key: (v: T) => str
   });
   const top = [...tally.values()].sort((a, b) => b.n - a.n);
   if (!top.length) return { value: null, disagreed: false, unresolved: true };
-  return { value: top[0].n * 2 > answered ? top[0].v : null, disagreed: tally.size > 1, unresolved: top[0].n * 2 <= answered };
+  return { value: top[0].n * 2 > eligible ? top[0].v : null, disagreed: tally.size > 1, unresolved: top[0].n * 2 <= eligible };
 }
 
 async function readEffectAt(pub: EvidencePublicClient, e: EvidenceEffect, at: bigint): Promise<bigint> {
@@ -700,13 +704,17 @@ async function observeQuorum(q: QuorumClient, r: IntentRecord, deps: EvidenceDep
   const oneNonce = new Set(r.sentNonces).size <= 1;
   if (disputed.length && !(settledBy && oneNonce)) unresolved.push(`the ${r.intent.label}'s receipt or inclusion`);
   const at = BigInt(head);
-  const nonces = await Promise.all(members.map((c) => bounded(stall, async () => Number(await c.getTransactionCount({ address: r.intent.sender, blockNumber: at })))));
+  const nonces = await Promise.all(members.map((c, k) => view.heads[view.members[k]]! < head
+    ? Promise.resolve({ kind: "abstain" } as Read<number>)
+    : bounded(stall, async () => Number(await c.getTransactionCount({ address: r.intent.sender, blockNumber: at })))));
   const nonce = majorityValue(view, nonces, String);
   note("nonce", nonce);
   let effectNow: bigint | null = null;
   if (r.intent.effect) {
     const effect = r.intent.effect;
-    const effects = await Promise.all(members.map((c) => bounded(stall, () => readEffectAt(c, effect, at))));
+    const effects = await Promise.all(members.map((c, k) => view.heads[view.members[k]]! < head
+      ? Promise.resolve({ kind: "abstain" } as Read<bigint>)
+      : bounded(stall, () => readEffectAt(c, effect, at))));
     const e = majorityValue(view, effects, String);
     note("balance", e);
     effectNow = e.value;
@@ -771,14 +779,32 @@ export function quorumClient(endpoints: QuorumEndpoint[], options: Partial<Quoru
   const q: QuorumClient = {
     quorumEndpoints: endpoints,
     quorumOptions: { lagTolerance: options.lagTolerance ?? QUORUM_LAG_TOLERANCE, stallMs: options.stallMs ?? QUORUM_STALL_MS },
-    getTransactionCount: async (a) => (await pick()).getTransactionCount(a),
+    getTransactionCount: async (a) => state("nonce", (c, at) => c.getTransactionCount(a.blockTag === "pending"
+      ? { address: a.address, blockTag: "pending" }
+      : { address: a.address, blockNumber: a.blockNumber ?? at }), a.blockNumber),
     getTransaction: async (a) => (await pick()).getTransaction(a),
     getTransactionReceipt: async (a) => (await pick()).getTransactionReceipt(a),
     getBlock: async (a) => (await pick()).getBlock(a),
     getBlockNumber: async (a) => (await pick()).getBlockNumber(a),
-    getBalance: async (a) => (await pick()).getBalance(a),
-    readContract: async (a) => (await pick()).readContract(a),
+    getBalance: async (a) => state("balance", (c, at) => c.getBalance({ ...a, blockNumber: a.blockNumber ?? at }), a.blockNumber),
+    readContract: async (a) => state("balance", (c, at) => c.readContract({ ...a, blockNumber: a.blockNumber ?? at }), a.blockNumber),
   };
+  async function state<T>(fact: string, read: (c: EvidencePublicClient, at: bigint) => Promise<T>, requested?: bigint): Promise<T> {
+    const view = await selectView(q);
+    if (!view.ok) { summarize(q, view, [], []); throw unavailable(fact, view.reason); }
+    const at = requested ?? BigInt(view.heads[view.chosen]!);
+    const values: Read<T>[] = await Promise.all(view.members.map((i) => view.heads[i]! < Number(at)
+      ? Promise.resolve({ kind: "abstain" } as Read<T>)
+      : bounded(q.quorumOptions.stallMs, () => read(endpoints[i].client, at))));
+    const vote = majorityValue(view, values, (v) => String(JSON.stringify(bigintSafe(v))), Number(at));
+    summarize(q, view, vote.disagreed ? [fact] : [], vote.unresolved ? [fact] : []);
+    if (vote.value === null) throw unavailable(fact);
+    return vote.value;
+  }
+  function unavailable(fact: string, reason: string | null = null) {
+    return new EVMError(EVMErrorCode.NETWORK_ERROR,
+      `Nothing was sent: the wallet's read endpoints have no majority on ${fact}${reason ? ` (${reason})` : ""}. Wait and try again.`);
+  }
   async function pick(): Promise<EvidencePublicClient> {
     const view = await selectView(q);
     summarize(q, view, [], []);
@@ -827,7 +853,7 @@ export function decide(r: IntentRecord, now: number): { decision: EvidenceDecisi
   const o = r.observations[r.observations.length - 1];
   if (!o) return { decision: "wait", waitReason: "not_seen", state: "sent" };
   // full_quorum: no majority of the read endpoints agreed, so this observation carries no evidence either way.
-  if (o.quorum && !o.quorum.ok) return { decision: "wait", waitReason: "no_quorum", state: r.state };
+  if (o.quorum && !o.quorum.ok) return { decision: "wait", waitReason: "no_quorum", state: "pending" };
   const included = (o.receiptStatus === "success" || o.txBlock !== null) && o.canonical !== false;
   const inclState: IntentState = included ? "included" : o.txKnown ? "pending" : "sent";
   if (o.receiptStatus === "reverted") return { decision: "failed", waitReason: null, state: "failed" };
@@ -868,8 +894,11 @@ export async function checkOnce(pub: EvidencePublicClient, r: IntentRecord, deps
   const wasConfirmed = r.state === "confirmed";
   const d = decide(r, deps.now());
   // A confirmed intent changes only on positive reorg evidence, never on a (possibly stale) missing read.
-  const reorgVisible = r.observations[r.observations.length - 1]?.orphanEvidence === true;
-  if (!(wasConfirmed && !reorgVisible)) {
+  const observation = r.observations[r.observations.length - 1];
+  const reorgVisible = observation?.orphanEvidence === true;
+  const quorumUnknown = observation?.quorum?.ok === false;
+  if (quorumUnknown) reportedOutcomes.delete(r);
+  if (!(wasConfirmed && !reorgVisible && !quorumUnknown)) {
     apply(r, d);
     if (countRound) closeRound(r);
   }
@@ -1083,7 +1112,7 @@ export async function sendWithEvidence(o: {
     let r = findOpenIntent(o.intent);
     if (!r) {
       const pinnedNonce = Number(await pub.getTransactionCount({ address: o.intent.sender, blockTag: "pending" }));
-      const before = await readEffect(pub, o.intent.effect).catch(() => null);
+      const before = isQuorumClient(pub) ? await readEffect(pub, o.intent.effect) : await readEffect(pub, o.intent.effect).catch(() => null);
       const base = { account: o.request.account, chain: o.request.chain, to: o.request.to, value: o.request.value ?? 0n, data: o.request.data ?? "0x" };
       const prepared = await o.walletClient.prepareTransactionRequest({ ...base, nonce: pinnedNonce });
       const request: StoredRequest = {
