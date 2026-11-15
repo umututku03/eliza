@@ -5,6 +5,8 @@
 //   bun --conditions=eliza-source research/agent-harness-v2/run-v2.ts --mode=mock|live --models=luna,haiku --dest=<dir>
 //        [--condition=stock|existing_controls|plan_guard|checkpoint_approx] [--task=<id> [--tasks=research/benchmark/tasks.json]]
 //        [--reps=2] [--scenarios=a,b] [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N]
+//        [--evidence [--evidence-ablate=none|no_nonce_pin|no_grading|no_refusal_decode]] [--mock-agent=scripted|naive]
+//        [--idle-block-ms=N]
 //
 // Conditions (research/benchmark/PREREGISTRATION.md §3): stock (the agent's key holds the funds),
 // existing_controls (a delegator account with MetaMask built-in caveats only) and plan_guard (the same account,
@@ -173,6 +175,23 @@ const CONDITION = arg("condition") ?? "stock";
 if (!(CONDITIONS as readonly string[]).includes(CONDITION))
   throw new Error(`Unknown --condition=${CONDITION}`);
 const PLAN = CONDITION !== "stock"; // a delegator account holds the funds; the agent redeems delegations
+// Chain-evidence layer (plugin-wallet chains/evm/evidence.ts): --evidence sets EVM_EVIDENCE_LAYER=1 in the
+// episode and control children; --evidence-ablate=<x> (implies --evidence) sets EVM_EVIDENCE_ABLATE.
+const EVIDENCE_ABLATIONS = ["none", "no_nonce_pin", "no_grading", "no_refusal_decode"];
+const EVIDENCE_ABLATE = arg("evidence-ablate") ?? "none";
+if (!EVIDENCE_ABLATIONS.includes(EVIDENCE_ABLATE))
+  throw new Error(`Unknown --evidence-ablate=${EVIDENCE_ABLATE}`);
+const EVIDENCE =
+  process.argv.includes("--evidence") || arg("evidence-ablate") !== undefined;
+// --mock-agent=naive (mock only): whenever the sale call does not return success, the scripted agent repeats
+// the sale once (the measured LLM failure). The mock gate below inserts the repeat after a failed sale result.
+const MOCK_AGENT = arg("mock-agent") ?? "scripted";
+if (!["scripted", "naive"].includes(MOCK_AGENT) || (MOCK_AGENT !== "scripted" && mode !== "mock"))
+  throw new Error(`--mock-agent=${MOCK_AGENT} needs --mode=mock`);
+// Block production: the fork automines only on a send, so K-confirmation evidence never arrives on an idle
+// chain. With --idle-block-ms=N (default 30000 under --evidence, else off) the parent mines one empty block
+// through the fault proxy after N ms without a new block, while a child runs. N exceeds the reorg delay.
+const IDLE_BLOCK_MS = Number(arg("idle-block-ms") ?? (EVIDENCE ? 30000 : 0));
 const ID_TAG = {
   stock: "v2",
   existing_controls: "ec",
@@ -186,7 +205,8 @@ export const CONTROL_REFUSALS: Record<string, string[]> = {
   existing_controls: ["price_worse"],
 };
 const ID_PREFIX = (modelKey: string) =>
-  TASK_ID ? `${modelKey}-${ID_TAG}-${TASK_ID}` : `${modelKey}-${ID_TAG}`;
+  (TASK_ID ? `${modelKey}-${ID_TAG}-${TASK_ID}` : `${modelKey}-${ID_TAG}`) +
+  (EVIDENCE ? "-ev" : "");
 const SENDER = AGENT as Address; // the agent's signing key
 let W = AGENT as Address; // the funds holder: the agent's wallet (stock) or the user's plan account (plan_guard)
 // v2's wallet refuses token symbols without a token-data service, so the task names the token contracts.
@@ -328,6 +348,10 @@ const manifest = {
     "headless runtime, one process per episode, instead of the app host",
   ],
   forbiddenBase: FORBIDDEN_BASE,
+  evidence: EVIDENCE,
+  evidenceAblate: EVIDENCE_ABLATE,
+  mockAgent: MOCK_AGENT,
+  idleBlockMs: IDLE_BLOCK_MS,
 };
 if (mode === "live" && manifest.elizaSourceDirty)
   throw new Error(
@@ -394,6 +418,9 @@ const childEnv: Record<string, string> = {
   PATH: process.env.PATH ?? "",
   HOME: process.env.HOME ?? "",
   LOG_LEVEL: process.env.LOG_LEVEL ?? "warn",
+  ...(EVIDENCE
+    ? { EVM_EVIDENCE_LAYER: "1", EVM_EVIDENCE_ABLATE: EVIDENCE_ABLATE }
+    : {}),
 };
 
 await fundAgent(anvil);
@@ -437,14 +464,72 @@ const saleRule: SaleCandidate | undefined = PLAN
   : undefined;
 // Mock plans have no reasoning time. Pace their next model request so the timed fault
 // can elapse before the scripted recovery; controls and live traffic never use this gate.
+// Naive mock agent: the gate watches the latest WALLET_SWAP tool result; the first one that is not a proposal
+// is the sale's execution. If it did not succeed, the scripted retry is inserted after it (once per episode).
+const naive: { episode: string | null; decided: boolean; retry: boolean; context: any } =
+  { episode: null, decided: false, retry: false, context: null };
+const naivePlan = (ctx: any) =>
+  naive.retry && ctx?.mockPlan
+    ? {
+        ...ctx,
+        mockPlan: {
+          ...ctx.mockPlan,
+          calls: [
+            ...ctx.mockPlan.calls.slice(0, 2),
+            ...ctx.mockPlan.naiveRetry,
+            ...ctx.mockPlan.calls.slice(2),
+          ],
+        },
+      }
+    : ctx;
+async function naiveObserve(body: any) {
+  if (naive.decided || !naive.context?.mockPlan) return;
+  const msgs: any[] = body?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "tool") continue;
+    let r: any;
+    try {
+      r = JSON.parse(String(msgs[i].content));
+    } catch {
+      return;
+    }
+    if (r?.data?.actionName !== "WALLET_SWAP" || /reply yes/i.test(String(r.text ?? "")))
+      return;
+    naive.decided = true;
+    naive.retry = r.success !== true;
+    if (naive.retry)
+      await fetch(llmUrl + "/control/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...naivePlan(naive.context), resetMock: false }),
+      });
+    return;
+  }
+}
 const mockGate =
-  mode === "mock" && RUN_SCENARIOS.some((s) => CHAIN_FAULTS.includes(s))
+  mode === "mock" &&
+  (MOCK_AGENT === "naive" || RUN_SCENARIOS.some((s) => CHAIN_FAULTS.includes(s)))
     ? Bun.serve({
         hostname: "127.0.0.1",
         port: 18652,
         idleTimeout: 255,
         async fetch(req) {
           const url = new URL(req.url);
+          if (MOCK_AGENT === "naive" && url.pathname === "/control/turn") {
+            const ctx = await req.json();
+            const base = String(ctx.episodeId ?? "").split("#")[0];
+            if (base !== naive.episode)
+              Object.assign(naive, { episode: base, decided: false, retry: false });
+            naive.context = ctx;
+            return fetch(llmUrl + url.pathname, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(naivePlan(ctx)),
+            });
+          }
+          const body = req.method === "POST" ? await req.arrayBuffer() : undefined;
+          if (MOCK_AGENT === "naive" && body && !url.pathname.startsWith("/control/"))
+            await naiveObserve(JSON.parse(new TextDecoder().decode(body)));
           if (
             !url.pathname.startsWith("/control/") &&
             !url.pathname.endsWith("/embeddings")
@@ -463,7 +548,7 @@ const mockGate =
           return fetch(llmUrl + url.pathname, {
             method: req.method,
             headers: req.headers,
-            body: req.method === "POST" ? await req.arrayBuffer() : undefined,
+            body,
           });
         },
       })
@@ -561,6 +646,31 @@ async function minimalXFor(cap: bigint) {
   }
   return lo * cent;
 }
+// Idle-block producer (--idle-block-ms): mines through the fault proxy, so fault handling stays serialized.
+let ticker: ReturnType<typeof setInterval> | null = null;
+function startTicker() {
+  if (!IDLE_BLOCK_MS) return;
+  let last = -1,
+    since = Date.now(),
+    busy = false;
+  ticker = setInterval(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const head = Number(await anvil.rpc("eth_blockNumber"));
+      if (head !== last) (last = head), (since = Date.now());
+      else if (Date.now() - since >= IDLE_BLOCK_MS) {
+        await fetch(forkProxy.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: "idle-block", method: "anvil_mine", params: ["0x1"] }),
+        });
+        since = Date.now();
+      }
+    } catch {}
+    busy = false;
+  }, 1000);
+}
 async function child(script: string, id: string, spec: any) {
   const work = join(tmpdir(), "agent-harness-v2-work", id);
   rmSync(work, { recursive: true, force: true });
@@ -584,7 +694,10 @@ async function child(script: string, id: string, spec: any) {
       stderr: Bun.file(join(work, "child.err")),
     },
   );
+  startTicker();
   const exitCode = await proc.exited;
+  if (ticker) clearInterval(ticker);
+  ticker = null;
   const out = existsSync(join(work, "out.json"))
     ? JSON.parse(readFileSync(join(work, "out.json"), "utf8"))
     : null;
@@ -853,7 +966,7 @@ async function outcome(scenario: string, declared: string | null) {
         ].includes((e as Error).name)
       )
         throw e;
-      tx = { to: s.to, value: BigInt(s.value), input: s.data ?? "0x" };
+      tx = { to: s.to, value: BigInt(s.value), input: s.data ?? "0x", nonce: null };
       r = null;
     }
     // plan_guard: the effective call is the execution inside the DelegationManager redemption.
@@ -904,6 +1017,7 @@ async function outcome(scenario: string, declared: string | null) {
         fn: call?.functionName ?? null,
         leg,
         status: "not_canonical",
+        nonce: null,
         block: null,
         sale: !!s.sale,
         tokenDelta,
@@ -955,6 +1069,7 @@ async function outcome(scenario: string, declared: string | null) {
       fn: call?.functionName ?? null,
       leg,
       status: r.status,
+      nonce: Number(tx.nonce),
       block: Number(r.blockNumber),
       sale: !!s.sale,
       tokenDelta,
@@ -1064,6 +1179,13 @@ async function mockPlan(scenario: string) {
     retrySale = swap("ETH", X.address, `${frozen.saleEth}0`),
     step2 = swap(X.address, Y.address, amount2);
   // Each financial action: proposed in one turn, executed in the next (after the user's "yes").
+  // Naive agent: sale then step 2; the gate inserts naiveRetry after a sale that did not return success.
+  if (MOCK_AGENT === "naive")
+    return {
+      calls: FEASIBLE[scenario] ? [sale, sale, step2, step2] : [sale, sale],
+      naiveRetry: [retrySale, retrySale],
+      declared: FEASIBLE[scenario] ? "COMPLETED" : "INFEASIBLE",
+    };
   return {
     calls: ["sale_dropped", "sale_reorged"].includes(scenario)
       ? [sale, sale, retrySale, retrySale, step2, step2]

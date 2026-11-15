@@ -43,6 +43,16 @@ if fault_ep:
             d['forkJournal'].pop(index)
         edit_json(p / 'episodes' / f'{fault_ep}.json', mutate)
     cases['fault event removed'] = remove_fault
+# Nonce guarantee: a second canonical transaction for one (sender, nonce) must be rejected.
+nonce_ep = next((n for n in eps if any(t.get('nonce') is not None
+    for t in json.loads((src / 'episodes' / f'{n}.json').read_text())['outcome']['transactions'])), None)
+if nonce_ep:
+    def second_canonical(p):
+        def mutate(d):
+            t = next(t for t in d['outcome']['transactions'] if t.get('nonce') is not None)
+            d['outcome']['transactions'].append({**t, 'hash': '0x' + ('f' * 64 if t['hash'] != '0x' + 'f' * 64 else 'e' * 64)})
+        edit_json(p / 'episodes' / f'{nonce_ep}.json', mutate)
+    cases['second canonical transaction for one nonce'] = second_canonical
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
