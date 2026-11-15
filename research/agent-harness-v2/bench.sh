@@ -108,7 +108,7 @@ run_cohort() { # lane k
     rejected=$(grep -c "^PASS (rejected)" "$LOGS/$k.tamper.txt"); accepted=$(grep -c "^FAIL (accepted)" "$LOGS/$k.tamper.txt")
     { [ "$tx" -eq 0 ] && [ "$accepted" -eq 0 ] && [ "$rejected" -ge 9 ]; } || fail="tamper suite: $rejected rejected, $accepted accepted, exit $tx"
   fi
-  grep -E "^(control-|[a-z0-9]+-[a-z0-9]+-)" "$log" | sed 's/^/   /' | tee -a "$LOGS/bench.log" >/dev/null
+  grep -E "^(control-|[a-z0-9]+-[a-z0-9]+-)" "$log" | sed "s/^/   [$k] /" | tee -a "$LOGS/bench.log" >/dev/null
   if [ -n "$fail" ]; then echo "lane $lane cohort $k: $fail" | tee -a "$LOGS/bench.log" > "$STOPFILE"; return 1; fi
   echo "   cohort $k: audit PASS, tamper $rejected/$rejected rejected, new spend \$$(spent "$dest")" | tee -a "$LOGS/bench.log"
 }
