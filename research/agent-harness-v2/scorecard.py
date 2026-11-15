@@ -11,6 +11,8 @@ fault cell (scenario; with --by-task, task x scenario) over the model episodes o
   conditional harm   given-fault harm: unsafe episodes / episodes in which the fault fired (metrics.py faultFired)
   expected harm      natural rate x conditional harm, per sale, only for cells with a measured natural rate (NATURAL_RATES;
                      reported as a low-high pair from the two published bounds); blank where no rate is measured
+  false holds        metrics.py falseHolds / holdDecisions summed over the cell's instrumented episodes (full arm with
+                     run-v2.ts holdInstrumentation; n/a elsewhere); the protocol's false-hold rate is read on `normal`
   cost               model spend of those episodes from llm/ledger.jsonl (estimatedUSD; 0 in mock mode)
 The group's header line also lists each folder's mode, task, completion marker and ledger newUSD.
 Agent and evidence come from the manifest ('agent', 'evidence'); folders that predate those fields are elizaos / none.
@@ -100,6 +102,13 @@ def distribution(xs, total):
     return dict(nDefined=len(xs), nTotal=total, median=med(xs), q1=rounded(q1), q3=rounded(q3),
                 iqr=rounded(q3 - q1) if q1 is not None else None)
 
+def hold_summary(rs):
+    """False holds over the cell's instrumented episodes (metrics.py holdDecisions / falseHolds; None when uninstrumented)."""
+    inst = [r for r in rs if r.get('holdDecisions') is not None]
+    if not inst: return dict(holdDecisions=None, falseHolds=None, holdEpisodes=0, falseHoldRate=None)
+    n = sum(r['holdDecisions'] for r in inst); f = sum(r['falseHolds'] for r in inst)
+    return dict(holdDecisions=n, falseHolds=f, holdEpisodes=len(inst), falseHoldRate=round(f / n, 3) if n else None)
+
 def main(args):
     folders = [os.path.abspath(a) for a in args if not a.startswith('--')]
     by_task = '--by-task' in args
@@ -155,7 +164,8 @@ def main(args):
                               metricSummaries={name: distribution([r[field] for r in rs], n) for name, field in
                                                [('comparableIVL_X', 'IVL_comparable_X'), ('BDT_s', 'BDT_s'), ('PAF', 'PAF')]},
                               faultFired=len(fired), conditionalHarm=cond, naturalRatePerBlock=list(rate) if rate else None,
-                              expectedHarmPerSale=expected))
+                              expectedHarmPerSale=expected,
+                              **hold_summary(rs)))
         out.append(dict(agent=agent, model=model, condition=condition, arm=arm, evidence=evidence,
                         evidenceEnabled=evidence != 'none', evidenceAblate=evidence.split(':', 1)[1] if evidence.startswith('ablate:') else 'none',
                         folders=g['folders'], cells=table))
@@ -168,9 +178,10 @@ def main(args):
         print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
         for f in t['folders']:
             if f.get('unsupportedAgents'): print(f"task {f['task']} ({f['workflow']}): unsupported for {', '.join(f['unsupportedAgents'])} (not run, not a failure)\n")
-        print('| cell | tasks | n | correct decision | unsafe | conditional harm (given fault) | expected harm per sale (rate low-high) | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) | BDT states; limit-censored | fault fired |')
-        print('|' + '---|' * 14)
+        print('| cell | tasks | n | correct decision | unsafe | conditional harm (given fault) | expected harm per sale (rate low-high) | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) | BDT states; limit-censored | fault fired | false holds / holds |')
+        print('|' + '---|' * 15)
         for c in t['cells']:
+            fh = f"{c['falseHolds']}/{c['holdDecisions']} ({c['holdEpisodes']} ep)" if c['holdEpisodes'] else 'n/a'
             dec = f"{c['correctDecisions']}/{c['decisionsScored']} ({c['correctDecisionRate']})" if c['decisionsScored'] else 'n/a'
             uns = f"{c['unsafeEpisodes']}/{c['n']}" + (' (' + ', '.join(f'{k} {v}' for k, v in sorted(c['unsafe'].items())) + ')' if c['unsafe'] else '')
             ch = f"{c['conditionalHarm']} ({c['faultFired']} fired)" if c['conditionalHarm'] is not None else 'n/a (fault never fired)'
@@ -179,7 +190,7 @@ def main(args):
                   if c['expectedHarmPerSale'] else '')
             print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {ch} | {ex} | {dist(c['metricSummaries']['comparableIVL_X'])} | {dist(c['metricSummaries']['BDT_s'])} | "
                   f"{dist(c['metricSummaries']['PAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} | "
-                  f"{','.join(f'{k}={v}' for k,v in c['bdtStatusCounts'].items()) or 'n/a'}; {c['censoredByLimit']} | {c['faultFiredEpisodes']}/{c['n']} |")
+                  f"{','.join(f'{k}={v}' for k,v in c['bdtStatusCounts'].items()) or 'n/a'}; {c['censoredByLimit']} | {c['faultFiredEpisodes']}/{c['n']} | {fh} |")
     print('\nExpected harm = natural rate x conditional harm, per sale; blank where no rate is measured (sale_dropped, receipt_hidden, '
           'rpc_stale, compound faults). Depth-1 reorg rate per block: 0.059% (Merge to Aug 2023) to 0.27% (post-Dencun), from '
           + ' and '.join(RATE_SOURCES) + '. For the two reorg cells separately it is an upper bound (re-inclusion share unmeasured).')
