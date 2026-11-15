@@ -595,6 +595,7 @@ async function runWalletRouter(
           error: routed.error,
           detail: routed.detail,
           candidates: routed.candidates,
+          ...(routed.evidence ? { evidence: routed.evidence } : {}),
         },
   );
 

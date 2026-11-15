@@ -185,6 +185,8 @@ export type WalletRouterErrorCode =
   | "AMBIGUOUS_CHAIN"
   | "DRY_RUN_UNSUPPORTED"
   | "SIMULATION_UNSUPPORTED"
+  | "EVIDENCE_PENDING"
+  | "EVIDENCE_UNRESOLVED"
   | "EXECUTION_FAILED";
 
 export interface WalletRouterFailure {
@@ -192,6 +194,8 @@ export interface WalletRouterFailure {
   readonly error: WalletRouterErrorCode;
   readonly detail: string;
   readonly candidates?: readonly WalletChainHandlerMetadata[];
+  /** Sanitized, typed chain evidence; never arbitrary provider error data. */
+  readonly evidence?: Readonly<Record<string, unknown>>;
 }
 
 export interface WalletRouterSuccess {
