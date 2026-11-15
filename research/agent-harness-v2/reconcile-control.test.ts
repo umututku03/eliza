@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { reconcileControlSale } from "./reconcile-control";
+import { mayRestoreQueuedApproval } from "./control-child-v2";
 
 // Recorded control-random-s19: drop, followed by critical stale=200000ms. The stock receipt wait
 // returns at ~60s both times; the re-send really mined, but its balance remains stale after that wait.
@@ -58,3 +59,45 @@ test("negative: still absent after the bounded retry is a failure, never complet
   expect(f.state().sends).toBe(1);
   expect(f.state().reports).toBe(0);
 });
+
+// A1 reference failure captured in results-g1-a1-nextsend-before-1115: successful approval,
+// next-send reorg, then its signed nonce+1 swap is queued while the approval effect disappears.
+type ApprovalEvidence = Parameters<typeof mayRestoreQueuedApproval>[0];
+function queuedApprovalEvidence(): ApprovalEvidence {
+  return {
+    approvalNonce: 0, canonicalNonce: 0,
+    approvalAnchor: { number: 101n, hash: "0xold" },
+    canonicalAnchor: { number: 101n, hash: "0xnew" },
+    approvalReceiptPresent: false, allowance: 0n, amount: 50n, y: 0n, goal: 45n,
+    sender: "0xsender", spender: "0xrouter", swapHash: "0xswap", swapData: "0xdata",
+    queuedSwap: { hash: "0xswap", nonce: 1, from: "0xsender", to: "0xrouter", input: "0xdata", value: 0n,
+      blockNumber: null, blockHash: null },
+  };
+}
+test("A1 recorded next-send failure permits only proof-backed restoration of the original approval nonce", () => {
+  expect(mayRestoreQueuedApproval(queuedApprovalEvidence())).toBe(true);
+});
+const unsafeApprovalRecovery: [string, (e: ApprovalEvidence) => void][] = [
+  ["missing original anchor", (e) => { e.approvalAnchor = null; }],
+  ["missing canonical block", (e) => { e.canonicalAnchor = null; }],
+  ["original block is still canonical", (e) => { e.canonicalAnchor!.hash = "0xold"; }],
+  ["block is at another height", (e) => { e.canonicalAnchor!.number = 102n; }],
+  ["approval receipt still exists", (e) => { e.approvalReceiptPresent = true; }],
+  ["approval nonce already consumed", (e) => { e.canonicalNonce = 1; }],
+  ["allowance is already sufficient", (e) => { e.allowance = e.amount; }],
+  ["goal already reached", (e) => { e.y = e.goal; }],
+  ["queued transaction is unknown", (e) => { e.queuedSwap = null; }],
+  ["queued transaction already mined", (e) => { e.queuedSwap!.blockNumber = 102n; e.queuedSwap!.blockHash = "0xnew"; }],
+  ["queued nonce does not directly follow approval", (e) => { e.queuedSwap!.nonce = 2; }],
+  ["unrelated transaction hash", (e) => { e.queuedSwap!.hash = "0xother"; }],
+  ["another sender", (e) => { e.queuedSwap!.from = "0xother"; }],
+  ["another spender", (e) => { e.queuedSwap!.to = "0xother"; }],
+  ["different swap calldata", (e) => { e.queuedSwap!.input = "0xother"; }],
+  ["unexpected native value", (e) => { e.queuedSwap!.value = 1n; }],
+];
+for (const [name, tamper] of unsafeApprovalRecovery) {
+  test(`A1 negative: ${name} refuses approval restoration`, () => {
+    const e = queuedApprovalEvidence(); tamper(e);
+    expect(mayRestoreQueuedApproval(e)).toBe(false);
+  });
+}

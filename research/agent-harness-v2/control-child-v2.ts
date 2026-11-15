@@ -13,6 +13,36 @@ import {
 } from "viem";
 import { mainnet } from "viem/chains";
 
+/** Positive evidence required before restoring a queued swap's orphaned approval nonce. */
+export function mayRestoreQueuedApproval(e: {
+  approvalNonce: number;
+  canonicalNonce: number;
+  approvalAnchor: { number: bigint; hash: string } | null;
+  canonicalAnchor: { number: bigint | null; hash: string | null } | null;
+  approvalReceiptPresent: boolean;
+  allowance: bigint;
+  amount: bigint;
+  y: bigint;
+  goal: bigint;
+  sender: string;
+  spender: string;
+  swapHash: string;
+  swapData: string;
+  queuedSwap: { hash: string; nonce: number; from: string; to: string | null; input: string; value: bigint;
+    blockNumber: bigint | null; blockHash: string | null } | null;
+}): boolean {
+  const old = e.approvalAnchor, block = e.canonicalAnchor, tx = e.queuedSwap;
+  return !!(old && block && tx && Number.isSafeInteger(e.approvalNonce) && e.approvalNonce >= 0 &&
+    block.number === old.number && block.hash && block.hash !== old.hash && !e.approvalReceiptPresent &&
+    e.canonicalNonce === e.approvalNonce && e.allowance < e.amount && e.y < e.goal &&
+    tx.blockNumber === null && tx.blockHash === null && tx.nonce === e.approvalNonce + 1 &&
+    tx.hash.toLowerCase() === e.swapHash.toLowerCase() && tx.from.toLowerCase() === e.sender.toLowerCase() &&
+    tx.to?.toLowerCase() === e.spender.toLowerCase() && tx.input.toLowerCase() === e.swapData.toLowerCase() && tx.value === 0n);
+}
+
+// Importing the pure recovery predicate in unit tests must not execute a control or read a spec.
+if (import.meta.main) await controlMain();
+async function controlMain() {
 // The reference is conventional reconciliation in every off-chain treatment arm.
 // On-chain plan/checkpoint conditions still apply via the spec's wallet configuration.
 // Otherwise a conservative treatment failure aborts its own reference before it can be measured.
@@ -92,12 +122,54 @@ async function workflowControl() {
       const amount = BigInt(spec.swapXUnits), spender = spec.spender as Address, path = [X.address, spec.weth, Y.address] as Address[];
       const goal = parseUnits(spec.goalY, Y.decimals);
       const approveAndSwap = async () => {
+        const approvalData = encodeFunctionData({ abi: ERC20, functionName: "approve", args: [spender, amount] });
+        let approvalHash: `0x${string}` | null = null;
         const before = await critical("approval",
-          () => send(X.address, encodeFunctionData({ abi: ERC20, functionName: "approve", args: [spender, amount] }), 0n, 100000n),
+          async () => { approvalHash = await send(X.address, approvalData, 0n, 100000n); return approvalHash; },
           async () => (await allowance(spender)) >= amount);
+        const approvalReceipt = await pub.getTransactionReceipt({ hash: approvalHash! }).catch((e) => {
+          if (e.name === "TransactionReceiptNotFoundError") return null;
+          throw e;
+        });
+        const oldBlock = approvalReceipt ? await pub.getBlock({ blockNumber: approvalReceipt.blockNumber }) : null;
+        const anchor = approvalReceipt?.status === "success" && oldBlock?.hash === approvalReceipt.blockHash
+          ? { number: approvalReceipt.blockNumber, hash: approvalReceipt.blockHash } : null;
         const minOut = (await quote(pub, amount, path)) * 97n / 100n;
-        await mustMine("swap", await send(spender, encodeFunctionData({ abi: ROUTER, functionName: "swapExactTokensForTokens",
-          args: [amount, minOut, path, W, await deadline()] })));
+        const swapData = encodeFunctionData({ abi: ROUTER, functionName: "swapExactTokensForTokens",
+          args: [amount, minOut, path, W, await deadline()] });
+        const swapHash = await send(spender, swapData);
+        const swapReceipt = await receipt(swapHash, 60);
+        steps.push({ swap: swapHash, status: swapReceipt?.status ?? "no_receipt", afterSeconds: elapsed() });
+        if (swapReceipt?.status !== "success") {
+          const yNow = await balance(pub, Y.address, W);
+          if (yNow >= goal) {
+            steps.push({ reconciled: "swap goal visible; no resend", afterSeconds: elapsed() });
+            return before;
+          }
+          // A next-send reorg can orphan the approval while forwarding its already-signed nonce+1 swap.
+          // Restore only that original approval nonce on positive orphan/queued-transaction evidence, then
+          // wait for the ORIGINAL swap hash. Never send a second swap just because its receipt is absent.
+          if (!(reorgs && spec.reorgTrigger === "next-send" && anchor)) throw new Error("swap did not succeed");
+          const [canonicalAnchor, canonicalNonce, left, oldReceipt, queuedSwap] = await Promise.all([
+            pub.getBlock({ blockNumber: anchor.number }), nonce(), allowance(spender),
+            pub.getTransactionReceipt({ hash: approvalHash! }).catch((e) => {
+              if (e.name === "TransactionReceiptNotFoundError") return null;
+              throw e;
+            }),
+            pub.getTransaction({ hash: swapHash }).catch((e) => {
+              if (e.name === "TransactionNotFoundError") return null;
+              throw e;
+            }),
+          ]);
+          if (!mayRestoreQueuedApproval({ approvalNonce: before, canonicalNonce, approvalAnchor: anchor,
+            canonicalAnchor, approvalReceiptPresent: oldReceipt !== null, allowance: left, amount, y: yNow, goal,
+            sender: spec.sender, spender, swapHash, swapData, queuedSwap }))
+            throw new Error("Queued swap lacks safe approval-recovery evidence");
+          const restored = await signer.sendTransaction({ to: X.address, data: approvalData, value: 0n, gas: 100000n, nonce: before } as any);
+          steps.push({ restored_approval_nonce: before, approval: restored, queuedSwap: swapHash, afterSeconds: elapsed() });
+          await mustMine("approval_restored_after_reorg", restored);
+          await mustMine("original_swap_after_approval_restore", swapHash);
+        }
         return before;
       };
       const before = await approveAndSwap();
@@ -439,3 +511,5 @@ writeFileSync(
 );
 await runtime.stop?.().catch(() => {});
 process.exit(0);
+
+}
