@@ -188,18 +188,21 @@ try {
   };
   await sell();
   await reconcile();
-  // Fixed wait only for the predeclared emulated-reorg control: confirmation must precede orphaning.
-  if (spec.scenario === "sale_reorged") await Bun.sleep(25_000);
+  // Wait only for the predeclared emulated-reorg controls: confirmation must precede orphaning (reorg delay + 5 s).
+  const reorgs = ["sale_reorged", "dropped_then_reorg"].includes(spec.scenario);
+  if (reorgs) await Bun.sleep((spec.reorgDelayMs ?? 20_000) + 5_000);
+  let resentAfterReorg = false;
   if (!(await visible())) {
     if (
-      !resent &&
+      reorgs &&
+      !resentAfterReorg &&
       (await missing()) &&
       (await pub.getTransactionCount({
         address: spec.sender,
         blockTag: "latest",
       })) === beforeNonce
     ) {
-      resent = true;
+      resentAfterReorg = true;
       steps.push({ resent_after_reorg: true, afterSeconds: elapsed() });
       await sell();
       await reconcile();

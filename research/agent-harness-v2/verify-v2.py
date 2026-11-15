@@ -188,18 +188,20 @@ def audit(folder):
         state = ep.get('faultState') or {}
         candidates = [j for j in sends if j.get('candidate')]
         comp = COMPONENTS.get(s, set())
-        if 'drop' in comp:
+        # A fault arms only on the agent's own action (a sale candidate, a mined sale, a served receipt). A live agent
+        # that never gets there leaves the fault unfired: that episode is scored as it is, not rejected.
+        if 'drop' in comp and candidates:
             need(len(dropped) == 1 and candidates and dropped[0]['hash'] == candidates[0]['hash'], 'dropped first candidate', eid)
             need([j['hash'] for j in sends if j.get('dropped')] == [dropped[0]['hash']] and state.get('dropped') == dropped[0], 'dropped send state', eid)
             need(all(dropped[0].get(k) == candidates[0].get(k) for k in ('from', 'to', 'value')), 'dropped transaction fields', eid)
         else: need(not dropped and not any(j.get('dropped') for j in sends), 'unexpected dropped send', eid)
-        if 'stale' in comp:
+        if 'stale' in comp and flagged:
             need(len(flagged) == 1 and stale and state.get('lagBlock') == flagged[0]['saleBlock'] - 1, 'stale window not armed', eid)
             need(all(j['servedBlock'] == state['lagBlock'] and flagged[0]['at'] <= j['at'] <= state['lagUntil'] for j in stale), 'stale served block/window', eid)
             need(fp['lagMs'] <= state['lagUntil'] - flagged[0]['at'] <= fp['lagMs'] + WINDOW_SLACK_MS, 'fault window differs from the recorded parameter', eid, 'lagMs')
         else: need(not stale, 'unexpected stale read', eid)
         # dropped_then_reorg: the reorg arms only on a confirmed re-send, which an agent may never make.
-        if 'reorg' in comp and (s == 'sale_reorged' or reorgs or state.get('reorg') is not None):
+        if 'reorg' in comp and (reorgs or state.get('reorg') is not None):
             need(len(reorgs) == 1 and len(flagged) == 1, 'reorg event or first mined sale missing', eid)
             rg = reorgs[0]
             need(rg['saleHash'] == flagged[0]['hash'] and rg['saleBlock'] == flagged[0]['saleBlock'] and rg['depth'] == rg['oldHead'] - rg['saleBlock'] + 1 >= 1, 'reorg first sale/depth', eid)

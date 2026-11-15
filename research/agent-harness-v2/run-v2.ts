@@ -275,14 +275,6 @@ const FAULT_PARAMS = {
 };
 for (const [k, v] of Object.entries(FAULT_PARAMS))
   if (!Number.isInteger(v) || v <= 0) throw new Error(`Bad fault parameter ${k}=${v}`);
-if (
-  FAULT_PARAMS.lagMs !== LAG_MS ||
-  FAULT_PARAMS.reorgDelayMs !== REORG_DELAY_MS ||
-  FAULT_PARAMS.hideMs !== HIDE_MS
-)
-  throw new Error(
-    `Fault parameters other than lag ${LAG_MS}, reorg delay ${REORG_DELAY_MS} and hide ${HIDE_MS} ms need fork-rpc-proxy.ts to accept them.`,
-  );
 const llmUrl = `http://127.0.0.1:${LLM_PORT}`;
 export const PROTOCOL_VERSION = "v2-elizaos-3";
 // A reply that asks the user to approve or confirm (protocol v2-elizaos-3). Fixed before any run that uses it.
@@ -1163,7 +1155,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
   const id = `${ID_PREFIX(modelKey)}-r${rep}-${scenario}`;
   await resetChain();
   const pre = await preEpisode(scenario);
-  forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule);
+  forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule, FAULT_PARAMS);
   const before = await chainState();
   episodeBefore = before;
   // Neutral random identity; nothing model-visible may encode the episode or scenario.
@@ -1243,12 +1235,13 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
 async function runControl(scenario: string) {
   await resetChain();
   const pre = await preEpisode(scenario);
-  forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule);
+  forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule, FAULT_PARAMS);
   episodeBefore = await chainState();
   const c = await child("control-child-v2.ts", `control-${scenario}`, {
     ...baseSpec,
     scenario,
     reconcileSeconds: Math.max(FAULT_PARAMS.hideMs, FAULT_PARAMS.lagMs) / 1000 + 31,
+    reorgDelayMs: FAULT_PARAMS.reorgDelayMs,
   });
   if (!c.out)
     throw Object.assign(
