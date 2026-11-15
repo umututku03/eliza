@@ -8,6 +8,13 @@
 // native value (v2: any amount, since risk clamps can shrink the 0.1 ETH sale); faults follow that confirmed effect.
 // ElizaOS v2 harness change: reset() takes an optional sale-candidate rule, so plan-guard runs, where the sale is
 // a DelegationManager redemption that executes the router call, use the same fault trigger.
+// WS-R (fault realism): FaultParams.reorgTrigger selects when the emulated reorg fires. "delay" (default, the original
+// behaviour) fires on the first proxied call at least reorgDelayMs after the sale receipt was served. "next-send" fires
+// immediately before forwarding the agent's next eth_sendRawTransaction once reorgDelayMs has passed since the receipt
+// was served; a send that arrives earlier is accepted at once (its hash is returned, as a node does for a pooled
+// transaction) and forwarded when the floor is reached, right after the reorg. sale_reorged_reincluded is the same
+// reorg, after which the proxy re-submits the orphaned transactions' original raw bytes upstream, so the sale re-mines
+// in a later block with the same hash (an orphaned transaction returning from the mempool).
 import {
   type Hex,
   keccak256,
@@ -19,6 +26,9 @@ export const HIDE_MS = 200_000; // beyond viem's 180 s default waitForTransactio
 
 export const LAG_MS = 200_000;
 export const REORG_DELAY_MS = 20_000;
+export type ReorgTrigger = "delay" | "next-send";
+export const REORG_TRIGGER: ReorgTrigger = "delay";
+const REORG_KINDS = ["sale_reorged", "sale_reorged_reincluded"];
 export type Fault = {
   kind:
     | "none"
@@ -26,11 +36,23 @@ export type Fault = {
     | "price_move"
     | "sale_dropped"
     | "rpc_stale"
-    | "sale_reorged";
+    | "sale_reorged"
+    | "sale_reorged_reincluded";
   xBalance?: { token: string; wallet: string };
   onSaleMined?: () => Promise<any>;
 };
-export type FaultParams = { lagMs: number; reorgDelayMs: number; hideMs: number };
+export type FaultParams = {
+  lagMs: number;
+  reorgDelayMs: number;
+  hideMs: number;
+  reorgTrigger: ReorgTrigger;
+};
+const DEFAULT_PARAMS: FaultParams = {
+  lagMs: LAG_MS,
+  reorgDelayMs: REORG_DELAY_MS,
+  hideMs: HIDE_MS,
+  reorgTrigger: REORG_TRIGGER,
+};
 export type SaleCandidate = (tx: {
   from: string;
   to: string;
@@ -59,7 +81,9 @@ export class ForkRpcProxy {
   private receiptServedAt = 0;
   private reorg: any = null;
   private queue: Promise<unknown> = Promise.resolve();
-  private params: FaultParams = { lagMs: LAG_MS, reorgDelayMs: REORG_DELAY_MS, hideMs: HIDE_MS };
+  private deferred: Promise<unknown> = Promise.resolve();
+  private raw = new Map<string, Hex>(); // forwarded raw transactions by hash (re-inclusion after a reorg)
+  private params: FaultParams = { ...DEFAULT_PARAMS };
 
   constructor(
     public anvilUrl: string,
@@ -77,7 +101,7 @@ export class ForkRpcProxy {
     saleCandidate?: SaleCandidate,
     params?: Partial<FaultParams>,
   ) {
-    this.params = { lagMs: LAG_MS, reorgDelayMs: REORG_DELAY_MS, hideMs: HIDE_MS, ...(params ?? {}) };
+    this.params = { ...DEFAULT_PARAMS, ...(params ?? {}) };
     this.wallet = wallet.toLowerCase();
     this.router = router.toLowerCase();
     this.fault = fault;
@@ -96,6 +120,18 @@ export class ForkRpcProxy {
     this.receiptServedAt = 0;
     this.reorg = null;
     this.queue = Promise.resolve();
+    this.deferred = Promise.resolve();
+    this.raw = new Map();
+  }
+
+  /** Resolves once every deferred send (next-send trigger) has been forwarded and recorded. */
+  async settle() {
+    await this.deferred.catch(() => {});
+    await this.queue.catch(() => {});
+  }
+
+  private get reorgKind() {
+    return REORG_KINDS.includes(this.fault.kind);
   }
 
   state() {
@@ -146,12 +182,14 @@ export class ForkRpcProxy {
     ]);
   }
 
-  private async maybeReorg() {
+  private async maybeReorg(call: any) {
     if (
-      this.fault.kind !== "sale_reorged" ||
+      !this.reorgKind ||
       this.reorg ||
       !this.receiptServedAt ||
-      Date.now() < this.receiptServedAt + this.params.reorgDelayMs
+      Date.now() < this.receiptServedAt + this.params.reorgDelayMs ||
+      (this.params.reorgTrigger === "next-send" &&
+        call.method !== "eth_sendRawTransaction")
     )
       return;
     const h = Number(await this.rpc("eth_blockNumber"));
@@ -176,6 +214,7 @@ export class ForkRpcProxy {
     ]);
     const pool = await this.rpc("txpool_status");
     const restoredX = await this.xBalance();
+    const restoredHead = Number(await this.rpc("eth_blockNumber"));
     if (
       receipt !== null ||
       block.hash === this.oldSaleBlockHash ||
@@ -184,10 +223,44 @@ export class ForkRpcProxy {
       BigInt(restoredX) !== BigInt(this.preSaleX!)
     )
       throw new Error("Emulated reorg verification failed");
+    // Re-inclusion: every orphaned transaction returns from the mempool, in its original order, so the sale (and any
+    // later orphan) re-mines with the same hash in a block after the replacement blocks.
+    let reincluded: any = null;
+    const reincludedOthers: any[] = [];
+    if (this.fault.kind === "sale_reorged_reincluded") {
+      for (const orphan of droppedHashes) {
+        const raw = this.raw.get(orphan);
+        if (!raw) throw new Error(`No raw transaction to re-include for ${orphan}`);
+        const sent: any = await this.upstream({
+          jsonrpc: "2.0",
+          id: ++this.id,
+          method: "eth_sendRawTransaction",
+          params: [raw],
+        });
+        let r: any = null;
+        for (let i = 0; i < 200 && !r; i++) {
+          r = await this.rpc("eth_getTransactionReceipt", [orphan]);
+          if (!r) await Bun.sleep(50);
+        }
+        const rec = {
+          hash: orphan,
+          block: r ? Number(r.blockNumber) : null,
+          status: r?.status ?? null,
+          blockHash: r?.blockHash ?? null,
+          error: sent?.error ?? null,
+        };
+        if (orphan === this.saleHash) reincluded = rec;
+        else reincludedOthers.push(rec);
+      }
+      if (!reincluded || reincluded.status !== "0x1")
+        throw new Error("Re-inclusion of the orphaned sale failed");
+    }
     this.reorg = {
       at: Date.now(),
       event: "chain_reorg",
       method: "snapshot_revert",
+      trigger: this.params.reorgTrigger,
+      triggerMethod: call.method,
       depth,
       oldHead: h,
       saleBlock: this.saleBlock,
@@ -199,8 +272,11 @@ export class ForkRpcProxy {
       preSaleX: this.preSaleX,
       restoredX,
       pool,
-      restoredHead: Number(await this.rpc("eth_blockNumber")),
+      restoredHead,
       receiptServedAt: this.receiptServedAt,
+      ...(this.fault.kind === "sale_reorged_reincluded"
+        ? { reincluded, reincludedOthers }
+        : {}),
     };
     this.journal.push(this.reorg);
   }
@@ -275,7 +351,7 @@ export class ForkRpcProxy {
       });
     const result: any = await this.upstream(request);
     if (
-      this.fault.kind === "sale_reorged" &&
+      this.reorgKind &&
       !this.receiptServedAt &&
       call.method === "eth_getTransactionReceipt" &&
       String(call.params?.[0]).toLowerCase() === this.saleHash &&
@@ -286,7 +362,7 @@ export class ForkRpcProxy {
   }
 
   private async handle(call: any) {
-    await this.maybeReorg();
+    await this.maybeReorg(call);
     if (
       call.method === "eth_getTransactionReceipt" &&
       this.saleHash &&
@@ -345,12 +421,14 @@ export class ForkRpcProxy {
       );
       return { jsonrpc: "2.0", id: call.id, result: hash };
     }
-    if (candidate && this.fault.kind === "sale_reorged" && !this.preSaleSnap) {
+    if (candidate && this.reorgKind && !this.preSaleSnap) {
       this.preSaleX = await this.xBalance();
       this.preSaleSnap = await this.rpc("evm_snapshot");
     }
-    const result = await this.upstream(call);
+    const { deferredFrom: _, ...request } = call;
+    const result = await this.upstream(request);
     const hash = result?.result as string | undefined;
+    if (hash && this.reorgKind) this.raw.set(hash.toLowerCase(), rawTx);
     const entry: any = {
       at: Date.now(),
       event: "send",
@@ -361,6 +439,7 @@ export class ForkRpcProxy {
       candidate,
       hash: hash?.toLowerCase() ?? null,
       error: result?.error ?? null,
+      ...(call.deferredFrom ? { deferredFrom: call.deferredFrom } : {}),
     };
     this.journal.push(entry);
     let mined: any = null;
@@ -417,16 +496,47 @@ export class ForkRpcProxy {
       fetch: async (req) => {
         const payload = await req.json();
         // Serialize new-fault calls, including batch members, so snapshots and one-shot triggers cannot race.
-        const dispatch = (c: any) => {
-          if (
-            !["sale_dropped", "rpc_stale", "sale_reorged"].includes(
-              this.fault.kind,
-            )
-          )
-            return this.handle(c);
+        const enqueue = (c: any) => {
           const result = this.queue.then(() => this.handle(c));
           this.queue = result.catch(() => {});
           return result;
+        };
+        const dispatch = (c: any) => {
+          if (
+            ![
+              "sale_dropped",
+              "rpc_stale",
+              "sale_reorged",
+              "sale_reorged_reincluded",
+            ].includes(this.fault.kind)
+          )
+            return this.handle(c);
+          // next-send trigger: a send that arrives after the sale receipt was served but before the floor is pooled:
+          // its hash is returned now and it is forwarded (in arrival order) at the floor, after the reorg it triggers.
+          const floor = this.receiptServedAt + this.params.reorgDelayMs;
+          if (
+            this.reorgKind &&
+            this.params.reorgTrigger === "next-send" &&
+            c?.method === "eth_sendRawTransaction" &&
+            this.receiptServedAt &&
+            !this.reorg &&
+            Date.now() < floor
+          ) {
+            const hash = keccak256(c.params[0] as Hex).toLowerCase();
+            const note = {
+              at: Date.now(),
+              event: "deferred_send",
+              hash,
+              forwardAt: floor,
+            };
+            this.journal.push(note);
+            this.deferred = this.deferred.then(async () => {
+              if (floor > Date.now()) await Bun.sleep(floor - Date.now());
+              await enqueue({ ...c, deferredFrom: note.at }).catch(() => {});
+            });
+            return Promise.resolve({ jsonrpc: "2.0", id: c.id, result: hash });
+          }
+          return enqueue(c);
         };
         const out = Array.isArray(payload)
           ? await Promise.all(payload.map(dispatch))

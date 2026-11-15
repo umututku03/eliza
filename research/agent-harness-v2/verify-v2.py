@@ -13,14 +13,20 @@ from decimal import Decimal
 import json, hashlib, re, sys
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent.parent
-SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible', 'pre_sale_shortfall', 'prefunded', 'price_worse', 'sale_dropped', 'rpc_stale', 'sale_reorged', 'stale_then_price', 'dropped_then_reorg']
+SCENARIOS = ['normal', 'receipt_hidden', 'price_change_feasible', 'price_change_infeasible', 'pre_sale_shortfall', 'prefunded', 'price_worse', 'sale_dropped', 'rpc_stale', 'sale_reorged', 'stale_then_price', 'dropped_then_reorg', 'sale_reorged_reincluded']
 CHAIN_FAULTS = ['sale_dropped', 'rpc_stale', 'sale_reorged']
 COMPOUND_FAULTS = ['stale_then_price', 'dropped_then_reorg']
+# Realism variants (after the compound faults): the same emulated reorg, then the orphaned transactions are re-submitted
+# and re-mine with the same hashes (the sale landed; re-sending is wrong).
+REALISM_FAULTS = ['sale_reorged_reincluded']
 # Proxy faults each scenario applies; compound scenarios also fix the order of their events (checked per episode).
 COMPONENTS = {'sale_dropped': {'drop'}, 'rpc_stale': {'stale'}, 'sale_reorged': {'reorg'},
-              'stale_then_price': {'stale', 'move'}, 'dropped_then_reorg': {'drop', 'reorg'}}
+              'stale_then_price': {'stale', 'move'}, 'dropped_then_reorg': {'drop', 'reorg'}, 'sale_reorged_reincluded': {'reorg', 'reinclude'}}
 # Fault parameters (fork-rpc-proxy.ts constants); a manifest without faultParams ran with these.
-DEFAULT_FAULT_PARAMS = {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000}
+# reorgTrigger: 'delay' fires on the first call reorgDelayMs after the receipt was served; 'next-send' immediately before the
+# agent's next transaction send after that floor (earlier sends are deferred to the floor and recorded as deferred_send).
+DEFAULT_FAULT_PARAMS = {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000, 'reorgTrigger': 'delay'}
+REORG_TRIGGERS = ('delay', 'next-send')
 WINDOW_SLACK_MS = 15000   # the proxy arms a window after polling the sale's receipt (up to 10 s) once the send returns
 DISTINGUISHING = ['pre_sale_shortfall', 'prefunded', 'price_worse']
 # Controls each layer is predeclared to refuse (live-distinguish protocol); every other control must succeed.
@@ -33,7 +39,7 @@ AGENT2_TOOLS = ['get_balances', 'quote_swap', 'swap', 'tx_status']
 MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False,
             'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True, 'sale_dropped': True, 'rpc_stale': True, 'sale_reorged': True,
-            'stale_then_price': True, 'dropped_then_reorg': True}
+            'stale_then_price': True, 'dropped_then_reorg': True, 'sale_reorged_reincluded': True}
 PRICES = {'gpt-6-luna': (0.10, 0.50, 1.25), 'gpt-6.1-sol': (2, 10, 1.25), 'claude-haiku-5-5': (0.10, 0.50, 1), 'claude-opus-5-5': (4, 20, 1),
           'gpt-4.1-mini': (0.40, 1.60, 1), 'claude-sonnet-5-5': (2, 10, 1)}
 SOURCE_TREES = {'core': 'packages/core/src', 'assistant': 'plugins/plugin-assistant/src', 'wallet': 'plugins/plugin-wallet/src',
@@ -91,7 +97,8 @@ def audit(folder):
              and frozen['budgetXUnits'] == legacy['budgetUsdcUnits'] and frozen['moves'] == legacy['moves'], 'frozen task differs')
     X, Y = frozen['x'], frozen['y']
     fp = {**DEFAULT_FAULT_PARAMS, **(m.get('faultParams') or {})}
-    need(set(fp) == set(DEFAULT_FAULT_PARAMS) and all(isinstance(v, int) and v > 0 for v in fp.values()), 'fault parameters')
+    need(set(fp) == set(DEFAULT_FAULT_PARAMS) and all(isinstance(v, int) and v > 0 for k, v in fp.items() if k != 'reorgTrigger')
+         and fp['reorgTrigger'] in REORG_TRIGGERS, 'fault parameters')
     sale_wei = units(frozen['saleEth'], 18)
     for k, rel in SOURCE_TREES.items(): need(tree_digest(REPO / rel) == m['sourceTrees'][k], 'executed source tree differs from this checkout', k)
     need(sha(REPO / 'bun.lock') == m['bunLockSha256'], 'bun.lock differs')
@@ -150,6 +157,8 @@ def audit(folder):
     if any(s in CHAIN_FAULTS + COMPOUND_FAULTS for s in scenarios):
         need(set(CHAIN_FAULTS + ['chain_reorg', 'stale_read', 'dropped_send']) <= set(labels), 'chain fault blinding labels missing')
     if any(s in COMPOUND_FAULTS for s in scenarios): need(set(COMPOUND_FAULTS) <= set(labels), 'compound fault blinding labels missing')
+    if any(s in REALISM_FAULTS for s in scenarios):
+        need(set(REALISM_FAULTS + CHAIN_FAULTS + ['chain_reorg', 'deferred_send']) <= set(labels), 'realism fault blinding labels missing')
     for e in ledger:
         if e['status'] == 'local_embedding': local_embeddings += 1; continue
         if e['status'] == 'refused_outside_turn': refused_outside += 1; continue
@@ -213,6 +222,7 @@ def audit(folder):
         dropped = [j for j in journal if j.get('event') == 'dropped_send']
         stale = [j for j in journal if j.get('event') == 'stale_read']
         reorgs = [j for j in journal if j.get('event') == 'chain_reorg']
+        deferred = [j for j in journal if j.get('event') == 'deferred_send']
         state = ep.get('faultState') or {}
         candidates = [j for j in sends if j.get('candidate')]
         comp = COMPONENTS.get(s, set())
@@ -237,8 +247,36 @@ def audit(folder):
             need(rg['saleHash'] in rg['droppedHashes'] and set(rg['droppedHashes']) <= {j['hash'] for j in sends if j.get('hash')}, 'reorg orphan hashes', eid)
             need(rg['receipt'] is None and int(rg['preSaleX'], 16) == int(rg['restoredX'], 16) and int(rg['pool']['pending'], 16) == int(rg['pool']['queued'], 16) == 0 and rg['restoredHead'] == rg['oldHead'], 'reorg restoration checks', eid)
             need(rg['receiptServedAt'] > 0 and rg['at'] >= rg['receiptServedAt'] + fp['reorgDelayMs'] and state.get('reorg') == rg, 'reorg timing/state', eid)
+            # Trigger (a folder that predates the field ran with 'delay'). next-send: the reorg fired immediately before a
+            # send was forwarded (the next journal entry other than a deferral note is that send), and no send at or after
+            # the receipt was served was forwarded before it.
+            need(rg.get('trigger', 'delay') == fp['reorgTrigger'], 'reorg trigger differs from the recorded parameter', eid)
+            ri = journal.index(rg)
+            if fp['reorgTrigger'] == 'next-send':
+                after = [j for j in journal[ri + 1:] if j.get('event') != 'deferred_send']
+                need(rg.get('triggerMethod') == 'eth_sendRawTransaction' and after and after[0].get('event') == 'send', 'next-send reorg not followed by its send', eid)
+                need(all(i > ri for i, j in enumerate(journal) if j.get('event') == 'send' and j['at'] >= rg['receiptServedAt']), 'send forwarded before a next-send reorg', eid)
+            # Deferred sends (next-send only): accepted after the receipt was served and before the floor, then forwarded
+            # after the reorg, each by exactly one send entry.
+            floor = rg['receiptServedAt'] + fp['reorgDelayMs']
+            for d in deferred:
+                need(fp['reorgTrigger'] == 'next-send' and rg['receiptServedAt'] <= d['at'] < d['forwardAt'] == floor and journal.index(d) < ri, 'deferred send timing', eid)
+                fwd = [i for i, j in enumerate(journal) if j.get('event') == 'send' and j.get('deferredFrom') == d['at']]
+                need(len(fwd) == 1 and fwd[0] > ri and journal[fwd[0]]['at'] >= floor and (journal[fwd[0]]['hash'] == d['hash'] or journal[fwd[0]]['error']), 'deferred send not forwarded after the reorg', eid)
+            need(len({j['deferredFrom'] for j in sends if j.get('deferredFrom') is not None}) == len([j for j in sends if j.get('deferredFrom') is not None]) == len(deferred), 'forwarded sends without a deferral', eid)
+            if 'reinclude' in comp:
+                ri_sale = rg.get('reincluded') or {}
+                others = rg.get('reincludedOthers')
+                need(ri_sale.get('hash') == rg['saleHash'] and ri_sale.get('status') == '0x1' and isinstance(ri_sale.get('block'), int) and ri_sale['block'] > rg['restoredHead'] and isinstance(others, list), 'sale re-inclusion', eid)
+                back = [ri_sale, *others]
+                need(sorted(r['hash'] for r in back) == sorted(rg['droppedHashes']) and [r['hash'] for r in sorted(back, key=lambda r: rg['droppedHashes'].index(r['hash']))] == rg['droppedHashes'], 're-included orphans differ from the orphaned set', eid)
+                for r in back:
+                    t = next((t for t in o['transactions'] if t['hash'] == r['hash']), None)
+                    need(t is not None and t['status'] != 'not_canonical' and (r['status'] != '0x1' or t['block'] == r['block']), 're-included transaction not canonical in the recorded block', eid, r['hash'])
+            else: need('reincluded' not in rg and 'reincludedOthers' not in rg, 'unexpected re-inclusion', eid)
         else:
             need(not reorgs, 'unexpected chain reorg', eid)
+            need(not deferred and not any(j.get('deferredFrom') is not None for j in sends), 'unexpected deferred send', eid)
             need([j['hash'] for j in flagged] == ([first_sale['hash']] if first_sale else []), 'proxy sale flag differs from the first successful sale', eid)
         if s.startswith('price_change') and first_sale: need(len(moves) == 1 and moves[0]['result']['eth'] == frozen['moves'][s]['moverEthWei'], 'market move', eid)
         elif s == 'price_worse' and first_sale: need(len(moves) == 1 and moves[0]['result']['eth'] == dm['price_worse']['postSaleMoveEthWei'], 'market move', eid)
@@ -284,12 +322,15 @@ def audit(folder):
                 if st is not None: per_step[st] = per_step.get(st, 0) + 1
             need(all(v <= 1 for v in per_step.values()), 'more than one successful redemption of a plan step', eid, per_step)
         need({t['hash'] for t in txs} == {j['hash'] for j in sends if j.get('from') == m['sender'].lower() and j.get('hash')}, 'transactions vs journal', eid)
-        allowed_missing = {j['hash'] for j in dropped} | {h for j in reorgs for h in j['droppedHashes']}
+        allowed_missing = {j['hash'] for j in dropped} | {h for j in reorgs for h in j['droppedHashes'] if h not in
+                                                          {r['hash'] for r in [j.get('reincluded') or {}, *(j.get('reincludedOthers') or [])] if r}}
+        # A transaction forwarded after an emulated reorg can wait in the pool behind the nonce its orphan freed.
+        post_reorg = {j['hash'] for k, j in enumerate(journal) if j.get('event') == 'send' and j.get('hash') and reorgs and k > journal.index(reorgs[0])}
         need(len({t['hash'] for t in txs}) == len(txs), 'duplicate transaction records', eid)
         for t in txs:
             need(t['status'] in ('success', 'reverted', 'not_canonical'), 'transaction status', eid)
             if t['status'] == 'not_canonical':
-                need(t['hash'] in allowed_missing and t['block'] is None and t['revert'] is None and
+                need((t['hash'] in allowed_missing or (t.get('pooled') is True and t['hash'] in post_reorg)) and t['block'] is None and t['revert'] is None and
                      all(int(t['tokenDelta'][k]) == 0 for k in ('x', 'y')) and int(t['gasCostWei']) == int(t['holderEthDeltaWei']) == 0, 'noncanonical transaction effects/evidence', eid)
         # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
         b, f = o['before'], o['final']

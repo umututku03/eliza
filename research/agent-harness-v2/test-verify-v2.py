@@ -60,8 +60,22 @@ timed_ep = next((n for n in eps if any(j.get('hiddenUntil') or j.get('lagBlock')
 if timed_ep:
     def double_params(d):
         fp = d.get('faultParams') or {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000}
-        d['faultParams'] = {k: 2 * v for k, v in fp.items()}
+        d['faultParams'] = {k: (v if k == 'reorgTrigger' else 2 * v) for k, v in fp.items()}
     cases['fault parameter edited'] = lambda p: edit_json(p / 'manifest.json', double_params)
+# Reorg trigger: a folder whose reorg fired must reject the other trigger recorded in its manifest.
+reorg_ep = next((n for n in eps if any(j.get('event') == 'chain_reorg' for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
+if reorg_ep:
+    def flip_trigger(d):
+        fp = d.get('faultParams') or {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000}
+        d['faultParams'] = {**fp, 'reorgTrigger': 'delay' if fp.get('reorgTrigger') == 'next-send' else 'next-send'}
+    cases['reorg trigger edited'] = lambda p: edit_json(p / 'manifest.json', flip_trigger)
+# Re-inclusion: moving the sale's recorded re-inclusion block (journal and fault state alike) must be rejected.
+reincl_ep = next((n for n in eps if any(j.get('event') == 'chain_reorg' and j.get('reincluded') for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
+if reincl_ep:
+    def move_reinclusion(d):
+        for rg in [j for j in d['forkJournal'] if j.get('event') == 'chain_reorg'] + [d['faultState']['reorg']]:
+            rg['reincluded']['block'] += 1
+    cases['re-inclusion block forged'] = lambda p: edit_json(p / 'episodes' / f'{reincl_ep}.json', move_reinclusion)
 # Compound faults: moving the later component's event (market change or reorg) to the journal start must be rejected.
 compound_ep = next((n for n in eps if json.loads((src / 'episodes' / f'{n}.json').read_text())['scenario'] in ('stale_then_price', 'dropped_then_reorg')
     and any(j.get('event') in ('scheduled_market_change', 'chain_reorg') for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
