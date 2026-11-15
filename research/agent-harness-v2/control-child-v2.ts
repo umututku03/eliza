@@ -188,9 +188,33 @@ try {
   };
   await sell();
   await reconcile();
+  // Block of the confirmed sale as first seen (sale_reorged_reincluded: a later block means it was re-included).
+  const saleBlockNow = async () => {
+    try {
+      return Number((await pub.getTransactionReceipt({ hash: hash! })).blockNumber);
+    } catch (e) {
+      if ((e as Error).name === "TransactionReceiptNotFoundError") return null;
+      throw e;
+    }
+  };
+  const reincluded = spec.scenario === "sale_reorged_reincluded";
+  const seenBlock = reincluded ? await saleBlockNow() : null;
+  let observedReinclusion = false;
+  const observeReinclusion = async () => {
+    if (!reincluded || observedReinclusion) return;
+    const now = await saleBlockNow();
+    if (now !== null && seenBlock !== null && now !== seenBlock) {
+      observedReinclusion = true;
+      steps.push({ observed_reinclusion: { hash, fromBlock: seenBlock, toBlock: now }, afterSeconds: elapsed() });
+    }
+  };
   // Wait only for the predeclared emulated-reorg controls: confirmation must precede orphaning (reorg delay + 5 s).
-  const reorgs = ["sale_reorged", "dropped_then_reorg"].includes(spec.scenario);
+  // With --reorg-trigger=next-send the reorg fires at the control's next send (step 2) instead; the same wait keeps
+  // that send past the floor, so it is forwarded at once rather than deferred.
+  const reorgs = ["sale_reorged", "dropped_then_reorg", "sale_reorged_reincluded"].includes(spec.scenario);
   if (reorgs) await Bun.sleep((spec.reorgDelayMs ?? 20_000) + 5_000);
+  // Re-included sale: the correct client does not re-send; it sees the sale again (same hash, later block) and goes on.
+  await observeReinclusion();
   let resentAfterReorg = false;
   if (!(await visible())) {
     if (
@@ -215,31 +239,68 @@ try {
   // constraints; otherwise it tries the goal-reaching amount, which the layer is predeclared to refuse.
   const goal = parseUnits(spec.goalY, Y.decimals),
     budget = BigInt(spec.budgetXUnits);
-  const held = await balance(pub, X.address as Address, spec.wallet),
-    reserve = parseUnits(spec.reserveX, X.decimals);
-  const surplus = held > reserve ? held - reserve : 0n;
-  const budgetWithin =
-    budget <= surplus && (await quote(pub, budget, PATH)) >= goal;
-  const amount =
-    spec.condition === "checkpoint_approx" && budgetWithin
-      ? budget
-      : await minimalXFor(goal, surplus);
-  steps.push({
-    heldX: formatUnits(held, X.decimals),
-    surplusX: formatUnits(surplus, X.decimals),
-    budgetWithinConstraints: budgetWithin,
-    oracleStep2X: amount === null ? null : formatUnits(amount, X.decimals),
-  });
-  if (amount !== null) {
-    const swap = await confirmed({
-      action: "swap",
-      target: "mainnet",
-      fromToken: X.address,
-      toToken: Y.address,
-      amount: formatUnits(amount, X.decimals),
-      slippageBps: 300,
+  const stepTwo = async () => {
+    const held = await balance(pub, X.address as Address, spec.wallet),
+      reserve = parseUnits(spec.reserveX, X.decimals);
+    const surplus = held > reserve ? held - reserve : 0n;
+    const budgetWithin =
+      budget <= surplus && (await quote(pub, budget, PATH)) >= goal;
+    const amount =
+      spec.condition === "checkpoint_approx" && budgetWithin
+        ? budget
+        : await minimalXFor(goal, surplus);
+    steps.push({
+      heldX: formatUnits(held, X.decimals),
+      surplusX: formatUnits(surplus, X.decimals),
+      budgetWithinConstraints: budgetWithin,
+      oracleStep2X: amount === null ? null : formatUnits(amount, X.decimals),
     });
+    if (amount === null) return null;
+    let swap: any;
+    try {
+      swap = await confirmed({
+        action: "swap",
+        target: "mainnet",
+        fromToken: X.address,
+        toToken: Y.address,
+        amount: formatUnits(amount, X.decimals),
+        slippageBps: 300,
+      });
+    } catch (e) {
+      swap = { success: false, text: (e as Error).message };
+    }
     steps.push({ swap: brief(swap) });
+    return swap;
+  };
+  let swap = await stepTwo();
+  // next-send reorg (sale_reorged, dropped_then_reorg): step 2's first send triggered the reorg and, signed after the
+  // now-orphaned sale, waits in the pool behind the nonce the orphan freed. Re-send the sale once (only if it is gone
+  // and the sender's nonce is back to its pre-sale value); the stranded send then mines after it. Redo step 2 only if
+  // the goal is still unmet.
+  if (
+    swap &&
+    swap.success !== true &&
+    reorgs &&
+    !reincluded &&
+    spec.reorgTrigger === "next-send" &&
+    !resentAfterReorg &&
+    (await missing()) &&
+    (await pub.getTransactionCount({
+      address: spec.sender,
+      blockTag: "latest",
+    })) === beforeNonce
+  ) {
+    resentAfterReorg = true;
+    steps.push({ resent_after_reorg: true, stranded_follow_up: true, afterSeconds: elapsed() });
+    await sell();
+    await reconcile();
+    if ((await balance(pub, Y.address as Address, spec.wallet)) >= goal) {
+      steps.push({ step2_mined_after_resent_sale: true, afterSeconds: elapsed() });
+      swap = { success: true };
+    } else swap = await stepTwo();
+  }
+  await observeReinclusion();
+  if (swap) {
     if (swap?.success !== true) {
       refusal = `${brief(swap).error ?? ""} ${brief(swap).text}`.trim();
       throw new Error(`control step 2 failed: ${brief(swap).text}`);
