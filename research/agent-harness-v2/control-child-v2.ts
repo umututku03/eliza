@@ -421,6 +421,19 @@ try {
       swap = { success: true };
     } else swap = await stepTwo();
   }
+  // Random follow-up faults are only receipt hiding/stale reads, never drops or reorgs. After a failed
+  // tool result, wait out the predeclared window, then check the goal BEFORE any retry. A mined swap
+  // needs a truthful completion report; an approval-only attempt may still require the swap itself.
+  if (spec.reconcileFollowup && swap && swap.success !== true) {
+    await Bun.sleep(spec.reconcileSeconds * 1000);
+    if ((await balance(pub, Y.address as Address, spec.wallet)) >= goal) {
+      steps.push({ followup_reconciled: "goal visible after fault window", afterSeconds: elapsed() });
+      swap = { success: true };
+    } else {
+      steps.push({ followup_reconciled: "goal absent after fault window; retry step 2", afterSeconds: elapsed() });
+      swap = await stepTwo();
+    }
+  }
   await observeReinclusion();
   if (swap) {
     if (swap?.success !== true) {

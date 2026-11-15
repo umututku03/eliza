@@ -83,6 +83,8 @@ def fault_time(scenario, journal):
     if scenario in ('sale_dropped', 'dropped_then_reorg'): return first(lambda j: j.get('event') == 'dropped_send')
     if scenario in ('rpc_stale', 'stale_then_price'): return first(lambda j: j.get('event') == 'send' and j.get('sale'))   # the lag starts when the sale mines
     if scenario in ('sale_reorged', 'sale_reorged_reincluded'): return first(lambda j: j.get('event') == 'chain_reorg')
+    # WS-J random schedules: the first scheduled fault that took effect (a binding or a drop). No BDT is defined for them.
+    if scenario == 'random': return first(lambda j: j.get('event') in ('fault_armed', 'dropped_send'))
     return None
 
 def prices(m):
@@ -289,10 +291,10 @@ for folder in [a for a in sys.argv[1:] if not a.startswith('--')]:
     px = prices(m)
     controls = {}
     for f in glob.glob(os.path.join(folder, 'episodes', 'control-*.json')):
-        c = json.load(open(f)); controls[c['scenario']] = c
+        c = json.load(open(f)); controls[(c['scenario'], c.get('scheduleSeed'))] = c   # random: one control per seed
     for f in sorted(glob.glob(os.path.join(folder, 'episodes', '*.json'))):
         if os.path.basename(f).startswith('control-') or f.endswith('.child-stderr.log'): continue
-        e = json.load(open(f)); s = e['scenario']; ref = controls.get(s)
+        e = json.load(open(f)); s = e['scenario']; ref = controls.get((s, e.get('scheduleSeed')))
         t0 = fault_time(s, e['forkJournal'])
         ivl = None
         if ref and ref.get('outcome') and e.get('outcome'):
@@ -310,7 +312,7 @@ for folder in [a for a in sys.argv[1:] if not a.startswith('--')]:
                      'BDT_s': secs, 'BDT_turns': turns, 'BDT_status': status, 'evidence': evidence_quality(e, s, t0),
                      'attemptsAfterFault': a, 'referenceAttempts': ra, 'PAF': round(a / ra, 2) if ra else None,
                      'holdDecisions': n_holds, 'falseHolds': n_false, 'holds': hold_detail,
-                     'pricing': px[2]})
+                     'pricing': px[2], **({'scheduleSeed': e['scheduleSeed']} if 'scheduleSeed' in e else {})})
 
 if '--md' not in sys.argv:
     for r in rows: print(json.dumps(r))
