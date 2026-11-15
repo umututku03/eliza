@@ -445,6 +445,23 @@ describe("evidence recovery regression cases", () => {
     expect(c.sales()).toBe(1);
   });
 
+  it("keeps lost-acknowledgement responses binary under no_grading without inventing a hash", async () => {
+    process.env.EVM_EVIDENCE_ABLATE = "no_grading";
+    const c = new FakeChain();
+    c.tickEvery(5_000);
+    c.wallet.sendTransaction.mockImplementationOnce(async (args: any) => {
+      c.submit(args);
+      throw new Error("connection reset after dispatch");
+    });
+    const first = await pending(send(c));
+    expect(first.message).toBe("Transaction failed: submission was not acknowledged.");
+    const retry = await pending(send(c));
+    expect(retry.message).toBe("Transaction failed: confirmation could not be established.");
+    expect(retry.message).not.toContain("undefined");
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 7]);
+    expect(c.sales()).toBe(1);
+  });
+
   it("serializes first-send preparation so a concurrent different intent cannot bypass the guard", async () => {
     const c = new FakeChain();
     c.hideNext = true;

@@ -528,7 +528,10 @@ export async function sendWithEvidence(o: {
         r.sentNonces.push(pinnedNonce);
       } catch {
         r.state = "pending";
-        throw new EvidenceError("EVIDENCE_PENDING", `Your ${o.intent.label} could not be acknowledged and may have been submitted. Do not start another transaction; check its status with tx_status. Retrying this same operation keeps its nonce.`, r);
+        const message = ablation === "no_grading"
+          ? "Transaction failed: submission was not acknowledged."
+          : `Your ${o.intent.label} could not be acknowledged and may have been submitted. Do not start another transaction; check its status with tx_status. Retrying this same operation keeps its nonce.`;
+        throw new EvidenceError("EVIDENCE_PENDING", message, r);
       }
     } else {
       // Re-send rule: same calldata, the pinned nonce (fresh under no_nonce_pin), fees bumped by at least 10%.
@@ -576,7 +579,7 @@ export async function sendWithEvidence(o: {
   const hash = (r.observations[r.observations.length - 1]?.hash ?? r.hashes[r.hashes.length - 1]) as Hex;
   if (r.decision === "confirmed" || r.decision === "failed") return { hash, decision: r.decision, record: r };
   if (ablation === "no_grading")
-    throw new EvidenceError("EVIDENCE_PENDING", `Timed out while waiting for transaction with hash "${hash}" to be confirmed.`, r);
+    throw new EvidenceError("EVIDENCE_PENDING", hash ? `Timed out while waiting for transaction with hash "${hash}" to be confirmed.` : "Transaction failed: confirmation could not be established.", r);
   throw new EvidenceError("EVIDENCE_PENDING", evidenceMessage(r), r);
 }
 
