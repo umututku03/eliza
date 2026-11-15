@@ -16,13 +16,16 @@ Sources:
 - The advisor decisions, the fault-realism notes, the sweep-sizing notes and the novelty screen (14 Nov).
 
 ## 0. Approvals needed (each separate)
+**Budget revision (15 Nov, user):** there is no paid budget for the main study. The main study runs on **open-weight models
+at $0 model cost** (§6, "Model substitution"). Every paid tier below is optional and runs only if separately funded.
+
 | # | What | Amount |
 |---|---|---|
 | A1 | Freeze this protocol, including the changes from the draft listed in §11 | — |
-| A2 | **Cheap-tier sweep ceiling**: blocks A–G (§6) | **$90** (estimate ≈ $62–71) |
-| A3 | Smoke tests: one Claude Code + haiku episode; one live call each to Sonnet and Sol | ≤ $0.50 |
-| A4 | **Flagship request** (needs the professor's reimbursement): Sonnet + Sol | estimate ≈ $90, **cap $100**. Sol is on promotional pricing until **30 Nov**, so Sol must start by 27 Nov |
-| A5 | Optional: Opus | estimate ≈ $110, cap $120 |
+| A2 | **Main study on open-weight models**: blocks A, B, C (agent2 only), D–G (§6), with models M1 and M2 fixed by gate G5 | **$0** model cost (local hardware or the user's Anyscale credits) |
+| A3 | Optional, paid: the luna/haiku comparison (the units as priced in §6) | ceiling $90 if funded |
+| A4 | Optional, paid (needs the professor's reimbursement): Sonnet + Sol (§7) | estimate ≈ $90, cap $100. Sol's promotional price ends **30 Nov** |
+| A5 | Optional, paid: Opus; Claude Code (U6), which needs an Anthropic model | Opus cap $120; U6 cap $8 |
 
 Cumulative spend ledger before this study: $13.09102005 (after the pilot). It is re-read and passed as `--prior-usd` at launch.
 
@@ -92,14 +95,16 @@ Running them would need an addendum and a separate approval.
 **Scope:** protected comparisons run on ElizaOS only. agent2 and Claude Code run arm none, for framework generality.
 
 ## 5. Formal model (side result, non-blocking)
-- **What exists:** `research/formal/` holds an unfinished TLA+ model.
-  - `legacy/` preserves the pre-hardening model and its hidden-receipt counterexample.
-  - The top-level model is still being reconciled with the hardened wallet.
+- **Status (15 Nov):** `research/formal/` holds the TLA+ model reconciled with the hardened `evidence.ts` (eb42064d82); see
+  its README for the spec ↔ code mapping, bounds and assumptions.
+  - **Safety** (AtMostOnce, NoFalseConfirm, NoActOnOrphan) holds for `full` in all 14 checked fault configurations,
+    within the stated bounds (largest: 2.7M distinct states). The baselines violate them where expected, with minimal traces.
+  - **Liveness** for `full` (one intent) holds in 6 fault configurations, under a stated re-request/round/block bound and
+    fairness assumptions (a bound is required; Li's result).
+  - `legacy/` keeps the pre-hardening counterexamples; `evidence-formal.test.ts` holds the regression tests (C1–C9).
 - **Effect on the freeze:** none. The freeze and the sweep do not depend on it.
-- **Claims:**
-  - The paper makes formal claims (at most once per intent; bounded resolution under the stated fault bounds) **only** after
-    the model has been re-verified against the frozen hardened source, with the configurations and TLC outputs recorded.
-  - Until then, the legacy counterexample may be reported only as a design-history finding on pre-hardening code.
+- **Claims:** "no violation within the bounds", never "proved"; quorum mode, reverts and approvals are not modelled.
+  Re-run the TLC configurations on the frozen source commit before quoting the numbers.
 
 ## 6. Cohorts (cheap tier)
 **Launcher:** `bench.sh --mode=live --port-step=100`, one invocation ("unit") per row below, each with its own `--tag`
@@ -109,6 +114,12 @@ Running them would need an addendum and a separate approval.
 
 **Cost per episode:** the measured ledger figures are luna $0.058 and haiku $0.075–0.091. The egress proxy bills input at
 the full rate, so caps are conservative.
+
+**Model substitution (budget revision, 15 Nov):** in every unit, `luna` is replaced by open-weight model **M1** and
+`haiku` by open-weight model **M2**. Both are fixed by gate G5 before the freeze and named here by addendum. Their price
+entries are $0, so the USD columns below apply only to the optional paid comparison (A3). Caps are then enforced as
+token ceilings per cohort. **U6 (Claude Code) needs an Anthropic model, so it moves to the optional paid tier (A5).**
+Block C keeps agent2 (U5). Wall-clock time depends on M1/M2 throughput and is measured in G5.
 
 **Common options:** every line carries
 `FP = --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-delay-ms=12000 --reorg-trigger=next-send`.
@@ -162,7 +173,7 @@ Block notes:
   - U7 on 6600–6700.
 - **Timing:** about 10 min per episode, so about 998 episodes take about 21 h of lane time over 1–2 days.
 
-## 7. Flagship tier (approval A4/A5; after the smoke tests)
+## 7. Optional flagship tier (approval A4/A5; only if funded; after the smoke tests)
 | Unit | Model | Grid | Episodes | Est. USD | Cap USD | Lanes | Port base |
 |---|---|---|---|---|---|---|---|
 | F1 | GPT-6.1 Sol (**before 30 Nov**) | H1 sol stock normal,receipt_hidden,sale_dropped,rpc_stale,sale_reorged_reincluded 3 `--arm={none,full}` FP | 30 | ≈ 33 | 36 | 2 | 6800 |
@@ -269,11 +280,15 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
 - **G1:** results-gate3 passes on the frozen source. It is a mock gate covering every arm (including a fresh-fork
   full_quorum acceptance at K = 3), random seeds 1001–1020, history-check agreement, the false-hold audit and the tamper
   suite. Its refs fill the placeholder at the top.
-- **G2:** bench.sh's option whitelist currently allows only arm, mock-agent, idle-block-ms, schedule-size, agent and
-  reorg-trigger. It must forward `--hide-ms`, `--lag-ms`, `--reorg-delay-ms` and `--quorum-proxies`. A mock cohort must
-  show 60 s / 60 s / 12 s and K = 3 in the manifest.
+- **G2:** bench.sh now forwards `--hide-ms`, `--lag-ms`, `--reorg-delay-ms`, `--quorum-proxies` and `--evidence-ablate`
+  (fixed 15 Nov). A mock cohort must show 60 s / 60 s / 12 s and K = 3 in the manifest.
 - **G3:** the smoke tests (approval A3). They resize U6 if needed.
 - **G4:** the shuffled cohort files and their hashes are committed, and the ledger is re-read for `--prior-usd`.
+- **G5 (open-model feasibility, free):** the harness supports an OpenAI-compatible open-model endpoint through the egress
+  proxy (blinding, token caps and ledger unchanged; price $0). M1 and M2 are chosen as the strongest open models that
+  (i) complete the D1 mock-plan tool sequence, and (ii) complete one live D1 `normal` episode on ElizaOS and agent2 with
+  valid tool calls. Model name, weights revision, quantisation, serving stack and sampling settings are recorded in the
+  manifest. D1 is development data, so this exposes nothing held out.
 
 ## 11. Changes from the 15 Nov draft
 1. **`full_quorum` added as an appendix arm (block G),** not a sixth main arm, keeping the main table at 5 arms per the
@@ -287,3 +302,5 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
    upper bound.
 7. **The hardened wallet is the frozen source.** The TLA+ model is a non-blocking side result (§5).
 8. **Caps are per unit,** because bench.sh lane caps are disjoint; the sum is $89.
+9. **Budget revision (15 Nov):** no paid budget. The main study runs on open-weight models M1/M2 at $0 (gate G5); luna/haiku,
+   flagships, Opus and Claude Code (U6) become optional paid tiers. The TLA+ status (§5) and the bench.sh fix (G2) are updated.
