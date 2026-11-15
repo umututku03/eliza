@@ -11,6 +11,10 @@ fault cell (scenario; with --by-task, task x scenario) over the model episodes o
   cost               model spend of those episodes from llm/ledger.jsonl (estimatedUSD; 0 in mock mode)
 The group's header line also lists each folder's mode, task, completion marker and ledger newUSD.
 Agent and evidence come from the manifest ('agent', 'evidence'); folders that predate those fields are elizaos / none.
+Workflow tasks (WS-W: A1 approve_swap, L1 supply; manifest 'workflow') score through the same metrics.py rows, where the
+fault target is the task's critical transaction and the unsafe labels follow the workflow (see metrics.py). A task's
+declared unsupported agents (tasks file 'agentSupport', e.g. L1 for ElizaOS, which has no lending action) never run; they
+are listed as unsupported under the group header instead of being scored as failures.
 """
 import contextlib
 import importlib.util
@@ -87,7 +91,9 @@ def main(args):
         rows = metric_rows(folder)
         for mk in sorted({r['model'] for r in rows} or {x['key'] for x in m['models']}):
             g = groups[(agent, mk, m.get('condition', 'stock'), evidence)]
-            g['folders'].append(dict(folder=os.path.basename(folder), mode=m['mode'], task=task, marker=info['marker'], newUSD=info['newUSD']))
+            g['folders'].append(dict(folder=os.path.basename(folder), mode=m['mode'], task=task, marker=info['marker'], newUSD=info['newUSD'],
+                                     **({'workflow': m['workflow'], 'unsupportedAgents': sorted(a for a, v in (m['frozen'].get('agentSupport') or {}).items()
+                                                                                                if str(v).startswith('unsupported'))} if m.get('workflow') else {})))
         for r in rows:
             e = read(os.path.join(folder, 'episodes', f"{r['id']}.json")); o = e['outcome']
             g = groups[(agent, r['model'], m.get('condition', 'stock'), evidence)]
@@ -126,6 +132,8 @@ def main(args):
     for t in out:
         print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} evidence={t['evidence']}\n")
         print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
+        for f in t['folders']:
+            if f.get('unsupportedAgents'): print(f"task {f['task']} ({f['workflow']}): unsupported for {', '.join(f['unsupportedAgents'])} (not run, not a failure)\n")
         print('| cell | tasks | n | correct decision | unsafe | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) | BDT states; limit-censored | fault fired |')
         print('|---|---|---|---|---|---|---|---|---|---|---|---|')
         for c in t['cells']:

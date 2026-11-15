@@ -78,6 +78,20 @@ if json.loads((src / 'manifest.json').read_text()).get('agent') == 'agent2':
             r['gateKey'] += '|forged'
         edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
     cases['agent2 swap without confirmed preview'] = forge_gate
+# Workflow tasks (A1, L1): a forged workflow label, final allowance or critical-call record must be rejected.
+wf = json.loads((src / 'manifest.json').read_text()).get('workflow')
+if wf:
+    label = 'redundantApprovals' if wf == 'approve_swap' else 'duplicateSupply'
+    cases['workflow label flipped'] = lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d['outcome'].update(
+        {label: (not d['outcome'][label]) if isinstance(d['outcome'][label], bool) else d['outcome'][label] + 1}))
+    cases['final allowance edited'] = lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: (
+        d['outcome']['final'].update(allowanceUnits='1'), d['outcome'].update(finalAllowanceUnits='1')))
+    def forge_critical(p):
+        def mutate(d):
+            t = next(t for t in d['outcome']['transactions'] if t.get('critical'))
+            t['critical'] = None
+        edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
+    cases['critical-call record forged'] = forge_critical
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
