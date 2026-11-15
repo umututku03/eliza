@@ -8,6 +8,11 @@
 // native value (v2: any amount, since risk clamps can shrink the 0.1 ETH sale); faults follow that confirmed effect.
 // ElizaOS v2 harness change: reset() takes an optional sale-candidate rule, so plan-guard runs, where the sale is
 // a DelegationManager redemption that executes the router call, use the same fault trigger.
+// Workflow tasks (WS-W, tasks-workflows.json): the same rule names the task's CRITICAL transaction instead of the sale
+// (A1: the approval of the router; L1: the Aave supply). Every fault, journal field and state name keeps the word "sale"
+// and means "the first successful critical transaction"; without a rule the default stays exactly "first sale".
+// For the reorg check a task can replace the X balanceOf read with another holder-state read (xBalance.data, e.g.
+// the allowance for A1): its value must be restored by the emulated reorg.
 import {
   type Hex,
   keccak256,
@@ -27,7 +32,7 @@ export type Fault = {
     | "sale_dropped"
     | "rpc_stale"
     | "sale_reorged";
-  xBalance?: { token: string; wallet: string };
+  xBalance?: { token: string; wallet: string; data?: Hex };
   onSaleMined?: () => Promise<any>;
 };
 export type FaultParams = { lagMs: number; reorgDelayMs: number; hideMs: number };
@@ -140,7 +145,8 @@ export class ForkRpcProxy {
     return this.rpc("eth_call", [
       {
         to: config.token,
-        data: `0x70a08231${config.wallet.slice(2).padStart(64, "0")}`,
+        data:
+          config.data ?? `0x70a08231${config.wallet.slice(2).padStart(64, "0")}`,
       },
       "latest",
     ]);
