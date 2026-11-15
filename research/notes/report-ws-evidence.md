@@ -668,3 +668,55 @@ reinclusion/next-send support and the agent2 evidence adapter open. No main-stud
 freeze, new account integration, paid call or new spending approval is claimed.
 
 Authored-by: Codex (OpenAI).
+
+## Completed recovery integration gate — 2026-11-15T15:32:07.636670+00:00
+
+All 29 retained cohorts passed runner, independent audit and tamper checks: 92 model episodes, 92 deterministic control episodes, 344 rejected tamper cases. New model spend: $0. No cohort retries, paid calls or result overwrites.
+
+The three stages are deliberately separate source snapshots: 16 broad recovery cohorts; ten typed-boundary/ablation cohorts; and three final-source cohorts (ElizaOS stock/plan_guard full evidence, plus unprotected agent2). The latter use normal and all four core faults. The final source is `94075c14b9`; subsequent commits change reports only. Preserve each source worktree when re-auditing its earlier folders.
+
+| Phase | Cohort | Audit | Tamper rejected | Model episodes | Controls | Duplicate episodes | Goal | Valid | Typed snapshots | Outside-turn refusals |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| matrix | results-wse-recovery-1114-agent2-reg | PASS | 12 | 4 | 4 | 0 | 3 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-full-pg | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-full-stock | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nnp-pg | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nnp-stock | PASS | 12 | 4 | 4 | 2 | 2 | 2 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nodecode-pg | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nodecode-stock | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nograd-pg | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-nograd-stock | PASS | 12 | 4 | 4 | 0 | 4 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-none-pg | PASS | 12 | 4 | 4 | 0 | 3 | 3 | 0 | 0 |
+| matrix | results-wse-recovery-1114-none-stock | PASS | 12 | 4 | 4 | 2 | 1 | 1 | 0 | 0 |
+| matrix | results-wse-recovery-1114-refusal | PASS | 11 | 1 | 1 | 0 | 0 | 0 | 0 | 0 |
+| matrix | results-wse-recovery-1114-reg-pg | PASS | 11 | 3 | 3 | 0 | 3 | 3 | 0 | 0 |
+| matrix | results-wse-recovery-1114-reg-pg-full | PASS | 11 | 3 | 3 | 0 | 3 | 3 | 0 | 0 |
+| matrix | results-wse-recovery-1114-reg-stock | PASS | 11 | 4 | 4 | 0 | 3 | 4 | 0 | 0 |
+| matrix | results-wse-recovery-1114-reg-stock-full | PASS | 11 | 4 | 4 | 0 | 3 | 4 | 0 | 0 |
+| metadata | results-router-ablation-1114-no_grading-plan_guard | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 0 | 0 |
+| metadata | results-router-ablation-1114-no_grading-stock | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 0 | 0 |
+| metadata | results-router-ablation-1114-no_nonce_pin-plan_guard | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 1 | 0 |
+| metadata | results-router-ablation-1114-no_nonce_pin-stock | PASS | 12 | 1 | 1 | 1 | 0 | 0 | 1 | 0 |
+| metadata | results-router-ablation-1114-no_refusal_decode-plan_guard | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 1 | 0 |
+| metadata | results-router-ablation-1114-no_refusal_decode-stock | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 1 | 0 |
+| metadata | results-router-ablation-1114-none-plan_guard | PASS | 12 | 1 | 1 | 0 | 1 | 1 | 0 | 0 |
+| metadata | results-router-ablation-1114-none-stock | PASS | 12 | 1 | 1 | 1 | 0 | 0 | 0 | 0 |
+| metadata | results-router-evidence-1114-plan_guard | PASS | 12 | 5 | 5 | 0 | 5 | 5 | 4 | 0 |
+| metadata | results-router-evidence-1114-stock | PASS | 12 | 5 | 5 | 0 | 5 | 5 | 4 | 0 |
+| final | results-final-agent2-1114-faults | PASS | 13 | 5 | 5 | 0 | 5 | 5 | 0 | 0 |
+| final | results-final-evidence-1114-plan_guard | PASS | 12 | 5 | 5 | 0 | 5 | 5 | 4 | 0 |
+| final | results-final-evidence-1114-stock | PASS | 12 | 5 | 5 | 0 | 5 | 5 | 4 | 0 |
+
+All recorded model child exits are 0, blockedHosts is empty, no harness_error terminations occurred, and no budget refusals were recorded. Any outside-turn refusals are counted above rather than hidden. Exact audit strings, source heads, outcomes and paths are retained in `test-results/final-evidence-gate-1114/completion.json`. The final-source SHA-256 inventory remained unchanged throughout its gate.
+
+The typed-boundary gates contain four sanitized pending snapshots per condition; their stale/hidden observations classify as pending, and dropped/reorged observations as truthful. All four fault decisions are consistent in each scripted full-layer condition. This is mock integration evidence, not a live-model comparison.
+
+Final wallet tests: 263 passed, 1 skipped; assistant: 2743 passed; Anthropic: 29 passed; production wallet tsc: exit 0. The two pre-existing core logger failures (382 passed, 2 failed) and app translation-key verification failure remain documented above; no claim of an entirely green repository is made. Biome 2.5.15 returned no errors and 24 warnings in the checked test file, including the new fixture annotation; the module is excluded by repository configuration. This clarifies the earlier wording about existing warnings.
+
+The original pilot was re-audited with its preserved `cba02a0d41` source: all three audits PASS. Its raw results remain in the coordinator worktree; the detached audit worktree is `/private/tmp/eliza-pilot-audit-1114`. Do not weaken source-hash checks to audit old results against changed source.
+
+Local durable archive: `/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/test-results/codex-recovery-archive-1114/`, including raw new results, audit/tamper files, diagnostics, replay, input hashes and a SHA256SUMS.json inventory. The concise takeover pointer is `test-results/codex-recovery-handoff-1114/FINAL.md` in the coordinator worktree. No raw results are committed.
+
+This closes the earlier recovery gate only. Claude subsequently merged the named baselines, reinclusion/next-send support, workflows and MCP adapter, and recorded a separate 18-cohort integrated gate at fc7ce03a5b. Those later changes are not covered by these 29 historical cohorts. Four later workstreams (formal, randomized schedules, quorum, seed/false-hold logging) are still under review; the main-study protocol remains DRAFT and paid calls need fresh approval. No additional experiment is launched by this report.
+
+Authored-by: Codex (OpenAI).
