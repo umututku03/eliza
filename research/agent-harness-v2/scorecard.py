@@ -71,7 +71,10 @@ def main(args):
     groups = defaultdict(lambda: dict(folders=[], cells=defaultdict(list)))
     for folder in folders:
         info = folder_info(folder); m = info['manifest']
-        agent = m.get('agent') or 'elizaos'; evidence = m.get('evidence') or 'none'
+        agent = m.get('agent') or 'elizaos'
+        # A sortable arm label also keeps ablations distinct from the full layer.
+        ablation = m.get('evidenceAblate') or 'none'
+        evidence = ('full' if ablation == 'none' else f'ablate:{ablation}') if m.get('evidence') else 'none'
         task = m.get('taskId') or 'D1(frozen)'
         rows = metric_rows(folder)
         for mk in sorted({r['model'] for r in rows} or {x['key'] for x in m['models']}):
@@ -100,7 +103,9 @@ def main(args):
                               medianComparableIVL_X=med([r['IVL_comparable_X'] for r in rs]), medianBDT_s=med([r['BDT_s'] for r in rs]),
                               medianPAF=med([r['PAF'] for r in rs]), completed=sum(r['valid'] for r in rs),
                               completionRate=round(sum(r['valid'] for r in rs) / n, 3), costUSD=round(sum(r['costUSD'] for r in rs), 8)))
-        out.append(dict(agent=agent, model=model, condition=condition, evidence=evidence, folders=g['folders'], cells=table))
+        out.append(dict(agent=agent, model=model, condition=condition, evidence=evidence,
+                        evidenceEnabled=evidence != 'none', evidenceAblate=evidence.split(':', 1)[1] if evidence.startswith('ablate:') else 'none',
+                        folders=g['folders'], cells=table))
     if '--json' in args:
         print(json.dumps(out, indent=2)); return
     fmt = lambda v: 'n/a' if v is None else str(v)
