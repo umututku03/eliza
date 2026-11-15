@@ -548,6 +548,8 @@ export async function sendWithEvidence(o: {
         });
         r.hashes.push(hash);
         r.sentNonces.push(nonce);
+        // Accepted replacement: discard nonce-consumption evidence from the orphaned chain.
+        r.landed = false;
         r.request = bumped;
         r.lastSendAtMs = deps.now();
         if (r.state === "orphaned" || r.state === "dropped") r.receiptSeen = null;
