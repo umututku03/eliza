@@ -18,6 +18,7 @@ import { SwapAction } from "../actions/swap";
 import {
   CHECK_BUDGET_MS,
   checkOnce,
+  DECISION_LOG_PREFIX,
   classifySendError,
   decodeRefusalSentence,
   describeCall,
@@ -25,6 +26,7 @@ import {
   EvidenceError,
   type EvidenceIntent,
   evidenceLedger,
+  evidenceSnapshot,
   intentKey,
   isUnresolved,
   latestIntent,
@@ -1305,5 +1307,95 @@ describe("refusals the agent can act on", () => {
       /^Refused by the approved plan \(ERC20BalanceChangeEnforcer:exceeded-balance-decrease\): swap 60 X -> Y$/
     );
     expect(wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("decision log (EVM_EVIDENCE_DECISION_LOG=1): logging only", () => {
+  const json = (v: unknown) => JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x));
+  /** Every full-layer site that returns a decision: send (confirmed, wait, wait_and_recheck, stale head),
+   *  a guard refusal, tx_status checks, and an unacknowledged send. Returns everything the agent and viem see. */
+  async function scenarios(): Promise<string> {
+    const out: unknown[] = [];
+    const capture = async (p: Promise<any>) => {
+      try {
+        const r = await p;
+        out.push({ decision: r.decision, hash: r.hash, record: evidenceSnapshot(r.record) });
+      } catch (e) {
+        out.push({ message: (e as Error).message, code: (e as EvidenceError).code, evidence: (e as EvidenceError).data?.evidence });
+      }
+    };
+    resetEvidenceLedgers();
+    let c = new FakeChain();
+    c.tickEvery(5_000);
+    await capture(send(c)); // confirmed
+    out.push(c.sent);
+    resetEvidenceLedgers();
+    c = new FakeChain();
+    await capture(send(c)); // wait (1 of 2 confirmations)
+    await capture(send(c, step2Intent(), step2Data, 0n)); // guard refusal
+    const r = latestIntent(1, SENDER)!;
+    await checkOnce(c.pub as never, r, c.deps()); // tx_status: still waiting
+    c.mine();
+    await checkOnce(c.pub as never, r, c.deps()); // tx_status: confirmed
+    await checkOnce(c.pub as never, r, c.deps()); // tx_status on a confirmed intent
+    out.push(evidenceSnapshot(r), c.sent);
+    resetEvidenceLedgers();
+    c = new FakeChain();
+    c.hideNext = true;
+    c.tickEvery(5_000);
+    await capture(send(c)); // wait_and_recheck
+    resetEvidenceLedgers();
+    c = new FakeChain();
+    c.dropNext = true;
+    await capture(send(c)); // stale head
+    resetEvidenceLedgers();
+    c = new FakeChain();
+    c.wallet.sendTransaction.mockRejectedValueOnce(new Error("socket hang up"));
+    await capture(send(c)); // unacknowledged
+    out.push(c.sent);
+    return json(out);
+  }
+  const logged = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map((a) => String(a[0])).filter((l) => l.startsWith(DECISION_LOG_PREFIX));
+  afterEach(() => {
+    delete process.env.EVM_EVIDENCE_DECISION_LOG;
+    vi.restoreAllMocks();
+  });
+
+  it("flag unset: nothing is written, and the flag changes no result, message, record or viem argument", async () => {
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const unset = await scenarios();
+    expect(spy).not.toHaveBeenCalled();
+    process.env.EVM_EVIDENCE_DECISION_LOG = "1";
+    const set = await scenarios();
+    expect(set).toBe(unset);
+    expect(logged(spy).length).toBeGreaterThan(0);
+  });
+
+  it("flag set: one line per returned decision, with its site and chain observations, and no request or signer", async () => {
+    process.env.EVM_EVIDENCE_DECISION_LOG = "1";
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await scenarios();
+    const lines = logged(spy).map((l) => JSON.parse(l.slice(DECISION_LOG_PREFIX.length)));
+    expect(lines.map((l) => [l.site, l.decision, l.waitReason])).toEqual([
+      ["send", "confirmed", null],
+      ["send", "wait", "confirmations"],
+      ["guard", "wait", "confirmations"],
+      ["check", "wait", "confirmations"],
+      ["check", "confirmed", null],
+      ["check", "confirmed", null],
+      ["send", "wait_and_recheck", null],
+      ["send", "wait", "stale_head"],
+      ["send_unacknowledged", "wait", "not_seen"],
+    ]);
+    const wait = lines[1];
+    expect(wait).toMatchObject({ v: 1, label: "swap", chainId: 1, sender: SENDER, pinnedNonce: 7, observations: expect.any(Number) });
+    expect(wait.key).toBe(intentKey(saleIntent()));
+    expect(wait.hashes).toHaveLength(1);
+    expect(wait.lastObservation).toMatchObject({ head: 101, receiptBlock: 101, receiptStatus: "success", canonical: true, confirmations: 1 });
+    expect(typeof wait.atMs).toBe("number");
+    expect(lines[8].hashes).toEqual([]);
+    expect(lines[8].lastObservation).toBeNull();
+    for (const l of lines) for (const k of ["request", "account", "message", "snapshot"]) expect(l).not.toHaveProperty(k);
   });
 });

@@ -130,6 +130,25 @@ if AGENT == 'claudecode':
             t['toolCalls'].append({'id': 'toolu_forged', 'name': 'Bash', 'args': {'command': 'true'}})
         edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
     cases['claudecode built-in tool call'] = builtin_call
+# Hold instrumentation (run-v2.ts holdInstrumentation): forged chain truth, a removed record, and an extra field in a
+# decision line must be rejected.
+if man.get('holdInstrumentation'):
+    truth_ep = next((n for n in eps if any(t['status'] for b in json.loads((src / 'episodes' / f'{n}.json').read_text())['chainTruth']['blocks'] for t in b['txs'])), None)
+    if truth_ep:
+        def forge_truth(p):
+            def mutate(d):
+                t = next(t for b in d['chainTruth']['blocks'] for t in b['txs'] if t['status'])
+                t['status'] = 'reverted' if t['status'] == 'success' else 'success'
+            edit_json(p / 'episodes' / f'{truth_ep}.json', mutate)
+        cases['chain-truth receipt status forged'] = forge_truth
+    cases['chain truth removed'] = lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d.pop('chainTruth'))
+    line_ep = next((n for n in eps if v.decision_lines((src / 'episodes' / f'{n}.child-stderr.log').read_text(errors='ignore'))), None)
+    if line_ep:
+        def extra_field(p):
+            f = p / 'episodes' / f'{line_ep}.child-stderr.log'
+            d = json.loads(v.decision_lines(f.read_text(errors='ignore'))[0]); d['request'] = {'data': '0x'}
+            f.write_text(f.read_text(errors='ignore') + v.DECISION_PREFIX + json.dumps(d) + '\n')
+        cases['decision line with an extra field'] = extra_field
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
