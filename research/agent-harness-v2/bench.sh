@@ -11,7 +11,7 @@
 #   <task|-> <model> <condition> <scenarios,comma,separated> <reps> [--option=value ...]   ('-' is the frozen development task)
 #   WS-J: a scenario token random:A-B (or random:N) runs the random schedule family for seeds A..B (run-v2.ts
 #   --scenarios=...,random --schedule-seed=A-B). Optional trailing run-v2.ts options, from a fixed list: --arm=, --mock-agent=,
-#   --idle-block-ms=, --schedule-size=, --agent=. Example: - luna stock random:1-20 1 --arm=full --mock-agent=naive
+#   --idle-block-ms=, --schedule-size=, --agent=, --reorg-trigger=. Example: - luna stock random:1-20 1 --arm=full --mock-agent=naive
 # Cohort k (from 0, in file order) runs in lane k mod N; each lane runs its cohorts one after another.
 #   Ports:  lane i passes --port-base=<port-base + i*port-step> to run-v2.ts. The step must keep the four offset ports
 #           (Anvil 18545, fork proxy 18546, LLM proxy 18650, mock gate 18652) disjoint across lanes: 100 does.
@@ -58,7 +58,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   read -r task model condition scenarios reps extra <<<"$line"
   [ -n "$reps" ] && [[ "$reps" =~ ^[1-9][0-9]*$ ]] || die "bad cohort line: $line"
   [[ "$task$model$condition" =~ ^[A-Za-z0-9_,-]+$ ]] && [[ "$scenarios" =~ ^[A-Za-z0-9_,:-]+$ ]] || die "bad cohort line: $line"
-  for o in ${extra:-}; do [[ "$o" =~ ^--(arm|mock-agent|idle-block-ms|schedule-size|agent)=[A-Za-z0-9_-]+$ ]] || die "bad option $o in cohort line: $line"; done
+  for o in ${extra:-}; do [[ "$o" =~ ^--(arm|mock-agent|idle-block-ms|schedule-size|agent|reorg-trigger)=[A-Za-z0-9_-]+$ ]] || die "bad option $o in cohort line: $line"; done
   n_random=$(tr ',' '\n' <<<"$scenarios" | grep -c '^random'); [ "$n_random" -le 1 ] || die "one random token per cohort line: $line"
   if [ "$n_random" -eq 1 ]; then tr ',' '\n' <<<"$scenarios" | grep -Eq '^random:[0-9]+(-[0-9]+)?$' || die "random needs a seed range (random:A-B): $line"; fi
   LINES+=("$task $model $condition $scenarios $reps${extra:+ $extra}")
