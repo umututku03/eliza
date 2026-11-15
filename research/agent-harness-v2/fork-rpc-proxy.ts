@@ -30,6 +30,7 @@ export type Fault = {
   xBalance?: { token: string; wallet: string };
   onSaleMined?: () => Promise<any>;
 };
+export type FaultParams = { lagMs: number; reorgDelayMs: number; hideMs: number };
 export type SaleCandidate = (tx: {
   from: string;
   to: string;
@@ -58,6 +59,7 @@ export class ForkRpcProxy {
   private receiptServedAt = 0;
   private reorg: any = null;
   private queue: Promise<unknown> = Promise.resolve();
+  private params: FaultParams = { lagMs: LAG_MS, reorgDelayMs: REORG_DELAY_MS, hideMs: HIDE_MS };
 
   constructor(
     public anvilUrl: string,
@@ -73,7 +75,9 @@ export class ForkRpcProxy {
     router: string,
     fault: Fault,
     saleCandidate?: SaleCandidate,
+    params?: Partial<FaultParams>,
   ) {
+    this.params = { lagMs: LAG_MS, reorgDelayMs: REORG_DELAY_MS, hideMs: HIDE_MS, ...(params ?? {}) };
     this.wallet = wallet.toLowerCase();
     this.router = router.toLowerCase();
     this.fault = fault;
@@ -147,7 +151,7 @@ export class ForkRpcProxy {
       this.fault.kind !== "sale_reorged" ||
       this.reorg ||
       !this.receiptServedAt ||
-      Date.now() < this.receiptServedAt + REORG_DELAY_MS
+      Date.now() < this.receiptServedAt + this.params.reorgDelayMs
     )
       return;
     const h = Number(await this.rpc("eth_blockNumber"));
@@ -386,11 +390,11 @@ export class ForkRpcProxy {
       this.oldSaleBlockHash = mined.blockHash;
       if (this.fault.kind === "rpc_stale") {
         this.lagBlock = this.saleBlock - 1;
-        this.lagUntil = Date.now() + LAG_MS;
+        this.lagUntil = Date.now() + this.params.lagMs;
         entry.lagBlock = this.lagBlock;
       }
       if (this.fault.kind === "receipt_hidden") {
-        this.hiddenUntil = Date.now() + HIDE_MS;
+        this.hiddenUntil = Date.now() + this.params.hideMs;
         entry.hiddenUntil = this.hiddenUntil;
       }
       if (this.fault.kind === "price_move" && this.fault.onSaleMined) {
