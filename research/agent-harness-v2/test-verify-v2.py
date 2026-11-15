@@ -99,6 +99,16 @@ if 'arm' in man:
         else:
             edit_json(req, lambda d: d['body'].update(system=v.ARM_PROMPT))
     cases['arm prompt presence changed'] = prompt_presence
+# full_quorum (WS-Q): a fault event on a secondary read proxy, the scenario's fault moved to another proxy, or a missing
+# per-proxy journal must be rejected.
+if man.get('arm') == 'full_quorum':
+    def secondary_fault(d):
+        d['quorumJournals'][0]['journal'].append({'at': 0, 'event': 'stale_read', 'method': 'eth_blockNumber', 'servedBlock': 1})
+    cases['fault event on a secondary read proxy'] = lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', secondary_fault)
+    def move_fault(d):
+        e = d['quorum']['endpoints']; e[0]['fault'], e[1]['fault'] = e[1]['fault'], e[0]['fault']
+    cases['faulted proxy moved'] = lambda p: edit_json(p / 'manifest.json', move_fault)
+    cases['per-proxy journal removed'] = lambda p: edit_json(p / 'episodes' / f'{first_ep}.json', lambda d: d.pop('quorumJournals'))
 # agent2 (run-v2.ts --agent=agent2): a swap submitted without a matching confirmed preview must be rejected.
 AGENT = json.loads((src / 'manifest.json').read_text()).get('agent')
 if AGENT in ('agent2', 'claudecode'):

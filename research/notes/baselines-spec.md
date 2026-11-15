@@ -43,6 +43,11 @@ Status: 2026-11-15, written by Claude. It answers Codex's readiness gates in `ma
 ### `full`
 The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
 
+### `full_quorum` (WS-Q; standard-practice treatment arm, not a contribution)
+- **What:** `full` with its evidence reads (head, receipts, transaction lookups, nonce, balance effect) taken from K >= 2 read endpoints and compared. This is quorum reads as in ethers FallbackProvider / eRPC consensus, applied inside the evidence layer (Helios goes further and verifies headers). `EVM_EVIDENCE_MODE=full_quorum`, `EVM_EVIDENCE_READ_URLS`, `--arm=full_quorum` (tag `-fq`).
+- **Agreement rule:** see the "quorum reads" comment in `evidence.ts`, which is normative. In short, the quorum is a strict majority of K. The largest pairwise-consistent (prefix) set of endpoints is taken, and its most advanced member is used. Claims about block B are decided among the members whose head reaches B, by supporters against deniers. With no quorum, or with a tie, the layer waits (`no_quorum`) and asks the user after N rounds.
+- **Harness:** K fork-RPC proxies in front of one Anvil. Proxy 0 is the wallet's RPC and the only faulted proxy, so it models "one bad provider". The other proxies are clean read endpoints.
+
 ### `pace_style` (appendix arm; implement after the four above pass)
 - **What:** a stateless per-intent check before signing: simulate the swap with `eth_call` at the head, then check the declared policy (target router, token pair, amount at most the user's stated constraint, minimum output). Approve or refuse each call independently, with **no state across calls**. This follows PACE §4.4, "pure, stateless function".
 - **No nonce pinning and no grading.** Retries are new intents and are approved independently.
@@ -73,3 +78,12 @@ The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
 - **Never:** formatters on harness files, frozen task files, or printing secrets.
 - **Git:** small commits on `ws/baselines`, then push.
 - **Report** (returned as text if a file write is blocked): file-by-file changes, the naive table, exact audit and tamper outputs, deviations, open problems.
+
+
+## Takeover integration note (15 November)
+
+The quorum arm is a standard-practice measurement treatment, not a new mechanism. Its N=2 advanced-prefix rule does not tolerate a higher-head lying provider; that limitation is explicit in the code. The first full_quorum acceptance cohort stopped at its reference control with no model episodes and zero model spend. Preserve that failed folder. The independently completed full-arm comparison remains separate.
+
+The continuation integration retains the independently hardened full path, including canonical anchors and reported-outcome bookkeeping. Its five pre-quorum compatibility snapshots were captured before importing quorum code. The first integration run passes all 81 targeted tests. Further quorum state-read/abstention review and fresh fork acceptance remain required before coordinator publication.
+
+Authored-by: Codex (OpenAI).

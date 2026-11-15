@@ -20,10 +20,12 @@
  */
 import {
   type Address,
+  createPublicClient,
   decodeAbiParameters,
   decodeFunctionData,
   formatUnits,
   type Hex,
+  http,
   parseAbi,
   parseAbiParameters,
 } from "viem";
@@ -44,10 +46,14 @@ export const EVIDENCE_ABLATIONS: readonly EvidenceAblation[] = ["none", "no_nonc
  * - `full`: this layer (also selected by the legacy `EVM_EVIDENCE_LAYER=1`);
  * - `nonce_only`: intent ledger and same-nonce re-send only (a wallet's speed-up), stock wording, no guard;
  * - `verify_binary`: one binary check (receipt or balance effect) before re-sending an intent, fresh nonce;
- * - `pace_style`: a stateless pre-signing check (policy and an eth_call simulation) of every call, stock send.
+ * - `pace_style`: a stateless pre-signing check (policy and an eth_call simulation) of every call, stock send;
+ * - `full_quorum`: the full layer with its evidence reads taken from N >= 2 read endpoints (`EVM_EVIDENCE_READ_URLS`)
+ *   and compared, as ethers' FallbackProvider (quorum) and eRPC's consensus mode do; see "quorum reads" below.
  */
-export type EvidenceMode = "off" | "full" | "nonce_only" | "verify_binary" | "pace_style";
-export const EVIDENCE_MODES: readonly Exclude<EvidenceMode, "off">[] = ["full", "nonce_only", "verify_binary", "pace_style"];
+export type EvidenceMode = "off" | "full" | "nonce_only" | "verify_binary" | "pace_style" | "full_quorum";
+export const EVIDENCE_MODES: readonly Exclude<EvidenceMode, "off">[] = ["full", "nonce_only", "verify_binary", "pace_style", "full_quorum"];
+/** The full layer's decisions, guard, tx_status and refusal decoding (full, and full_quorum, which only changes reads). */
+const isFullLayer = (mode: EvidenceMode) => mode === "full" || mode === "full_quorum";
 export function evidenceMode(): EvidenceMode {
   const raw = process.env.EVM_EVIDENCE_MODE;
   const layer = process.env.EVM_EVIDENCE_LAYER === "1";
@@ -58,7 +64,7 @@ export function evidenceMode(): EvidenceMode {
 }
 /** The full layer (graded evidence, guard, tx_status, typed errors, refusal decoding). */
 export function evidenceLayerEnabled(): boolean {
-  return evidenceMode() === "full";
+  return isFullLayer(evidenceMode());
 }
 /** Any mode: the send sites route through sendWithEvidence. */
 export function evidenceSendsEnabled(): boolean {
@@ -81,7 +87,7 @@ export type EvidenceDecision =
   | "landed"
   | "ask_user";
 /** Why a `wait` (or `landed`) is not yet a confirmation. */
-export type WaitReason = "confirmations" | "stale_head" | "not_seen" | "no_effect" | null;
+export type WaitReason = "confirmations" | "stale_head" | "not_seen" | "no_effect" | "no_quorum" | null;
 
 export type EvidenceEffect =
   | { kind: "balance_increase"; token: Address; holder: Address }
@@ -115,6 +121,8 @@ export interface EvidenceObservation {
   confirmations: number;
   nonceLatest: number;
   balanceEffectSeen: boolean;
+  /** full_quorum only (absent otherwise): how the read endpoints agreed for this observation. */
+  quorum?: QuorumSummary;
 }
 
 /** The transaction as first sent; re-sends reuse it with the pinned nonce and a fee bump. */
@@ -169,12 +177,13 @@ export interface BaselineInfo {
 
 // ---- clients (structural, so tests can pass plain mocks) -------------------------------------------------
 export interface EvidencePublicClient {
-  getTransactionCount(args: { address: Address; blockTag: "pending" | "latest" }): Promise<number>;
+  /** full_quorum pins its comparison reads to one height with `blockNumber` (then `blockTag` is absent). */
+  getTransactionCount(args: { address: Address; blockTag?: "pending" | "latest"; blockNumber?: bigint }): Promise<number>;
   getTransaction(args: { hash: Hex }): Promise<{ blockNumber: bigint | null; blockHash: Hex | null }>;
   getTransactionReceipt(args: { hash: Hex }): Promise<{ status: "success" | "reverted"; blockNumber: bigint; blockHash: Hex }>;
   getBlock(args: { blockNumber: bigint }): Promise<{ hash: Hex | null; number: bigint | null }>;
   getBlockNumber(args?: { cacheTime?: number }): Promise<bigint>;
-  getBalance(args: { address: Address }): Promise<bigint>;
+  getBalance(args: { address: Address; blockNumber?: bigint }): Promise<bigint>;
   readContract(args: any): Promise<unknown>;
   /** Stock confirmation wait (baseline modes keep the stock wording of its result). */
   waitForTransactionReceipt?(args: { hash: Hex; timeout: number }): Promise<{ status: "success" | "reverted" }>;
@@ -281,6 +290,8 @@ export function resetEvidenceLedgers(): void {
   ledgers.clear();
   sendQueues.clear();
   announced = null;
+  lastQuorumLog = "";
+  envQuorum = null;
 }
 
 /** Unresolved reservations include dropped operations until they are retried or explicitly resolved. */
@@ -327,6 +338,7 @@ function effectSeen(r: IntentRecord, now: bigint | null): boolean {
 
 /** One observation of every hash of the intent. Read-only. */
 export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: EvidenceDeps = realDeps): Promise<EvidenceObservation> {
+  if (isQuorumClient(pub)) return observeQuorum(pub, r, deps);
   let best: { hash: Hex; receipt: any; tx: any } | null = null;
   for (const hash of r.hashes) {
     const [receipt, tx] = await Promise.all([pub.getTransactionReceipt({ hash }).catch(() => null), pub.getTransaction({ hash }).catch(() => null)]);
@@ -388,10 +400,434 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
   return o;
 }
 
+// ---- quorum reads (EVM_EVIDENCE_MODE=full_quorum) ---------------------------------------------------------
+// Standard practice, not a new mechanism: multi-provider quorum reads as in ethers' FallbackProvider (quorum mode),
+// eRPC's consensus mode and, with stronger (verified) guarantees, the Helios light client. full_quorum applies them
+// inside the evidence layer so that a stale or lying read node cannot by itself produce "landed" evidence. Everything
+// else (decision table, guard, re-send rule, messages, tx_status, refusal decoding) is the full layer unchanged.
+//
+// Agreement rule (one observation; N configured read endpoints, quorum q = floor(N/2) + 1, every endpoint weight 1):
+//  1. View. Each endpoint reports its head h_i and the hash of its block h_i; an endpoint that errors or does not
+//     answer within the stall timeout abstains. Two endpoints i, j with h_i <= h_j are consistent when j's block at
+//     height h_i has i's hash (the lower view is a prefix of the higher one). The agreeing set S is the largest set of
+//     pairwise-consistent endpoints (ties: the higher maximum head, then lower indices). A quorum exists when
+//     |S| >= q, counted against all N configured endpoints (an abstaining endpoint counts against it).
+//  2. Most advanced consistent view. The chosen endpoint is the member of S with the highest head (ties: lowest
+//     index); the observation's head is its head. A member more than the lag tolerance (default 1 block) below it is
+//     recorded as lagging (stale). A lagging member still counts toward the quorum (it agrees with the chosen view's
+//     history) but is never asked about anything above its own head.
+//  3. Facts. A claim about block B (a receipt in B, a transaction mined in B) is decided by the members that can see B
+//     (head >= B): supporters return the same (status, block, block hash); deniers return "not found" or another value.
+//     The claim is accepted when supporters > deniers, rejected when deniers > supporters, and the fact is unresolved
+//     when they tie (e.g. two endpoints at one head, one shows a receipt and the other says not found). Nonce and
+//     balance are read at the chosen head (blockNumber pinned) from the members whose head reaches it; the strict
+//     majority value is used, a tie is unresolved. A pending (not mined) transaction known to any member counts as
+//     known (it can only lead to "do not send again"). Block hashes for the canonical check come from the chosen
+//     endpoint, whose history S already agreed on.
+//  4. No quorum, or any unresolved fact: the observation carries no evidence; the decision is wait (reason
+//     no_quorum), and after N unresolved rounds ask_user, as for any other unresolved intent. A first send whose
+//     nonce read finds no quorum is not sent.
+// Differences from ethers v6 FallbackProvider: its default quorum is ceil(total weight / 2), so 1 of 2 providers,
+// while here a strict majority is required (2 of 2); its block number tolerates +-1 block between providers and
+// otherwise fails quorum, while here a consistent lagging endpoint is outvoted by height (claims above its head are
+// decided by the endpoints that can see them); its stallTimeout starts the next provider early, while here every
+// endpoint is asked at once and the stall timeout only bounds how long an endpoint may take before it abstains.
+// Limitation: with N = 2 and one endpoint lagging, a claim above the lagging head rests on the advanced endpoint
+// alone, so an endpoint that lies AND reports a higher head than the honest one is not caught (Helios-style header
+// verification would be needed for that).
+export const QUORUM_LAG_TOLERANCE = 1; // blocks; ethers' FallbackProvider tolerates +-1 on getBlockNumber
+export const QUORUM_STALL_MS = 2_000; // per endpoint read, before it abstains (ethers' default stallTimeout is 400 ms)
+
+export interface QuorumEndpoint {
+  /** A label for logs and records (never the URL, which may carry a key). */
+  role: string;
+  client: EvidencePublicClient;
+}
+export interface QuorumOptions {
+  lagTolerance: number;
+  stallMs: number;
+}
+export interface QuorumSummary {
+  ok: boolean;
+  /** Why ok is false; null when ok. */
+  reason: string | null;
+  roles: string[];
+  heads: (number | null)[];
+  quorum: number;
+  members: string[];
+  chosen: string | null;
+  lagging: string[];
+  /** Facts on which members disagreed (resolved by majority, or unresolved when ok is false). */
+  disagreements: string[];
+}
+/** A read client that is N endpoints. Its own methods answer from the chosen endpoint of a fresh view. */
+export interface QuorumClient extends EvidencePublicClient {
+  readonly quorumEndpoints: readonly QuorumEndpoint[];
+  readonly quorumOptions: QuorumOptions;
+}
+export function isQuorumClient(pub: unknown): pub is QuorumClient {
+  return !!pub && Array.isArray((pub as QuorumClient).quorumEndpoints);
+}
+
+type Read<T> = { kind: "value"; v: T } | { kind: "null" } | { kind: "abstain" };
+const NOT_FOUND = /NotFound|not found|could not be found/i;
+/** One endpoint read bounded by the stall timeout; "not found" is an answer, any other error abstains. */
+async function bounded<T>(stallMs: number, f: () => Promise<T | null>): Promise<Read<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stall = new Promise<Read<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "abstain" }), stallMs);
+  });
+  const read = (async (): Promise<Read<T>> => {
+    try {
+      const v = await f();
+      return v === null || v === undefined ? { kind: "null" } : { kind: "value", v };
+    } catch (e) {
+      const text = `${(e as Error)?.name ?? ""} ${(e as Error)?.message ?? ""}`;
+      return NOT_FOUND.test(text) ? { kind: "null" } : { kind: "abstain" };
+    }
+  })();
+  try {
+    return await Promise.race([read, stall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface QuorumView {
+  ok: boolean;
+  reason: string | null;
+  heads: (number | null)[];
+  hashes: (Hex | null)[];
+  members: number[];
+  chosen: number;
+  lagging: number[];
+}
+async function selectView(q: QuorumClient): Promise<QuorumView> {
+  const eps = q.quorumEndpoints;
+  const { stallMs, lagTolerance } = q.quorumOptions;
+  const need = Math.floor(eps.length / 2) + 1;
+  const tops = await Promise.all(
+    eps.map(async (e) => {
+      const h = await bounded(stallMs, async () => Number(await e.client.getBlockNumber({ cacheTime: 0 })));
+      if (h.kind !== "value") return null;
+      const b = await bounded(stallMs, () => e.client.getBlock({ blockNumber: BigInt(h.v) }));
+      return b.kind === "value" && b.v.hash ? { head: h.v, hash: b.v.hash } : null;
+    }),
+  );
+  const heads = tops.map((t) => t?.head ?? null);
+  const hashes = tops.map((t) => t?.hash ?? null);
+  const live = tops.flatMap((t, i) => (t ? [i] : []));
+  // Pairwise consistency: the higher endpoint's block at the lower head has the lower endpoint's hash.
+  const consistent = new Map<string, boolean>();
+  for (const i of live)
+    for (const j of live) {
+      if (j <= i) continue;
+      const [lo, hi] = heads[i]! <= heads[j]! ? [i, j] : [j, i];
+      let same: boolean;
+      if (heads[lo] === heads[hi]) same = hashes[lo] === hashes[hi];
+      else {
+        const b = await bounded(stallMs, () => eps[hi].client.getBlock({ blockNumber: BigInt(heads[lo]!) }));
+        same = b.kind === "value" && b.v.hash === hashes[lo] && Number(b.v.number) === heads[lo];
+      }
+      consistent.set(`${i}|${j}`, same);
+    }
+  const ok2 = (i: number, j: number) => consistent.get(i < j ? `${i}|${j}` : `${j}|${i}`) === true;
+  let best: number[] = [];
+  const maxHead = (s: number[]) => Math.max(-1, ...s.map((i) => heads[i]!));
+  for (let mask = 1; mask < 1 << live.length; mask++) {
+    const s = live.filter((_, k) => mask & (1 << k));
+    if (!s.every((i, a) => s.slice(a + 1).every((j) => ok2(i, j)))) continue;
+    if (s.length > best.length || (s.length === best.length && maxHead(s) > maxHead(best))) best = s;
+  }
+  if (best.length < need) {
+    const reason =
+      live.length < need
+        ? `${eps.length - live.length} of ${eps.length} endpoints did not answer`
+        : `the endpoints report different blocks at the same height`;
+    return { ok: false, reason, heads, hashes, members: best, chosen: -1, lagging: [] };
+  }
+  const chosen = best.reduce((a, i) => (heads[i]! > heads[a]! ? i : a), best[0]);
+  const lagging = best.filter((i) => heads[i]! < heads[chosen]! - lagTolerance);
+  return { ok: true, reason: null, heads, hashes, members: best, chosen, lagging };
+}
+
+/** Rule 3 for claims about a block: supporters vs deniers among the members whose head reaches the block. */
+function agreeOnBlockClaim<T>(
+  view: QuorumView,
+  reads: Read<T>[],
+  blockOf: (v: T) => number | null,
+  key: (v: T) => string,
+): { value: T | null; disagreed: boolean; unresolved: boolean } {
+  const claims = new Map<string, { v: T; block: number; by: number[] }>();
+  view.members.forEach((i, k) => {
+    const x = reads[k];
+    if (x.kind !== "value") return;
+    const block = blockOf(x.v);
+    if (block === null) return;
+    const id = key(x.v);
+    const c = claims.get(id) ?? { v: x.v, block, by: [] };
+    c.by.push(i);
+    claims.set(id, c);
+  });
+  const accepted: T[] = [];
+  let disagreed = false,
+    unresolved = false;
+  for (const [id, c] of claims) {
+    const deniers = view.members.filter((i, k) => {
+      const x = reads[k];
+      if (view.heads[i]! < c.block || x.kind === "abstain") return false;
+      return x.kind === "null" || (blockOf(x.v) === null ? true : key(x.v) !== id);
+    }).length;
+    if (deniers > 0) disagreed = true;
+    if (c.by.length > deniers) accepted.push(c.v);
+    else if (c.by.length === deniers) unresolved = true;
+  }
+  if (accepted.length > 1) return { value: null, disagreed: true, unresolved: true };
+  return { value: accepted[0] ?? null, disagreed, unresolved };
+}
+/** Rule 3 for state at the chosen head: the strict-majority value among the members whose head reaches it. */
+function majorityValue<T>(view: QuorumView, reads: Read<T>[], key: (v: T) => string): { value: T | null; disagreed: boolean; unresolved: boolean } {
+  const tally = new Map<string, { v: T; n: number }>();
+  let answered = 0;
+  view.members.forEach((i, k) => {
+    const x = reads[k];
+    if (view.heads[i]! < view.heads[view.chosen]! || x.kind !== "value") return;
+    answered++;
+    const id = key(x.v);
+    const t = tally.get(id) ?? { v: x.v, n: 0 };
+    t.n++;
+    tally.set(id, t);
+  });
+  const top = [...tally.values()].sort((a, b) => b.n - a.n);
+  if (!top.length) return { value: null, disagreed: false, unresolved: true };
+  return { value: top[0].n * 2 > answered ? top[0].v : null, disagreed: tally.size > 1, unresolved: top[0].n * 2 <= answered };
+}
+
+async function readEffectAt(pub: EvidencePublicClient, e: EvidenceEffect, at: bigint): Promise<bigint> {
+  if (e.kind === "allowance")
+    return (await pub.readContract({ address: e.token, abi: ERC20_ABI, functionName: "allowance", args: [e.owner, e.spender], blockNumber: at, authorizationList: undefined })) as bigint;
+  if (e.token.toLowerCase() === NATIVE_TOKEN_ADDRESS) return pub.getBalance({ address: e.holder, blockNumber: at });
+  return (await pub.readContract({ address: e.token, abi: ERC20_ABI, functionName: "balanceOf", args: [e.holder], blockNumber: at, authorizationList: undefined })) as bigint;
+}
+
+/** The latest view's lagging/agreement state, logged to stderr when it changes (a run's logs show what the wallet saw). */
+let lastQuorumLog = "";
+function logQuorum(s: QuorumSummary) {
+  const line = s.ok
+    ? `agreed: chosen ${s.chosen}, heads ${s.roles.map((r, i) => `${r}=${s.heads[i] ?? "none"}`).join(" ")}${s.lagging.length ? `; lagging (stale): ${s.lagging.join(",")}` : ""}${s.disagreements.length ? `; outvoted on ${s.disagreements.join(",")}` : ""}`
+    : `no quorum (${s.reason}): heads ${s.roles.map((r, i) => `${r}=${s.heads[i] ?? "none"}`).join(" ")}`;
+  // Heads advance every block; log only when the agreement itself changes.
+  const key = JSON.stringify([s.ok, s.reason, s.chosen, s.members, s.lagging, s.disagreements]);
+  if (key === lastQuorumLog) return;
+  lastQuorumLog = key;
+  console.warn(`[evidence] quorum ${line}`);
+}
+function summarize(q: QuorumClient, view: QuorumView, disagreements: string[], unresolved: string[]): QuorumSummary {
+  const roles = q.quorumEndpoints.map((e) => e.role);
+  const ok = view.ok && unresolved.length === 0;
+  const s: QuorumSummary = {
+    ok,
+    reason: !view.ok ? view.reason : unresolved.length ? `no majority on ${unresolved.join(", ")}` : null,
+    roles,
+    heads: view.heads,
+    quorum: Math.floor(roles.length / 2) + 1,
+    members: view.members.map((i) => roles[i]),
+    chosen: view.ok ? roles[view.chosen] : null,
+    lagging: view.lagging.map((i) => roles[i]),
+    disagreements,
+  };
+  logQuorum(s);
+  return s;
+}
+
+/** observe() for full_quorum: the same observation, built from the agreement rule above. Read-only. */
+async function observeQuorum(q: QuorumClient, r: IntentRecord, deps: EvidenceDeps): Promise<EvidenceObservation> {
+  const view = await selectView(q);
+  const stall = q.quorumOptions.stallMs;
+  const prev = r.observations[r.observations.length - 1];
+  const blank = (summary: QuorumSummary): EvidenceObservation => {
+    const o: EvidenceObservation = {
+      atMs: deps.now(),
+      head: prev?.head ?? 0,
+      hash: r.hashes[r.hashes.length - 1] ?? null,
+      receiptBlock: null,
+      receiptBlockHash: null,
+      receiptStatus: null,
+      txKnown: false,
+      txBlock: null,
+      canonical: null,
+      orphanEvidence: false,
+      confirmations: 0,
+      nonceLatest: r.pinnedNonce,
+      balanceEffectSeen: false,
+      quorum: summary,
+    };
+    r.observations.push(o);
+    return o;
+  };
+  if (!view.ok) return blank(summarize(q, view, [], []));
+  const members = view.members.map((i) => q.quorumEndpoints[i].client);
+  const chosen = q.quorumEndpoints[view.chosen].client;
+  const head = view.heads[view.chosen]!;
+  const disagreements: string[] = [];
+  const unresolved: string[] = [];
+  const note = (fact: string, x: { disagreed: boolean; unresolved: boolean }) => {
+    if (x.disagreed && !disagreements.includes(fact)) disagreements.push(fact);
+    if (x.unresolved && !unresolved.includes(fact)) unresolved.push(fact);
+  };
+  let best: { hash: Hex; receipt: any; tx: any } | null = null;
+  // Per hash: facts disputed without a majority. They are moot when another hash of the intent, sent with the same
+  // nonce, has an undisputed success receipt (two transactions with one nonce cannot both execute).
+  const disputed: Hex[] = [];
+  let settledBy: Hex | null = null;
+  for (const hash of r.hashes) {
+    const [receipts, txs] = await Promise.all([
+      Promise.all(members.map((c) => bounded(stall, () => c.getTransactionReceipt({ hash })))),
+      Promise.all(members.map((c) => bounded(stall, () => c.getTransaction({ hash })))),
+    ]);
+    const rc = agreeOnBlockClaim(view, receipts, (v) => Number(v.blockNumber), (v) => `${v.status}|${v.blockNumber}|${v.blockHash}`);
+    note("receipt", { ...rc, unresolved: false });
+    const mined = agreeOnBlockClaim(view, txs, (v) => (v.blockNumber === null ? null : Number(v.blockNumber)), (v) => `${v.blockNumber}|${v.blockHash}`);
+    note("transaction", { ...mined, unresolved: false });
+    if (rc.unresolved || mined.unresolved) disputed.push(hash);
+    else if (rc.value?.status === "success" && !rc.disagreed) settledBy = hash;
+    const pendingKnown = txs.some((x) => x.kind === "value" && x.v.blockNumber === null);
+    const tx = mined.value ?? (pendingKnown ? { blockNumber: null, blockHash: null } : null);
+    const rank = (x: typeof best) => (!x ? 0 : x.receipt?.status === "success" ? 3 : x.receipt ? 2 : x.tx ? 1 : 0);
+    const cand = { hash, receipt: rc.value, tx };
+    if (rank(cand) > rank(best)) best = cand;
+  }
+  const oneNonce = new Set(r.sentNonces).size <= 1;
+  if (disputed.length && !(settledBy && oneNonce)) unresolved.push(`the ${r.intent.label}'s receipt or inclusion`);
+  const at = BigInt(head);
+  const nonces = await Promise.all(members.map((c) => bounded(stall, async () => Number(await c.getTransactionCount({ address: r.intent.sender, blockNumber: at })))));
+  const nonce = majorityValue(view, nonces, String);
+  note("nonce", nonce);
+  let effectNow: bigint | null = null;
+  if (r.intent.effect) {
+    const effect = r.intent.effect;
+    const effects = await Promise.all(members.map((c) => bounded(stall, () => readEffectAt(c, effect, at))));
+    const e = majorityValue(view, effects, String);
+    note("balance", e);
+    effectNow = e.value;
+  }
+  const summary = summarize(q, view, disagreements, unresolved);
+  if (!summary.ok) return blank(summary);
+  const receipt = best?.receipt ?? null;
+  const tx = best?.tx ?? null;
+  const blockOf = async (n: number) => chosen.getBlock({ blockNumber: BigInt(n) }).catch(() => null);
+  let canonical: boolean | null = null;
+  let included: number | null = null;
+  if (receipt) {
+    included = Number(receipt.blockNumber);
+    const b = await blockOf(included);
+    canonical = b ? b.hash === receipt.blockHash && Number(b.number) === included : null;
+  } else if (tx?.blockNumber !== null && tx?.blockNumber !== undefined) {
+    included = Number(tx.blockNumber);
+    const b = await blockOf(included);
+    canonical = b ? b.hash === tx.blockHash && Number(b.number) === included : null;
+  }
+  let orphanEvidence = false;
+  if (r.receiptSeen && r.receiptSeen.block <= head) {
+    const b = await blockOf(r.receiptSeen.block);
+    orphanEvidence = !!b && Number(b.number) === r.receiptSeen.block && b.hash !== r.receiptSeen.blockHash;
+  }
+  const balanceEffectSeen = effectSeen(r, effectNow);
+  if (orphanEvidence) {
+    r.landed = false;
+    reportedOutcomes.delete(r);
+  }
+  const blockHash = receipt?.blockHash ?? tx?.blockHash;
+  // Keep the old anchor while an orphaned transaction is still below K on its new branch.
+  if (canonical === true && included !== null && blockHash && best?.hash &&
+      (!receipt || receipt.status === "success") &&
+      (!orphanEvidence || (head - included + 1 >= EVIDENCE_K && balanceEffectSeen))) {
+    r.receiptSeen = { hash: best.hash, block: included, blockHash };
+  }
+  const o: EvidenceObservation = {
+    atMs: deps.now(),
+    head,
+    hash: best?.hash ?? r.hashes[r.hashes.length - 1] ?? null,
+    receiptBlock: receipt ? Number(receipt.blockNumber) : null,
+    receiptBlockHash: receipt?.blockHash ?? null,
+    receiptStatus: receipt ? receipt.status : null,
+    txKnown: !!tx,
+    txBlock: !receipt && included !== null ? included : null,
+    canonical,
+    orphanEvidence,
+    confirmations: included !== null && canonical === true ? Math.max(0, head - included + 1) : 0,
+    nonceLatest: nonce.value ?? r.pinnedNonce,
+    balanceEffectSeen,
+    quorum: summary,
+  };
+  if (!r.headSince || r.headSince.head !== head) r.headSince = { head, atMs: o.atMs };
+  r.observations.push(o);
+  return o;
+}
+
+/** A quorum read client over `endpoints`. Its direct methods (the first send's nonce and snapshot) use a fresh view. */
+export function quorumClient(endpoints: QuorumEndpoint[], options: Partial<QuorumOptions> = {}): QuorumClient {
+  if (endpoints.length < 2) throw new Error(`full_quorum needs at least 2 read endpoints (got ${endpoints.length})`);
+  const q: QuorumClient = {
+    quorumEndpoints: endpoints,
+    quorumOptions: { lagTolerance: options.lagTolerance ?? QUORUM_LAG_TOLERANCE, stallMs: options.stallMs ?? QUORUM_STALL_MS },
+    getTransactionCount: async (a) => (await pick()).getTransactionCount(a),
+    getTransaction: async (a) => (await pick()).getTransaction(a),
+    getTransactionReceipt: async (a) => (await pick()).getTransactionReceipt(a),
+    getBlock: async (a) => (await pick()).getBlock(a),
+    getBlockNumber: async (a) => (await pick()).getBlockNumber(a),
+    getBalance: async (a) => (await pick()).getBalance(a),
+    readContract: async (a) => (await pick()).readContract(a),
+  };
+  async function pick(): Promise<EvidencePublicClient> {
+    const view = await selectView(q);
+    summarize(q, view, [], []);
+    if (!view.ok)
+      throw new EVMError(
+        EVMErrorCode.NETWORK_ERROR,
+        `Nothing was sent: the wallet's RPC endpoints disagree about the chain (${view.reason}), so the account's state cannot be trusted. Wait and try again.`,
+      );
+    return endpoints[view.chosen].client;
+  }
+  return q;
+}
+
+let envQuorum: { key: string; client: QuorumClient } | null = null;
+/**
+ * The client evidence reads go through: unchanged unless EVM_EVIDENCE_MODE=full_quorum, which reads from
+ * EVM_EVIDENCE_READ_URLS (comma-separated, N >= 2; roles from EVM_EVIDENCE_READ_ROLES, default read0..readN-1;
+ * EVM_EVIDENCE_QUORUM_LAG blocks, EVM_EVIDENCE_QUORUM_STALL_MS). A QuorumClient passed in is used as it is.
+ */
+export function evidenceReadClient(pub: EvidencePublicClient): EvidencePublicClient {
+  if (evidenceMode() !== "full_quorum" || isQuorumClient(pub)) return pub;
+  const urls = (process.env.EVM_EVIDENCE_READ_URLS ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  const roles = (process.env.EVM_EVIDENCE_READ_ROLES ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  const lag = Number(process.env.EVM_EVIDENCE_QUORUM_LAG ?? QUORUM_LAG_TOLERANCE);
+  const stall = Number(process.env.EVM_EVIDENCE_QUORUM_STALL_MS ?? QUORUM_STALL_MS);
+  const key = [urls.join(","), roles.join(","), lag, stall].join("|");
+  if (envQuorum?.key === key) return envQuorum.client;
+  if (urls.length < 2) throw new Error(`EVM_EVIDENCE_MODE=full_quorum needs EVM_EVIDENCE_READ_URLS with at least 2 endpoints (got ${urls.length})`);
+  if (roles.length && roles.length !== urls.length) throw new Error("EVM_EVIDENCE_READ_ROLES must name every read endpoint");
+  if (!Number.isInteger(lag) || lag < 0 || !Number.isInteger(stall) || stall <= 0) throw new Error("Bad EVM_EVIDENCE_QUORUM_LAG or EVM_EVIDENCE_QUORUM_STALL_MS");
+  const client = quorumClient(
+    urls.map((url, i) => ({
+      role: roles[i] ?? `read${i}`,
+      client: createPublicClient({ transport: http(url, { retryCount: 0, timeout: stall }) }) as unknown as EvidencePublicClient,
+    })),
+    { lagTolerance: lag, stallMs: stall },
+  );
+  envQuorum = { key, client };
+  announceMode("full_quorum");
+  console.warn(`[evidence] quorum endpoints: ${client.quorumEndpoints.map((e) => e.role).join(", ")} (quorum ${Math.floor(urls.length / 2) + 1} of ${urls.length}, lag tolerance ${lag}, stall ${stall} ms)`);
+  return client;
+}
+
 /** The decision table, applied to the latest observation (and the intent's history). */
 export function decide(r: IntentRecord, now: number): { decision: EvidenceDecision; waitReason: WaitReason; state: IntentState } {
   const o = r.observations[r.observations.length - 1];
   if (!o) return { decision: "wait", waitReason: "not_seen", state: "sent" };
+  // full_quorum: no majority of the read endpoints agreed, so this observation carries no evidence either way.
+  if (o.quorum && !o.quorum.ok) return { decision: "wait", waitReason: "no_quorum", state: r.state };
   const included = (o.receiptStatus === "success" || o.txBlock !== null) && o.canonical !== false;
   const inclState: IntentState = included ? "included" : o.txKnown ? "pending" : "sent";
   if (o.receiptStatus === "reverted") return { decision: "failed", waitReason: null, state: "failed" };
@@ -426,6 +862,7 @@ function closeRound(r: IntentRecord) {
 
 /** One check round (one observation), as tx_status and the guard run it. Read-only. */
 export async function checkOnce(pub: EvidencePublicClient, r: IntentRecord, deps: EvidenceDeps = realDeps, countRound = true): Promise<IntentRecord> {
+  pub = evidenceReadClient(pub);
   if (countRound) r.rounds++;
   await observe(pub, r, deps);
   const wasConfirmed = r.state === "confirmed";
@@ -473,6 +910,8 @@ export function evidenceMessage(r: IntentRecord): string {
       return `I could not confirm your ${r.intent.label} after ${r.rounds} checks. Known: ${facts.join("; ")}. Please decide how to proceed before anything else is sent.${tail}`;
     }
     default:
+      if (r.waitReason === "no_quorum")
+        return `${what} cannot be checked right now: the wallet's RPC endpoints disagree about the chain (${o?.quorum?.reason ?? "no majority"}), so no answer can be trusted yet. Do not send it again; wait and check its status with tx_status.${tail}`;
       if (r.waitReason === "stale_head")
         return `Your node has not advanced for ${T} s; balances read now may be out of date. Wait and check the status again before acting.${tail}`;
       if (r.waitReason === "confirmations")
@@ -629,7 +1068,7 @@ export async function sendWithEvidence(o: {
 }): Promise<SendWithEvidenceResult> {
   const deps = o.deps ?? realDeps;
   const mode = evidenceMode();
-  if (mode !== "full") {
+  if (!isFullLayer(mode)) {
     if (evidenceAblation() !== "none") throw new Error(`EVM_EVIDENCE_ABLATE applies to the full layer only (mode ${mode})`);
     announceMode(mode);
     if (mode === "nonce_only") return sendNonceOnly(o, deps);
@@ -638,7 +1077,7 @@ export async function sendWithEvidence(o: {
     throw new Error(`sendWithEvidence called with EVM_EVIDENCE_MODE unset`);
   }
   const ablation = evidenceAblation();
-  const pub = o.publicClient;
+  const pub = evidenceReadClient(o.publicClient);
   const r = await serializeSend(o.intent, async () => {
     await guard(pub, o.intent, deps);
     let r = findOpenIntent(o.intent);

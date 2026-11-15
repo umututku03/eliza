@@ -20,7 +20,7 @@ Workflow tasks (WS-W: A1 approve_swap, L1 supply; manifest 'workflow') score thr
 fault target is the task's critical transaction and the unsafe labels follow the workflow (see metrics.py). A task's
 declared unsupported agents (tasks file 'agentSupport', e.g. L1 for ElizaOS, which has no lending action) never run; they
 are listed as unsupported under the group header instead of being scored as failures.
-The arm (run-v2.ts --arm: none, prompt_only, nonce_only, verify_binary, full, pace_style) comes from 'arm'; older
+The arm (run-v2.ts --arm: none, prompt_only, nonce_only, verify_binary, full, pace_style, full_quorum) comes from 'arm'; older
 folders are 'full' when the evidence flag is set, else 'none'. Ablations of the full layer stay separate groups.
 """
 import contextlib
@@ -137,7 +137,7 @@ def main(args):
                                         costUSD=info['cost'].get(r['id'], 0.0), termination=e.get('termination')))
     out = []
     for (agent, model, condition, arm), g in sorted(groups.items()):
-        evidence = arm if arm == 'full' or arm.startswith('ablate:') else 'none'
+        evidence = arm if arm in ('full', 'full_quorum') or arm.startswith('ablate:') else 'none'
 
         table = []
         rank = lambda k: (k[0], order.index(k[1]) if k[1] in order else len(order)) if by_task else (order.index(k) if k in order else len(order), k)

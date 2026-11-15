@@ -18,10 +18,18 @@
 // --agent=claudecode runs Claude Code headless (claudecode-child.ts) with only the MCP wallet server's four tools
 // (mcp-wallet-server.ts, agent2's tools and gate): stock condition and Anthropic models only; tag "cc".
 //        [--evidence [--evidence-ablate=none|no_nonce_pin|no_grading|no_refusal_decode]] [--mock-agent=scripted|naive]
-//        [--idle-block-ms=N] [--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style]
+//        [--idle-block-ms=N] [--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style|full_quorum]
+//        [--quorum-proxies=K]
 //
 // --arm selects one named baseline (research/notes/baselines-spec.md), recorded as manifest.arm; episode ids carry
-// its tag (-none, -po, -no, -vb, -ev, -ps). --evidence is --arm=full. Everything else is equal across arms.
+// its tag (-none, -po, -no, -vb, -ev, -ps, -fq). --evidence is --arm=full. Everything else is equal across arms.
+// --arm=full_quorum (WS-Q): the full layer with quorum reads (EVM_EVIDENCE_MODE=full_quorum; quorum reads as in ethers
+// FallbackProvider / eRPC consensus, applied inside the evidence layer). The parent starts K fork-RPC proxies
+// (--quorum-proxies, default 2) in front of the same Anvil. Proxy 0 ("primary") is the wallet's RPC, as in every
+// other arm: it carries the sends, the sale detection and the scenario's fault; proxies 1..K-1 ("secondaryN") are
+// extra evidence-read endpoints with no fault, so a read fault (rpc_stale, receipt_hidden) hits ONE provider of K
+// (manifest quorum.faultScope = "proxy0"). Proxy k listens on the fork proxy port + 10k (within the port base's
+// +0..+99 block, clear of the neighbouring base's ports). Every other arm keeps a single proxy.
 //
 // Conditions (research/benchmark/PREREGISTRATION.md §3): stock (the agent's key holds the funds),
 // existing_controls (a delegator account with MetaMask built-in caveats only) and plan_guard (the same account,
@@ -260,6 +268,7 @@ export const ARM_TAGS: Record<string, string> = {
   verify_binary: "vb",
   full: "ev",
   pace_style: "ps",
+  full_quorum: "fq",
 };
 const ARM = arg("arm") ?? (EVIDENCE ? "full" : "none");
 if (!ARM_TAGS[ARM]) throw new Error(`Unknown --arm=${ARM}`);
@@ -284,6 +293,13 @@ if (WF && RUN_SCENARIOS.some((s) => !WORKFLOW_SCENARIOS.includes(s)))
   throw new Error(`Workflow task ${frozen.id} supports scenarios ${WORKFLOW_SCENARIOS.join(",")} only`);
 if (AGENT_KIND !== "elizaos" && ARM !== "none")
   throw new Error(`Protected comparisons (--arm) run on ElizaOS only; ${AGENT_KIND} runs --arm=none`);
+// full_quorum: K read proxies (proxy 0 is the wallet's RPC and the only faulted one); every other arm has one.
+const QUORUM_PROXIES = ARM === "full_quorum" ? Number(arg("quorum-proxies") ?? 2) : 1;
+if (arg("quorum-proxies") !== undefined && ARM !== "full_quorum")
+  throw new Error("--quorum-proxies needs --arm=full_quorum");
+if (!Number.isInteger(QUORUM_PROXIES) || QUORUM_PROXIES < 1 || (ARM === "full_quorum" && (QUORUM_PROXIES < 2 || QUORUM_PROXIES > 9)))
+  throw new Error(`Bad --quorum-proxies=${arg("quorum-proxies")} (2..9)`);
+const QUORUM_ROLES = Array.from({ length: QUORUM_PROXIES }, (_, k) => (k === 0 ? "primary" : `secondary${k}`));
 const ID_TAG = AGENT_KIND === "agent2" ? "a2" : AGENT_KIND === "claudecode" ? "cc" : {
   stock: "v2",
   existing_controls: "ec",
@@ -389,6 +405,8 @@ const LLM_PORT = 18650 + PORT_BASE,
   FORK_PROXY_PORT = 18546 + PORT_BASE,
   ANVIL_RUN_PORT = ANVIL_PORT + PORT_BASE,
   MOCK_GATE_PORT = 18652 + PORT_BASE;
+// full_quorum's extra read proxies: fork proxy port + 10k, k = 1..K-1 (at most +80: below the next base's Anvil port).
+const QUORUM_PORT_OFFSETS = Array.from({ length: QUORUM_PROXIES }, (_, k) => 10 * k);
 // Fault parameters, recorded in the manifest; the verifier checks the fork journal against them. The proxy applies
 // its own constants (fork-rpc-proxy.ts takes no parameters yet), so only those values are accepted for now.
 const FAULT_PARAMS = {
@@ -482,7 +500,9 @@ const ARM_ENV: Record<string, string> =
           EVM_EVIDENCE_MODE: ARM,
           ...(ARM === "pace_style" ? { EVM_PACE_POLICY: JSON.stringify(PACE_POLICY) } : {}),
         }
-      : {};
+      : ARM === "full_quorum"
+        ? { EVM_EVIDENCE_MODE: "full_quorum", EVM_EVIDENCE_READ_ROLES: QUORUM_ROLES.join(",") }
+        : {};
 const manifest = {
   createdAt: new Date().toISOString(),
   protocolVersion: PROTOCOL_VERSION,
@@ -543,6 +563,21 @@ const manifest = {
   mockAgent: MOCK_AGENT,
   idleBlockMs: IDLE_BLOCK_MS,
   portBase: PORT_BASE,
+  // Read endpoints by role (never URLs). Only full_quorum has more than one; null elsewhere.
+  quorum:
+    ARM === "full_quorum"
+      ? {
+          proxies: QUORUM_PROXIES,
+          faultScope: "proxy0",
+          endpoints: QUORUM_ROLES.map((role, k) => ({
+            index: k,
+            role,
+            portOffsetFromForkProxy: QUORUM_PORT_OFFSETS[k],
+            serves: k === 0 ? "wallet RPC (reads and sends) and evidence read endpoint" : "evidence read endpoint only",
+            fault: k === 0 ? "scenario" : "none",
+          })),
+        }
+      : null,
   faultParams: FAULT_PARAMS,
   ...(AGENT_KIND === "agent2"
     ? {
@@ -593,7 +628,7 @@ if (mode === "live" && manifest.elizaSourceDirty)
 // and only a redacted copy is saved at the end.
 // Every port this run binds must be free: a busy port would silently attach this run to another cohort's fork or
 // LLM proxy (seen when a parallel run held the same --port-base).
-for (const port of [ANVIL_RUN_PORT, FORK_PROXY_PORT, LLM_PORT, MOCK_GATE_PORT]) {
+for (const port of [ANVIL_RUN_PORT, FORK_PROXY_PORT, LLM_PORT, MOCK_GATE_PORT, ...QUORUM_PORT_OFFSETS.slice(1).map((o) => FORK_PROXY_PORT + o)]) {
   try {
     Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } }).stop(true);
   } catch {
@@ -626,6 +661,26 @@ const forkProxy = new ForkRpcProxy(
   FORK_PROXY_PORT,
 );
 forkProxy.start();
+// full_quorum: the secondary read proxies, same Anvil, no fault (reset with kind none before every episode/control).
+const readProxies = QUORUM_PORT_OFFSETS.slice(1).map(
+  (o) => new ForkRpcProxy(`http://127.0.0.1:${ANVIL_RUN_PORT}`, FORK_PROXY_PORT + o),
+);
+for (const p of readProxies) p.start();
+const allProxies = [forkProxy, ...readProxies];
+function resetReadProxies() {
+  for (const p of readProxies) p.reset(SENDER, frozen.router, { kind: "none" }, saleRule, FAULT_PARAMS);
+}
+async function settleReadProxies() {
+  for (const p of readProxies) await p.settle();
+}
+/** Per-proxy journals (secondaries) and read counts (all), recorded only under full_quorum. */
+function quorumRecord() {
+  if (ARM !== "full_quorum") return {};
+  return {
+    quorumJournals: readProxies.map((p, k) => ({ index: k + 1, role: QUORUM_ROLES[k + 1], journal: p.journal, faultState: p.state() })),
+    proxyReads: allProxies.map((p, k) => ({ index: k, role: QUORUM_ROLES[k], reads: p.readCounts() })),
+  };
+}
 const llmArgs = [
   `--port=${LLM_PORT}`,
   `--dest=${join(dest, "llm")}`,
@@ -660,6 +715,8 @@ const childEnv: Record<string, string> = {
   HOME: process.env.HOME ?? "",
   LOG_LEVEL: process.env.LOG_LEVEL ?? "warn",
   ...ARM_ENV,
+  // Localhost proxy URLs only (no key); kept out of armEnv so the manifest records roles, not URLs.
+  ...(ARM === "full_quorum" ? { EVM_EVIDENCE_READ_URLS: allProxies.map((p) => p.url).join(",") } : {}),
 };
 
 await fundAgent(anvil);
@@ -1796,6 +1853,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
   await resetChain();
   const pre = await preEpisode(scenario);
   forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule, FAULT_PARAMS);
+  resetReadProxies();
   const before = await chainState();
   episodeBefore = before;
   // Neutral random identity; nothing model-visible may encode the episode or scenario.
@@ -1829,6 +1887,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
   });
   const chainTruth = truth ? await truth.stop() : null;
   await forkProxy.settle(); // next-send: a deferred send is forwarded and recorded before scoring
+  await settleReadProxies();
   const childOut = c.out ?? {
     termination: `child_exit_${c.exitCode}`,
     declared: null,
@@ -1862,6 +1921,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
     forkJournal: forkProxy.journal,
     faultState: forkProxy.state(),
     ...(chainTruth ? { chainTruth } : {}),
+    ...quorumRecord(),
   };
   writeFileSync(
     join(dest, "episodes", `${id}.json`),
@@ -1882,6 +1942,7 @@ async function runControl(scenario: string) {
   await resetChain();
   const pre = await preEpisode(scenario);
   forkProxy.reset(SENDER, frozen.router, faultFor(scenario), saleRule, FAULT_PARAMS);
+  resetReadProxies();
   episodeBefore = await chainState();
   const c = await child("control-child-v2.ts", `control-${scenario}`, {
     ...baseSpec,
@@ -1891,6 +1952,7 @@ async function runControl(scenario: string) {
     reorgTrigger: FAULT_PARAMS.reorgTrigger,
   });
   await forkProxy.settle();
+  await settleReadProxies();
   if (!c.out)
     throw Object.assign(
       new Error(`control-${scenario} child exited ${c.exitCode}`),
@@ -1912,6 +1974,7 @@ async function runControl(scenario: string) {
     outcome: out,
     forkJournal: forkProxy.journal,
     faultState: forkProxy.state(),
+    ...quorumRecord(),
   };
   writeFileSync(
     join(dest, "episodes", `control-${scenario}.json`),
@@ -2007,6 +2070,7 @@ writeFileSync(
 mockGate?.stop(true);
 llmProc.kill();
 forkProxy.stop();
+for (const p of readProxies) p.stop();
 anvil.proc.kill();
 await anvil.proc.exited;
 saveRedactedAnvilLog();

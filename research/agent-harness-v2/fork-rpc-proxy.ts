@@ -20,6 +20,9 @@
 // and means "the first successful critical transaction"; without a rule the default stays exactly "first sale".
 // For the reorg check a task can replace the X balanceOf read with another holder-state read (xBalance.data, e.g.
 // the allowance for A1): its value must be restored by the emulated reorg.
+// WS-Q (full_quorum): run-v2.ts may start several instances in front of one Anvil; each has its own fault state and
+// journal. readCounts() reports the calls an instance served since its last reset (by JSON-RPC method), so the
+// verifier can tell that a secondary read endpoint was actually consulted. It is not part of state().
 import {
   type Hex,
   keccak256,
@@ -89,6 +92,7 @@ export class ForkRpcProxy {
   private deferred: Promise<unknown> = Promise.resolve();
   private raw = new Map<string, Hex>(); // forwarded raw transactions by hash (re-inclusion after a reorg)
   private params: FaultParams = { ...DEFAULT_PARAMS };
+  private reads: Record<string, number> = {};
 
   constructor(
     public anvilUrl: string,
@@ -127,6 +131,11 @@ export class ForkRpcProxy {
     this.queue = Promise.resolve();
     this.deferred = Promise.resolve();
     this.raw = new Map();
+    this.reads = {};
+  }
+
+  readCounts() {
+    return { ...this.reads };
   }
 
   /** Resolves once every deferred send (next-send trigger) has been forwarded and recorded. */
@@ -368,6 +377,7 @@ export class ForkRpcProxy {
   }
 
   private async handle(call: any) {
+    this.reads[call.method] = (this.reads[call.method] ?? 0) + 1;
     await this.maybeReorg(call);
     if (
       call.method === "eth_getTransactionReceipt" &&
