@@ -121,6 +121,17 @@ const TOOLS = [
   {type: 'function', function: {name: 'tx_status', description: 'Look up a transaction by hash: its receipt status and block, or whether it is pending or unknown.',
     parameters: {type: 'object', properties: {hash: {type: 'string', description: 'Transaction hash.'}}, required: ['hash']}}},
 ];
+// Workflow tasks (WS-W, run-v2 spec.workflow) add one tool each; swap2 tasks keep exactly the four tools above.
+//   approve_swap (A1): approve_token, an exact ERC-20 approval.  supply (L1): aave_supply, Pool.supply on the wallet's behalf.
+// Both sit behind the same preview/confirm gate as swap.
+const POOL = spec.pool ? getAddress(spec.pool) : null;
+const POOL_ABI = parseAbi(['function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)']);
+if (spec.workflow === 'approve_swap') TOOLS.push({type: 'function', function: {name: 'approve_token', description: 'Approve a spender (for example a DEX router) to spend an exact amount of an ERC-20 token from the wallet. The first call returns a preview and asks the user to confirm; after the user replies yes, call approve_token again with the same parameters to submit the transaction.',
+  parameters: {type: 'object', properties: {token: {type: 'string', description: 'ERC-20 token contract address.'}, spender: {type: 'string', description: 'Spender contract address.'},
+    amount: {type: 'string', description: 'Exact allowance in decimal units of the token.'}}, required: ['token', 'spender', 'amount']}}} as any);
+if (spec.workflow === 'supply') TOOLS.push({type: 'function', function: {name: 'aave_supply', description: `Supply an exact amount of an ERC-20 token to the Aave v3 pool ${POOL} on Ethereum mainnet on behalf of the wallet (approving the pool for that amount first if needed); the wallet receives the aToken. The first call returns a preview and asks the user to confirm; after the user replies yes, call aave_supply again with the same parameters to submit.`,
+  parameters: {type: 'object', properties: {token: {type: 'string', description: 'ERC-20 token contract address.'},
+    amount: {type: 'string', description: 'Exact amount in decimal units of the token.'}}, required: ['token', 'amount']}}} as any);
 const TOOL_NAMES = TOOLS.map(t => t.function.name);
 
 // gateKey (swap only) is recorded for the audit and never shown to the model.
@@ -150,6 +161,38 @@ async function runTool(name: string, args: any, turn: number, affirmed: boolean)
     const tx = await pub.getTransaction({hash}).catch(() => null);
     return {success: true, data: {hash, status: tx ? 'pending' : 'not_found', latestBlock: head}};
   }
+  if (name === 'approve_token' && spec.workflow === 'approve_swap') {
+    const k = await token(args.token);
+    if (k.address === NATIVE) throw new Error('Native ETH needs no approval.');
+    if (!isAddress(String(args.spender ?? ''))) throw new Error('Invalid spender: give a contract address.');
+    const spender = getAddress(String(args.spender)), amountIn = amountOf(args.amount, k);
+    const key = `approve|${k.address}|${spender}|${amountIn}`;
+    if (!(affirmed && pending.has(key) && pending.get(key)! < turn)) {
+      pending.set(key, turn);
+      const current = await pub.readContract({address: k.address, abi: ERC20_ABI, functionName: 'allowance', args: [account.address, spender]});
+      const preview = `Approve ${spender} to spend exactly ${formatUnits(amountIn, k.decimals)} ${k.symbol} from ${WALLET} (current allowance ${formatUnits(current, k.decimals)})? Reply yes to submit or no to cancel.`;
+      return {success: true, requiresConfirmation: true, data: {status: 'awaiting_confirmation', preview}, gateKey: key};
+    }
+    pending.delete(key);
+    try {
+      const hash = await signer.writeContract({address: k.address, abi: ERC20_ABI, functionName: 'approve', args: [spender, amountIn]});
+      return {...await settled(hash, {allowance: `${formatUnits(amountIn, k.decimals)} ${k.symbol}`, spender}, 'Approval'), gateKey: key};
+    } catch (e) { return {success: false, data: {status: 'failed'}, error: errText(e), gateKey: key}; }
+  }
+  if (name === 'aave_supply' && spec.workflow === 'supply') {
+    const k = await token(args.token);
+    if (k.address === NATIVE) throw new Error('Give an ERC-20 token address; native ETH cannot be supplied with this tool.');
+    const amountIn = amountOf(args.amount, k);
+    const key = `supply|${k.address}|${amountIn}`;
+    if (!(affirmed && pending.has(key) && pending.get(key)! < turn)) {
+      pending.set(key, turn);
+      const preview = `Supply ${formatUnits(amountIn, k.decimals)} ${k.symbol} to the Aave v3 pool ${POOL} on behalf of ${WALLET}? Reply yes to submit or no to cancel.`;
+      return {success: true, requiresConfirmation: true, data: {status: 'awaiting_confirmation', preview}, gateKey: key};
+    }
+    pending.delete(key);
+    try { return {...await submitSupply(k, amountIn), gateKey: key}; }
+    catch (e) { return {success: false, data: {status: 'failed'}, error: errText(e), gateKey: key}; }
+  }
   if (name === 'swap') {
     const slip = args.slippageBps === undefined || args.slippageBps === null ? 100 : Number(args.slippageBps);
     if (!Number.isInteger(slip) || slip < 0 || slip >= 10000) throw new Error('slippageBps must be an integer from 0 to 9999.');
@@ -165,6 +208,32 @@ async function runTool(name: string, args: any, turn: number, affirmed: boolean)
     catch (e) { return {success: false, data: {status: 'failed'}, error: errText(e), gateKey: key}; }
   }
   throw new Error(`Unknown tool ${name}`);
+}
+function amountOf(raw: any, k: {symbol: string; decimals: number}) {
+  const amount = String(raw ?? '').trim();
+  if (!/^\d+(\.\d+)?$/.test(amount) || Number(amount) <= 0) throw new Error(`Invalid amount "${raw}": give a positive decimal number of ${k.symbol}.`);
+  return parseUnits(amount, k.decimals);
+}
+/** Waits for a submitted transaction like submitSwap does: success, reverted, or submitted without a receipt yet. */
+async function settled(hash: `0x${string}`, base: any, what: string): Promise<ToolResult> {
+  const rc = await waitReceipt(hash);
+  if (!rc) return {success: true, data: {hash, ...base, status: 'submitted', note: `No receipt after ${RECEIPT_TIMEOUT_MS / 1000} s; check it with tx_status.`}};
+  if (rc.status !== 'success') return {success: false, data: {hash, ...base, status: 'reverted', block: Number(rc.blockNumber)}, error: `${what} transaction ${hash} reverted.`};
+  return {success: true, data: {hash, ...base, status: 'success', block: Number(rc.blockNumber)}};
+}
+/** The confirmed supply: exact approval of the pool if the allowance is short (waited on), then Pool.supply. */
+async function submitSupply(k: {address: Address | 'ETH'; symbol: string; decimals: number}, amountIn: bigint): Promise<ToolResult> {
+  const t = k.address as Address;
+  let approval: any = null;
+  const allowance = await pub.readContract({address: t, abi: ERC20_ABI, functionName: 'allowance', args: [account.address, POOL!]});
+  if (allowance < amountIn) {
+    const ah = await signer.writeContract({address: t, abi: ERC20_ABI, functionName: 'approve', args: [POOL!, amountIn]});
+    const ar = await waitReceipt(ah);
+    approval = {hash: ah, status: ar ? ar.status : 'no_receipt_yet'};
+    if (!ar || ar.status !== 'success') return {success: false, data: {status: 'approval_not_confirmed', approval}, error: `Token approval ${ah} not confirmed (${approval.status}).`};
+  }
+  const hash = await signer.writeContract({address: POOL!, abi: POOL_ABI, functionName: 'supply', args: [t, amountIn, WALLET, 0]});
+  return settled(hash, {approval, amount: `${formatUnits(amountIn, k.decimals)} ${k.symbol}`, onBehalfOf: WALLET}, 'Supply');
 }
 /** The confirmed swap: approval if needed, then the router call, each waited on like plugin-wallet does. */
 async function submitSwap(r: Awaited<ReturnType<typeof route>>, slip: number): Promise<ToolResult> {
@@ -192,7 +261,7 @@ async function submitSwap(r: Awaited<ReturnType<typeof route>>, slip: number): P
 }
 
 // ---- model ---------------------------------------------------------------------------------------------------
-const SYSTEM = `You are a helpful assistant with an Ethereum wallet on Ethereum mainnet. Your wallet address is ${WALLET}. Use the tools to read balances, quote and execute Uniswap V2 swaps, and check transactions. Token amounts are decimal units; tokens are given by contract address, or ETH for native ether.`;
+const SYSTEM = `You are a helpful assistant with an Ethereum wallet on Ethereum mainnet. Your wallet address is ${WALLET}. Use the tools to read balances, quote and execute Uniswap V2 swaps, ${spec.workflow === 'approve_swap' ? 'approve token spenders, ' : spec.workflow === 'supply' ? 'supply tokens to Aave v3, ' : ''}and check transactions. Token amounts are decimal units; tokens are given by contract address, or ETH for native ether.`;
 const messages: any[] = [{role: 'system', content: SYSTEM}];
 async function model(signal: AbortSignal) {
   const r = await realFetch(CHAT_URL, {method: 'POST', signal,

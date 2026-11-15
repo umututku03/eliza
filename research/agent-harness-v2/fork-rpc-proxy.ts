@@ -15,6 +15,11 @@
 // transaction) and forwarded when the floor is reached, right after the reorg. sale_reorged_reincluded is the same
 // reorg, after which the proxy re-submits the orphaned transactions' original raw bytes upstream, so the sale re-mines
 // in a later block with the same hash (an orphaned transaction returning from the mempool).
+// Workflow tasks (WS-W, tasks-workflows.json): the same rule names the task's CRITICAL transaction instead of the sale
+// (A1: the approval of the router; L1: the Aave supply). Every fault, journal field and state name keeps the word "sale"
+// and means "the first successful critical transaction"; without a rule the default stays exactly "first sale".
+// For the reorg check a task can replace the X balanceOf read with another holder-state read (xBalance.data, e.g.
+// the allowance for A1): its value must be restored by the emulated reorg.
 import {
   type Hex,
   keccak256,
@@ -38,7 +43,7 @@ export type Fault = {
     | "rpc_stale"
     | "sale_reorged"
     | "sale_reorged_reincluded";
-  xBalance?: { token: string; wallet: string };
+  xBalance?: { token: string; wallet: string; data?: Hex };
   onSaleMined?: () => Promise<any>;
 };
 export type FaultParams = {
@@ -176,7 +181,8 @@ export class ForkRpcProxy {
     return this.rpc("eth_call", [
       {
         to: config.token,
-        data: `0x70a08231${config.wallet.slice(2).padStart(64, "0")}`,
+        data:
+          config.data ?? `0x70a08231${config.wallet.slice(2).padStart(64, "0")}`,
       },
       "latest",
     ]);

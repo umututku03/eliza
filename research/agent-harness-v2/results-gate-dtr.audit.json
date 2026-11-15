@@ -1,0 +1,49 @@
+{
+  "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
+  "results": [
+    {
+      "folder": "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/research/agent-harness-v2/results-gate-dtr",
+      "mode": "mock",
+      "status": "complete",
+      "episodes": 2,
+      "modelCalls": 44,
+      "refusedOutsideTurn": 0,
+      "localEmbeddings": 0,
+      "liveUSD": 0.0,
+      "rows": [
+        {
+          "id": "control-dropped_then_reorg",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "luna-v2-r1-dropped_then_reorg",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "max_user_turns",
+          "exit": 0,
+          "calls": 44,
+          "confirmTurns": 4,
+          "reverts": []
+        }
+      ]
+    }
+  ]
+}

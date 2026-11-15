@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/research/agent-harness-v2/verify-v2.py", line 315, in <module>
+    out = [audit(f) for f in sys.argv[1:] if not f.startswith('--')]
+           ^^^^^^^^
+  File "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/research/agent-harness-v2/verify-v2.py", line 101, in audit
+    need(complete != err, 'exactly one of complete.json / run-error.json')
+  File "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/research/agent-harness-v2/verify-v2.py", line 41, in need
+    if not c: raise AuditError(*why)
+              ^^^^^^^^^^^^^^^^^^^^^^
+AuditError: exactly one of complete.json / run-error.json
