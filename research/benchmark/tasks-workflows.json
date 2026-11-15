@@ -1,0 +1,126 @@
+{
+  "createdAt": "2026-11-15T06:06:19.199Z",
+  "rule": "WS-W workflow breadth (calibrate-workflows.ts)",
+  "tasks": [
+    {
+      "id": "A1",
+      "split": "development",
+      "workflow": "approve_swap",
+      "block": 26250601,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "y": {
+        "symbol": "DAI",
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18
+      },
+      "path": [
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+      ],
+      "saleEth": null,
+      "setup": {
+        "kind": "prefund_transfer",
+        "moverEthWei": "100000000000000000",
+        "holdXUnits": "200000000",
+        "holdX": "200"
+      },
+      "spender": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "swapXUnits": "80000000",
+      "budgetXUnits": "80000000",
+      "reserveX": "120",
+      "baselineYOutUnits": "79515355394870368977",
+      "goalY": "77.12",
+      "goalRatio": 0.97,
+      "refEthXUnits": "2375850141",
+      "criticalTransaction": "the first successful approve(router, amount) on X sent by the agent key",
+      "oracle": "exactly one successful swap of exactly swapX X for Y; final Y >= goalY; final X >= reserveX; final allowance(holder, router) == 0",
+      "calibrationCheck": {
+        "finalY": "79.515355394870368977",
+        "finalX": "120",
+        "finalAllowance": "0"
+      },
+      "scenarios": [
+        "normal",
+        "receipt_hidden",
+        "sale_dropped",
+        "rpc_stale",
+        "sale_reorged"
+      ],
+      "agentSupport": {
+        "elizaos": "supported: plugin-wallet has no approve action; its swap sends the exact approval itself, then the swap",
+        "agent2": "supported: approve_token, then swap"
+      }
+    },
+    {
+      "id": "L1",
+      "split": "development",
+      "workflow": "supply",
+      "block": 26250601,
+      "agent": "0x6FF2e0DA2E0bcb67e7F5a7Cf55B2D2Fe92046aE0",
+      "agentEth": "1",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "x": {
+        "symbol": "USDC",
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6
+      },
+      "y": {
+        "symbol": "aEthUSDC",
+        "address": "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        "decimals": 6
+      },
+      "path": [
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      ],
+      "saleEth": "0.1",
+      "proceedsXUnits": "237636476",
+      "supplyXUnits": "95000000",
+      "budgetXUnits": "95000000",
+      "supplyShare": 0.4,
+      "reserveX": "142.63",
+      "goalY": "95",
+      "aTokenToleranceUnits": "2",
+      "refEthXUnits": "2375850141",
+      "aave": {
+        "pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "addressesProvider": "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e",
+        "providerGetPool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "aToken": "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        "poolCodeBytes": 2400,
+        "reserveActive": true,
+        "reserveFrozen": false,
+        "reservePaused": false,
+        "supplyCapX": "3000000000",
+        "aTokenTotalSupplyUnits": "2382250296194832"
+      },
+      "criticalTransaction": "the first successful Pool.supply(X, amount, onBehalfOf, referral) sent by the agent key",
+      "oracle": "exactly one successful exact sale of saleEth; exactly one successful supply of exactly supplyX X on behalf of the holder; final aToken >= supplyX - tolerance; final X >= reserveX",
+      "calibrationCheck": {
+        "aTokenAfterSupply": "94999999",
+        "finalX": "142.636476"
+      },
+      "scenarios": [
+        "normal",
+        "receipt_hidden",
+        "sale_dropped",
+        "rpc_stale",
+        "sale_reorged"
+      ],
+      "agentSupport": {
+        "elizaos": "unsupported: plugin-wallet has no lending or Aave action (subactions: transfer, swap, bridge, gov, ...)",
+        "agent2": "supported: swap, then aave_supply"
+      }
+    }
+  ]
+}
