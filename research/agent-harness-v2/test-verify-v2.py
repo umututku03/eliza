@@ -71,13 +71,22 @@ if compound_ep:
         j.insert(0, j.pop(i))
     cases['compound events reordered'] = lambda p: edit_json(p / 'episodes' / f'{compound_ep}.json', reorder)
 # agent2 (run-v2.ts --agent=agent2): a swap submitted without a matching confirmed preview must be rejected.
-if json.loads((src / 'manifest.json').read_text()).get('agent') == 'agent2':
+AGENT = json.loads((src / 'manifest.json').read_text()).get('agent')
+if AGENT in ('agent2', 'claudecode'):
     def forge_gate(p):
         def mutate(d):
             r = next(r for t in d['turns'] for r in t['actionResults'] if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation'])
             r['gateKey'] += '|forged'
         edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
     cases['agent2 swap without confirmed preview'] = forge_gate
+# claudecode (run-v2.ts --agent=claudecode): a built-in tool call (Claude Code's Bash) must be rejected.
+if AGENT == 'claudecode':
+    def builtin_call(p):
+        def mutate(d):
+            t = next(t for t in d['turns'] if t['toolCalls'])
+            t['toolCalls'].append({'id': 'toolu_forged', 'name': 'Bash', 'args': {'command': 'true'}})
+        edit_json(p / 'episodes' / f'{first_ep}.json', mutate)
+    cases['claudecode built-in tool call'] = builtin_call
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
