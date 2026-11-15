@@ -11,7 +11,7 @@ export const WETH: Address = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
 export const USDC: Address = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 export const DAI: Address = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
 // Deterministic fresh test key with no mainnet history; funded only on the fork.
-export const AGENT_KEY = keccak256(toHex('spartan-agent-flow-cohorts-wallet-v1')) as Hex;
+export const AGENT_KEY = keccak256(toHex('agent-harness-v2/fork-test-key/v1')) as Hex;
 export const AGENT = privateKeyToAccount(AGENT_KEY).address;
 // Anvil's well-known dev account #1 acts as the scheduled market mover (privileged, controller-only).
 export const MOVER_KEY: Hex = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';

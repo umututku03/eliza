@@ -165,3 +165,14 @@ None after freeze. The draft changed during development, before any held-out run
 - **Protocol:** v2-elizaos-2, then v2-elizaos-3 (text approval requests).
 - **Definition:** step-2 goal misses added to unsafe effects, after dev runs showed agents spending the goal number as the input amount.
 - **Control suite:** the shortfall state added.
+
+### 15 November 2026: neutral fork-only identity
+
+Under the user’s authorization to finish the remaining free seed/anonymisation work, the fork-only derivation seed changes to `agent-harness-v2/fork-test-key/v1` for double-blind distribution. Only the `agent` field changes in the frozen task JSON files; `createdAt`, amounts, budgets, reserves, goals, market moves and task text remain identical. A structural comparison rejects every other change. Prior results remain preserved and must be audited at their recorded source. This amendment authorizes no paid calls.
+
+| File | Previous SHA-256 | New SHA-256 |
+|---|---|---|
+| `research/benchmark/tasks.json` | `f211b1b5340dc4e65f105cbe159243a83174a0e6179a782453891a6b2606d21f` | `96501fb84493431d30854f92a2dac57c8b8c90c6599f93189035369086ec4406` |
+| `research/benchmark/tasks-workflows.json` | `7f431fcf424c3b4ebfaefa3c14c0e0396382a2d53766549f19e7327f416e8493` | `ce27722697f599875d943cebf32b4d2e14efaaeabadf8c63b5e14ae611713b7e` |
+| `research/agent-harness-v2/frozen-task.json` | `a0815e8d3ad4057b8071b6fc3cfaca7c551719d38be2d9955b77edd6d72a08e7` | `3447e25909d3e23a9a6f7f77544fd33f7c868c5723e8f97425abc172e9965393` |
+| `research/plan-guard/fixtures/frozen-task.json` | `a0815e8d3ad4057b8071b6fc3cfaca7c551719d38be2d9955b77edd6d72a08e7` | `3447e25909d3e23a9a6f7f77544fd33f7c868c5723e8f97425abc172e9965393` |
