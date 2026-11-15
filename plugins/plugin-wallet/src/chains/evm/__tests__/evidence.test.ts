@@ -3,7 +3,15 @@
  * the flag-unset call-argument snapshots of both send sites, the re-send and guard rules, the ablations, the
  * at-most-one-canonical-per-nonce guarantee under the four chain faults, and the decoded plan refusals.
  */
-import { type Address, encodeAbiParameters, encodeFunctionData, type Hex, pad, parseAbi, parseAbiParameters } from "viem";
+import {
+  type Address,
+  encodeAbiParameters,
+  encodeFunctionData,
+  type Hex,
+  pad,
+  parseAbi,
+  parseAbiParameters,
+} from "viem";
 import { mainnet } from "viem/chains";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SwapAction } from "../actions/swap";
@@ -14,8 +22,8 @@ import {
   decodeRefusalSentence,
   describeCall,
   type EvidenceDeps,
-  type EvidenceIntent,
   EvidenceError,
+  type EvidenceIntent,
   evidenceLedger,
   intentKey,
   isUnresolved,
@@ -37,11 +45,34 @@ const ROUTER_ABI = parseAbi([
 ]);
 const SALE_WEI = 10n ** 17n;
 const saleData = (deadline = 2200n) =>
-  encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [1n, [WETH, USDC], SENDER, deadline] });
+  encodeFunctionData({
+    abi: ROUTER_ABI,
+    functionName: "swapExactETHForTokens",
+    args: [1n, [WETH, USDC], SENDER, deadline],
+  });
 const saleIntent = (deadline = 2200n): EvidenceIntent =>
-  describeCall({ chainId: 1, sender: SENDER, holder: SENDER, to: ROUTER, value: SALE_WEI, data: saleData(deadline) });
-const step2Data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactTokensForTokens", args: [60_000_000n, 1n, [USDC, WETH, DAI], SENDER, 2200n] });
-const step2Intent = (): EvidenceIntent => describeCall({ chainId: 1, sender: SENDER, holder: SENDER, to: ROUTER, value: 0n, data: step2Data });
+  describeCall({
+    chainId: 1,
+    sender: SENDER,
+    holder: SENDER,
+    to: ROUTER,
+    value: SALE_WEI,
+    data: saleData(deadline),
+  });
+const step2Data = encodeFunctionData({
+  abi: ROUTER_ABI,
+  functionName: "swapExactTokensForTokens",
+  args: [60_000_000n, 1n, [USDC, WETH, DAI], SENDER, 2200n],
+});
+const step2Intent = (): EvidenceIntent =>
+  describeCall({
+    chainId: 1,
+    sender: SENDER,
+    holder: SENDER,
+    to: ROUTER,
+    value: 0n,
+    data: step2Data,
+  });
 const ACCOUNT = { address: SENDER, type: "local" };
 
 /** A chain with nonce semantics, automine on send, and the four fault behaviours under test control. */
@@ -53,7 +84,16 @@ class FakeChain {
   dai = 0n;
   private n = 0;
   blockHashes = new Map<number, Hex>();
-  txs = new Map<Hex, { nonce: number; block: number | null; blockHash: Hex | null; status: "success" | "reverted"; sale: boolean }>();
+  txs = new Map<
+    Hex,
+    {
+      nonce: number;
+      block: number | null;
+      blockHash: Hex | null;
+      status: "success" | "reverted";
+      sale: boolean;
+    }
+  >();
   hidden = new Set<Hex>();
   dropNext = false;
   hideNext = false;
@@ -83,15 +123,19 @@ class FakeChain {
         if (tx.status === "success" && tx.sale) this.usdc -= 100n;
       }
     }
-    for (let b = from; b <= this.head; b++) this.blockHashes.set(b, this.hashFor(`r${b}-${this.n++}`));
+    for (let b = from; b <= this.head; b++)
+      this.blockHashes.set(b, this.hashFor(`r${b}-${this.n++}`));
   }
   canonicalByNonce() {
     const m = new Map<number, number>();
-    for (const tx of this.txs.values()) if (tx.block !== null) m.set(tx.nonce, (m.get(tx.nonce) ?? 0) + 1);
+    for (const tx of this.txs.values())
+      if (tx.block !== null) m.set(tx.nonce, (m.get(tx.nonce) ?? 0) + 1);
     return m;
   }
   sales() {
-    return [...this.txs.values()].filter((t) => t.block !== null && t.status === "success" && t.sale).length;
+    return [...this.txs.values()].filter(
+      (t) => t.block !== null && t.status === "success" && t.sale
+    ).length;
   }
   private stale(block: number | null) {
     return this.lagBlock !== null && block !== null && block > this.lagBlock;
@@ -100,7 +144,8 @@ class FakeChain {
     return Object.assign(new Error(`${name}: not found`), { name });
   }
   pub = {
-    getTransactionCount: async (_: { address: Address; blockTag: string }) => (this.lagBlock !== null ? this.lagNonce : this.accountNonce),
+    getTransactionCount: async (_: { address: Address; blockTag: string }) =>
+      this.lagBlock !== null ? this.lagNonce : this.accountNonce,
     getTransaction: async ({ hash }: { hash: Hex }) => {
       const tx = this.txs.get(hash);
       if (!tx || this.stale(tx.block)) throw this.notFound("TransactionNotFoundError");
@@ -108,30 +153,48 @@ class FakeChain {
     },
     getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
       const tx = this.txs.get(hash);
-      if (!tx || tx.block === null || this.hidden.has(hash) || this.stale(tx.block)) throw this.notFound("TransactionReceiptNotFoundError");
+      if (!tx || tx.block === null || this.hidden.has(hash) || this.stale(tx.block))
+        throw this.notFound("TransactionReceiptNotFoundError");
       return { status: tx.status, blockNumber: BigInt(tx.block), blockHash: tx.blockHash as Hex };
     },
     getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
-      const n = this.lagBlock !== null && Number(blockNumber) > this.lagBlock ? this.lagBlock : Number(blockNumber);
+      const n =
+        this.lagBlock !== null && Number(blockNumber) > this.lagBlock
+          ? this.lagBlock
+          : Number(blockNumber);
       return { hash: this.blockHashes.get(n) ?? null, number: BigInt(n) };
     },
     getBlockNumber: async () => BigInt(this.lagBlock ?? this.head),
     getBalance: async () => 0n,
     readContract: async (a: any) => {
-      if (a.functionName === "balanceOf") return a.address.toLowerCase() === USDC.toLowerCase() ? (this.lagBlock !== null ? this.lagUsdc : this.usdc) : this.dai;
+      if (a.functionName === "balanceOf")
+        return a.address.toLowerCase() === USDC.toLowerCase()
+          ? this.lagBlock !== null
+            ? this.lagUsdc
+            : this.usdc
+          : this.dai;
       if (a.functionName === "allowance") return 0n;
-      if (a.functionName === "decimals") return a.address.toLowerCase() === USDC.toLowerCase() ? 6 : 18;
-      if (a.functionName === "symbol") return a.address.toLowerCase() === USDC.toLowerCase() ? "USDC" : "DAI";
+      if (a.functionName === "decimals")
+        return a.address.toLowerCase() === USDC.toLowerCase() ? 6 : 18;
+      if (a.functionName === "symbol")
+        return a.address.toLowerCase() === USDC.toLowerCase() ? "USDC" : "DAI";
       throw new Error(`unexpected read ${a.functionName}`);
     },
   };
   wallet = {
-    prepareTransactionRequest: vi.fn(async (a: any) => ({ ...a, gas: 200_000n, maxFeePerGas: 1_000n, maxPriorityFeePerGas: 100n, type: "eip1559" })),
+    prepareTransactionRequest: vi.fn(async (a: any) => ({
+      ...a,
+      gas: 200_000n,
+      maxFeePerGas: 1_000n,
+      maxPriorityFeePerGas: 100n,
+      type: "eip1559",
+    })),
     sendTransaction: vi.fn(async (a: any) => this.submit(a)),
   };
   submit(a: any): Hex {
     this.sent.push(a);
-    if (a.nonce < this.accountNonce) throw Object.assign(new Error("nonce too low"), { name: "NonceTooLowError" });
+    if (a.nonce < this.accountNonce)
+      throw Object.assign(new Error("nonce too low"), { name: "NonceTooLowError" });
     const hash = this.hashFor(`tx${this.n++}`);
     if (this.dropNext) {
       this.dropNext = false; // accepted, never mined, unknown to the node
@@ -141,7 +204,13 @@ class FakeChain {
     const sale = a.data === saleData() || (a.value ?? 0n) > 0n;
     const status = this.revertNext ? "reverted" : "success";
     this.revertNext = false;
-    this.txs.set(hash, { nonce: a.nonce, block: this.head, blockHash: this.blockHashes.get(this.head)!, status, sale });
+    this.txs.set(hash, {
+      nonce: a.nonce,
+      block: this.head,
+      blockHash: this.blockHashes.get(this.head)!,
+      status,
+      sale,
+    });
     this.accountNonce++;
     if (status === "success" && sale) this.usdc += 100n;
     if (status === "success" && !sale) this.dai += 50n;
@@ -205,7 +274,14 @@ describe("intent key", () => {
   it("ignores slippage and deadline, distinguishes amount and direction", () => {
     expect(intentKey(saleIntent(1n))).toBe(intentKey(saleIntent(999n)));
     expect(intentKey(saleIntent())).not.toBe(intentKey(step2Intent()));
-    const other = describeCall({ chainId: 1, sender: SENDER, holder: SENDER, to: ROUTER, value: 2n * SALE_WEI, data: saleData() });
+    const other = describeCall({
+      chainId: 1,
+      sender: SENDER,
+      holder: SENDER,
+      to: ROUTER,
+      value: 2n * SALE_WEI,
+      data: saleData(),
+    });
     expect(intentKey(other)).not.toBe(intentKey(saleIntent()));
   });
 });
@@ -285,7 +361,9 @@ describe("decision table (one test per row)", () => {
     const e = await pending(send(c));
     expect(ev(e).decision).toBe("wait");
     expect(ev(e).waitReason).toBe("stale_head");
-    expect(e.message).toContain("Your node has not advanced for 60 s; balances read now may be out of date. Wait and check the status again before acting.");
+    expect(e.message).toContain(
+      "Your node has not advanced for 60 s; balances read now may be out of date. Wait and check the status again before acting."
+    );
   });
 
   it('replacement rejected with "nonce too low" -> landed, effect seen -> confirmed', async () => {
@@ -300,7 +378,9 @@ describe("decision table (one test per row)", () => {
     expect(second.nonce).toBe(first.nonce);
     expect(second.data).toBe(first.data); // the stored calldata, not the fresh quote
     expect(second.maxFeePerGas * 10n).toBeGreaterThanOrEqual(first.maxFeePerGas * 11n);
-    expect(second.maxPriorityFeePerGas * 10n).toBeGreaterThanOrEqual(first.maxPriorityFeePerGas * 11n);
+    expect(second.maxPriorityFeePerGas * 10n).toBeGreaterThanOrEqual(
+      first.maxPriorityFeePerGas * 11n
+    );
     expect(c.sales()).toBe(1);
   });
 
@@ -331,10 +411,104 @@ describe("decision table (one test per row)", () => {
   });
 });
 
+describe("evidence recovery regression cases", () => {
+  it("does not confirm or release the guard when canonical block lookup fails", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5_000);
+    c.pub.getBlock = async () => {
+      throw new Error("block lookup unavailable");
+    };
+    const e = await pending(send(c));
+    expect(ev(e).decision).not.toBe("confirmed");
+    expect(ev(e).observations.at(-1).canonical).toBeNull();
+    expect(isUnresolved(latestIntent(1, SENDER)!)).toBe(true);
+    const blocked = await pending(send(c, step2Intent(), step2Data, 0n));
+    expect(blocked.code).toBe("EVIDENCE_UNRESOLVED");
+    expect(c.sales()).toBe(1);
+  });
+
+  it("retains the pinned intent when broadcast succeeds but its acknowledgement is lost", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5_000);
+    c.wallet.sendTransaction.mockImplementationOnce(async (args: any) => {
+      c.submit(args);
+      throw new Error("connection reset after dispatch");
+    });
+    const e = await pending(send(c));
+    expect(e.code).toBe("EVIDENCE_PENDING");
+    expect(evidenceLedger(1, SENDER)).toHaveLength(1);
+    expect(latestIntent(1, SENDER)!.pinnedNonce).toBe(7);
+    const retry = await pending(send(c));
+    expect(ev(retry).decision).toBe("ask_user");
+    expect(ev(retry).landed).toBe(true);
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 7]);
+    expect(c.sales()).toBe(1);
+  });
+
+  it("serializes first-send preparation so a concurrent different intent cannot bypass the guard", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    let release!: () => void;
+    const prepared = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    c.wallet.prepareTransactionRequest.mockImplementationOnce(async (args: any) => {
+      entered();
+      await prepared;
+      return {
+        ...args,
+        gas: 200_000n,
+        maxFeePerGas: 1_000n,
+        maxPriorityFeePerGas: 100n,
+        type: "eip1559",
+      };
+    });
+    const first = pending(send(c));
+    await entering;
+    const second = pending(send(c, step2Intent(), step2Data, 0n));
+    release();
+    await first;
+    expect((await second).code).toBe("EVIDENCE_UNRESOLVED");
+    expect(c.sent).toHaveLength(1);
+  });
+
+  it("positive reorg evidence overrides a prior nonce-too-low landed classification", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    await pending(send(c));
+    c.hidden.clear();
+    c.mine();
+    expect((await send(c)).decision).toBe("confirmed");
+    expect(latestIntent(1, SENDER)!.landed).toBe(true);
+    c.reorg(101);
+    const e = await pending(send(c, step2Intent(), step2Data, 0n));
+    expect(e.code).toBe("EVIDENCE_UNRESOLVED");
+    expect(latestIntent(1, SENDER)!.decision).toBe("orphaned");
+    c.tickEvery(5_000);
+    const recovered = await send(c);
+    expect(recovered.record.landed).toBe(false);
+    expect(recovered.record.observations.at(-1)!.confirmations).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("re-send and guard rules", () => {
   it('classifies "nonce too low" on a re-send as landed, underpriced/known as pending', () => {
     expect(classifySendError(new Error("nonce too low"))).toBe("landed");
-    expect(classifySendError({ name: "TransactionExecutionError", message: "x", cause: { name: "NonceTooLowError", message: "Nonce provided for the transaction is lower than the current nonce of the account." } })).toBe("landed");
+    expect(
+      classifySendError({
+        name: "TransactionExecutionError",
+        message: "x",
+        cause: {
+          name: "NonceTooLowError",
+          message:
+            "Nonce provided for the transaction is lower than the current nonce of the account.",
+        },
+      })
+    ).toBe("landed");
     expect(classifySendError(new Error("replacement transaction underpriced"))).toBe("pending");
     expect(classifySendError(new Error("already known"))).toBe("pending");
     expect(classifySendError(new Error("insufficient funds"))).toBe("error");
@@ -385,7 +559,9 @@ describe("re-send and guard rules", () => {
     const c = new FakeChain();
     c.hideNext = true;
     const e = await pending(send(c));
-    expect(e.message).toMatch(/^Timed out while waiting for transaction with hash "0x[0-9a-f]{64}" to be confirmed\.$/);
+    expect(e.message).toMatch(
+      /^Timed out while waiting for transaction with hash "0x[0-9a-f]{64}" to be confirmed\.$/
+    );
   });
 });
 
@@ -471,13 +647,24 @@ describe("flag unset: send sites call viem exactly as before", () => {
       prepareTransactionRequest: vi.fn(),
     };
     const pub = {
-      readContract: vi.fn(async (a: any) => (a.functionName === "WETH" ? WETH : [SALE_WEI, 237_636_476n])),
+      readContract: vi.fn(async (a: any) =>
+        a.functionName === "WETH" ? WETH : [SALE_WEI, 237_636_476n]
+      ),
       getBlock: vi.fn(async () => ({ timestamp: 1_000n })),
       waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })),
       getTransactionCount: vi.fn(),
     };
-    const action = new SwapAction(fakeProvider(wallet, pub), { uniswapV2Router: ROUTER, exclusive: true });
-    await action.swap({ chain: "mainnet", fromToken: "0x0000000000000000000000000000000000000000", toToken: USDC, amount: "0.1", slippageBps: 300 } as any);
+    const action = new SwapAction(fakeProvider(wallet, pub), {
+      uniswapV2Router: ROUTER,
+      exclusive: true,
+    });
+    await action.swap({
+      chain: "mainnet",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC,
+      amount: "0.1",
+      slippageBps: 300,
+    } as any);
     const minOut = (237_636_476n * 9_700n) / 10_000n;
     expect(wallet.sendTransaction.mock.calls).toEqual([
       [
@@ -485,43 +672,95 @@ describe("flag unset: send sites call viem exactly as before", () => {
           account: ACCOUNT,
           to: ROUTER,
           value: SALE_WEI,
-          data: encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [minOut, [WETH, USDC], SENDER, 2_200n] }),
+          data: encodeFunctionData({
+            abi: ROUTER_ABI,
+            functionName: "swapExactETHForTokens",
+            args: [minOut, [WETH, USDC], SENDER, 2_200n],
+          }),
           chain: mainnet,
         },
       ],
     ]);
-    expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual(["account", "to", "value", "data", "chain"]);
-    expect(pub.waitForTransactionReceipt.mock.calls).toEqual([[{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }]]);
+    expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual([
+      "account",
+      "to",
+      "value",
+      "data",
+      "chain",
+    ]);
+    expect(pub.waitForTransactionReceipt.mock.calls).toEqual([
+      [{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }],
+    ]);
     expect(wallet.prepareTransactionRequest).not.toHaveBeenCalled();
     expect(pub.getTransactionCount).not.toHaveBeenCalled();
   });
 
   it("plan-guard.ts redemption send: arguments (snapshot) and the raw refusal text", async () => {
     delete process.env.EVM_EVIDENCE_LAYER;
-    const wallet = { account: ACCOUNT, chain: mainnet, sendTransaction: vi.fn(async () => `0x${"cd".repeat(32)}`), prepareTransactionRequest: vi.fn() };
-    const pub = { call: vi.fn(async () => ({})), waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })) };
-    const plan: PlanGuardConfig = { account: SENDER, delegationManager: DM, steps: [], approvals: [] };
+    const wallet = {
+      account: ACCOUNT,
+      chain: mainnet,
+      sendTransaction: vi.fn(async () => `0x${"cd".repeat(32)}`),
+      prepareTransactionRequest: vi.fn(),
+    };
+    const pub = {
+      call: vi.fn(async () => ({})),
+      waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })),
+    };
+    const plan: PlanGuardConfig = {
+      account: SENDER,
+      delegationManager: DM,
+      steps: [],
+      approvals: [],
+    };
     const ctx = permissionContext([]);
     const call = { to: ROUTER, value: SALE_WEI, data: saleData() };
-    await executeThroughPlan(fakeProvider(wallet, pub), "mainnet" as never, plan, [ctx], call, "swap");
-    expect(wallet.sendTransaction.mock.calls).toEqual([[{ account: ACCOUNT, chain: mainnet, to: DM, data: redeemCalldata(ctx, call), value: 0n }]]);
-    expect(pub.waitForTransactionReceipt.mock.calls).toEqual([[{ hash: `0x${"cd".repeat(32)}`, timeout: 60_000 }]]);
-    pub.call.mockRejectedValueOnce(new Error("execution reverted: ERC20BalanceChangeEnforcer:exceeded-balance-decrease"));
-    await expect(executeThroughPlan(fakeProvider(wallet, pub), "mainnet" as never, plan, [ctx], call, "swap 60 X -> Y")).rejects.toThrow(
+    await executeThroughPlan(
+      fakeProvider(wallet, pub),
+      "mainnet" as never,
+      plan,
+      [ctx],
+      call,
+      "swap"
+    );
+    expect(wallet.sendTransaction.mock.calls).toEqual([
+      [{ account: ACCOUNT, chain: mainnet, to: DM, data: redeemCalldata(ctx, call), value: 0n }],
+    ]);
+    expect(pub.waitForTransactionReceipt.mock.calls).toEqual([
+      [{ hash: `0x${"cd".repeat(32)}`, timeout: 60_000 }],
+    ]);
+    pub.call.mockRejectedValueOnce(
+      new Error("execution reverted: ERC20BalanceChangeEnforcer:exceeded-balance-decrease")
+    );
+    await expect(
+      executeThroughPlan(
+        fakeProvider(wallet, pub),
+        "mainnet" as never,
+        plan,
+        [ctx],
+        call,
+        "swap 60 X -> Y"
+      )
+    ).rejects.toThrow(
       /^Refused by the approved plan \(ERC20BalanceChangeEnforcer:exceeded-balance-decrease\): swap 60 X -> Y$/
     );
   });
 });
 
 // ---- actionable refusals ---------------------------------------------------------------------------------
-const DELEGATIONS = parseAbiParameters("(address,address,bytes32,(address,bytes,bytes)[],uint256,bytes)[]");
+const DELEGATIONS = parseAbiParameters(
+  "(address,address,bytes32,(address,bytes,bytes)[],uint256,bytes)[]"
+);
 function permissionContext(terms: Hex[]): Hex {
   const caveats = terms.map((t) => [DM, t, "0x"] as const);
-  return encodeAbiParameters(DELEGATIONS, [[[SENDER, SENDER, `0x${"ff".repeat(32)}`, caveats, 1n, "0x"]]] as never);
+  return encodeAbiParameters(DELEGATIONS, [
+    [[SENDER, SENDER, `0x${"ff".repeat(32)}`, caveats, 1n, "0x"]],
+  ] as never);
 }
 const balanceChange = (decrease: boolean, token: Address, amount: bigint) =>
   `0x${decrease ? "01" : "00"}${token.slice(2)}${SENDER.slice(2)}${pad(`0x${amount.toString(16)}`, { size: 32 }).slice(2)}` as Hex;
-const floor = (token: Address, amount: bigint) => `0x${token.slice(2)}${pad(`0x${amount.toString(16)}`, { size: 32 }).slice(2)}` as Hex;
+const floor = (token: Address, amount: bigint) =>
+  `0x${token.slice(2)}${pad(`0x${amount.toString(16)}`, { size: 32 }).slice(2)}` as Hex;
 const calldataIs = (start: number, value: bigint) =>
   `0x${pad(`0x${start.toString(16)}`, { size: 32 }).slice(2)}${pad(`0x${value.toString(16)}`, { size: 32 }).slice(2)}` as Hex;
 
@@ -529,34 +768,100 @@ describe("refusals the agent can act on", () => {
   const c = new FakeChain();
   const step2 = { to: ROUTER, value: 0n, data: step2Data }; // asks for 60 USDC
   it("decodes ERC20BalanceChangeEnforcer bounds", async () => {
-    const ctx = permissionContext([calldataIs(100, 1n), balanceChange(true, USDC, 59_406_476n), balanceChange(false, DAI, 37_310_000_000_000_000_000n)]);
-    expect(await decodeRefusalSentence(c.pub as never, ctx, "ERC20BalanceChangeEnforcer:exceeded-balance-decrease", step2)).toBe(
-      "This step may spend at most 59.406476 USDC; you asked for 60 USDC."
-    );
-    expect(await decodeRefusalSentence(c.pub as never, ctx, "ERC20BalanceChangeEnforcer:insufficient-balance-increase", step2)).toBe(
-      "This step must yield at least 37.31 DAI."
-    );
+    const ctx = permissionContext([
+      calldataIs(100, 1n),
+      balanceChange(true, USDC, 59_406_476n),
+      balanceChange(false, DAI, 37_310_000_000_000_000_000n),
+    ]);
+    expect(
+      await decodeRefusalSentence(
+        c.pub as never,
+        ctx,
+        "ERC20BalanceChangeEnforcer:exceeded-balance-decrease",
+        step2
+      )
+    ).toBe("This step may spend at most 59.406476 USDC; you asked for 60 USDC.");
+    expect(
+      await decodeRefusalSentence(
+        c.pub as never,
+        ctx,
+        "ERC20BalanceChangeEnforcer:insufficient-balance-increase",
+        step2
+      )
+    ).toBe("This step must yield at least 37.31 DAI.");
   });
   it("decodes AllowedCalldataEnforcer, BalanceFloorEnforcer and PlanStepEnforcer", async () => {
-    const ctx = permissionContext([calldataIs(100, BigInt(SENDER)), calldataIs(4, 59_406_476n), floor(USDC, 178_230_000n), floor(DAI, 37_310_000_000_000_000_000n)]);
-    expect(await decodeRefusalSentence(c.pub as never, ctx, "AllowedCalldataEnforcer:invalid-calldata", step2)).toBe("This step only accepts amount 59.406476 USDC.");
-    expect(await decodeRefusalSentence(c.pub as never, ctx, "BalanceFloorEnforcer:below-floor", step2)).toBe(
+    const ctx = permissionContext([
+      calldataIs(100, BigInt(SENDER)),
+      calldataIs(4, 59_406_476n),
+      floor(USDC, 178_230_000n),
+      floor(DAI, 37_310_000_000_000_000_000n),
+    ]);
+    expect(
+      await decodeRefusalSentence(
+        c.pub as never,
+        ctx,
+        "AllowedCalldataEnforcer:invalid-calldata",
+        step2
+      )
+    ).toBe("This step only accepts amount 59.406476 USDC.");
+    expect(
+      await decodeRefusalSentence(c.pub as never, ctx, "BalanceFloorEnforcer:below-floor", step2)
+    ).toBe(
       "After this step the account must still hold at least 178.23 USDC and at least 37.31 DAI."
     );
-    expect(await decodeRefusalSentence(c.pub as never, ctx, "PlanStepEnforcer:step-already-completed", step2)).toBe(
-      "This step is not allowed now: prerequisite not done, or already done."
-    );
+    expect(
+      await decodeRefusalSentence(
+        c.pub as never,
+        ctx,
+        "PlanStepEnforcer:step-already-completed",
+        step2
+      )
+    ).toBe("This step is not allowed now: prerequisite not done, or already done.");
   });
   it("appends the sentence to the unchanged refusal prefix when the layer is on", async () => {
-    const wallet = { account: ACCOUNT, chain: mainnet, sendTransaction: vi.fn(), prepareTransactionRequest: vi.fn() };
-    const pub = { ...c.pub, call: vi.fn(async () => Promise.reject(new Error("reverted: ERC20BalanceChangeEnforcer:exceeded-balance-decrease"))) };
-    const plan: PlanGuardConfig = { account: SENDER, delegationManager: DM, steps: [], approvals: [] };
+    const wallet = {
+      account: ACCOUNT,
+      chain: mainnet,
+      sendTransaction: vi.fn(),
+      prepareTransactionRequest: vi.fn(),
+    };
+    const pub = {
+      ...c.pub,
+      call: vi.fn(async () =>
+        Promise.reject(new Error("reverted: ERC20BalanceChangeEnforcer:exceeded-balance-decrease"))
+      ),
+    };
+    const plan: PlanGuardConfig = {
+      account: SENDER,
+      delegationManager: DM,
+      steps: [],
+      approvals: [],
+    };
     const ctx = permissionContext([balanceChange(true, USDC, 59_406_476n)]);
-    await expect(executeThroughPlan(fakeProvider(wallet, pub), "mainnet" as never, plan, [ctx], step2, "swap 60 X -> Y")).rejects.toThrow(
+    await expect(
+      executeThroughPlan(
+        fakeProvider(wallet, pub),
+        "mainnet" as never,
+        plan,
+        [ctx],
+        step2,
+        "swap 60 X -> Y"
+      )
+    ).rejects.toThrow(
       "Refused by the approved plan (ERC20BalanceChangeEnforcer:exceeded-balance-decrease): swap 60 X -> Y. This step may spend at most 59.406476 USDC; you asked for 60 USDC."
     );
     process.env.EVM_EVIDENCE_ABLATE = "no_refusal_decode";
-    await expect(executeThroughPlan(fakeProvider(wallet, pub), "mainnet" as never, plan, [ctx], step2, "swap 60 X -> Y")).rejects.toThrow(
+    await expect(
+      executeThroughPlan(
+        fakeProvider(wallet, pub),
+        "mainnet" as never,
+        plan,
+        [ctx],
+        step2,
+        "swap 60 X -> Y"
+      )
+    ).rejects.toThrow(
       /^Refused by the approved plan \(ERC20BalanceChangeEnforcer:exceeded-balance-decrease\): swap 60 X -> Y$/
     );
     expect(wallet.sendTransaction).not.toHaveBeenCalled();

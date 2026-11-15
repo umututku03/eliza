@@ -1,8 +1,9 @@
 /**
  * Chain-evidence layer for EVM sends (research mode, off by default; `EVM_EVIDENCE_LAYER=1`).
  *
- * Safety comes from the chain's nonce: every user intent is pinned to one nonce, and a repeated request for the
- * same intent re-sends with that nonce (a replacement), so at most one transaction per intent can execute.
+ * Safety for an unresolved operation comes from the chain's nonce: its record pins one nonce, and retries
+ * reuse that nonce, so at most one of those transactions can execute. A completed record is not a durable
+ * logical-operation ID: a later identical swap may represent a new authorized operation.
  * Progress comes from graded evidence: after a send the layer polls receipts, block hashes, the head, the
  * account nonce and the intent's balance effect, and reports one decision (confirmed, wait, wait_and_recheck,
  * resend_same_nonce, orphaned, landed, ask_user, failed) in a plain sentence the agent can act on.
@@ -204,6 +205,22 @@ export function intentKey(i: EvidenceIntent): string {
 
 // ---- ledger (in memory, one per chain and sender in this process) ----------------------------------------
 const ledgers = new Map<string, IntentRecord[]>();
+const sendQueues = new Map<string, Promise<void>>();
+/** Serialize nonce allocation, reservation and dispatch for one sender, not the polling loop. */
+async function serializeSend<T>(intent: EvidenceIntent, run: () => Promise<T>): Promise<T> {
+  const key = ledgerKey(intent.chainId, intent.sender);
+  const previous = sendQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.then(() => held);
+  sendQueues.set(key, tail);
+  await previous;
+  try { return await run(); }
+  finally {
+    release();
+    if (sendQueues.get(key) === tail) sendQueues.delete(key);
+  }
+}
 const ledgerKey = (chainId: number, sender: string) => `${chainId}|${sender.toLowerCase()}`;
 export function evidenceLedger(chainId: number, sender: string): IntentRecord[] {
   const k = ledgerKey(chainId, sender);
@@ -214,12 +231,17 @@ export function evidenceLedger(chainId: number, sender: string): IntentRecord[] 
 /** Test helper. */
 export function resetEvidenceLedgers(): void {
   ledgers.clear();
+  sendQueues.clear();
 }
 
 /** Unresolved for the guard: sent, pending, included with fewer than K confirmations, orphaned and not re-sent. */
 export function isUnresolved(r: IntentRecord): boolean {
   if (r.state === "sent" || r.state === "pending" || r.state === "orphaned") return true;
-  if (r.state === "included") return (r.observations[r.observations.length - 1]?.confirmations ?? 0) < EVIDENCE_K;
+  // A hidden receipt may still have positive canonical inclusion and balance evidence.
+  if (r.state === "included") {
+    const o = r.observations[r.observations.length - 1];
+    return !o || o.canonical !== true || o.confirmations < EVIDENCE_K || !o.balanceEffectSeen;
+  }
   return false;
 }
 /** A record a repeated request for the same intent re-sends (with the pinned nonce) instead of starting anew. */
@@ -291,7 +313,7 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
     txBlock: !receipt && included !== null ? included : null,
     canonical,
     orphanEvidence,
-    confirmations: included !== null && canonical !== false ? Math.max(0, head - included + 1) : 0,
+    confirmations: included !== null && canonical === true ? Math.max(0, head - included + 1) : 0,
     nonceLatest,
     balanceEffectSeen: effectSeen(r, effectNow),
   };
@@ -307,16 +329,17 @@ export function decide(r: IntentRecord, now: number): { decision: EvidenceDecisi
   const included = (o.receiptStatus === "success" || o.txBlock !== null) && o.canonical !== false;
   const inclState: IntentState = included ? "included" : o.txKnown ? "pending" : "sent";
   if (o.receiptStatus === "reverted") return { decision: "failed", waitReason: null, state: "failed" };
+  if (!o.receiptStatus && r.receiptSeen && o.orphanEvidence && !o.txKnown) return { decision: "orphaned", waitReason: null, state: "orphaned" };
   if (r.landed) {
     // The node rejected a same-nonce replacement as "nonce too low": the pinned nonce is used. Verify the effect.
-    if (o.balanceEffectSeen) return { decision: "confirmed", waitReason: null, state: "confirmed" };
+    // A lost acknowledgement can leave us with no hash. Do not fabricate a successful receipt identity.
+    if (o.balanceEffectSeen && r.hashes.length > 0) return { decision: "confirmed", waitReason: null, state: "confirmed" };
     return { decision: "landed", waitReason: "no_effect", state: inclState === "sent" ? "pending" : inclState };
   }
   if (o.receiptStatus === "success" && o.canonical !== false) {
-    if (o.confirmations >= EVIDENCE_K && o.balanceEffectSeen) return { decision: "confirmed", waitReason: null, state: "confirmed" };
+    if (o.canonical === true && o.confirmations >= EVIDENCE_K && o.balanceEffectSeen) return { decision: "confirmed", waitReason: null, state: "confirmed" };
     return { decision: "wait", waitReason: o.confirmations < EVIDENCE_K ? "confirmations" : "no_effect", state: "included" };
   }
-  if (!o.receiptStatus && r.receiptSeen && o.orphanEvidence && !o.txKnown) return { decision: "orphaned", waitReason: null, state: "orphaned" };
   if (o.txKnown || o.nonceLatest > r.pinnedNonce) return { decision: "wait_and_recheck", waitReason: null, state: inclState === "sent" ? "pending" : inclState };
   if (r.headSince && now - r.headSince.atMs >= CHECK_BUDGET_MS) return { decision: "wait", waitReason: "stale_head", state: "sent" };
   if (now - r.lastSendAtMs >= CHECK_BUDGET_MS) return { decision: "resend_same_nonce", waitReason: null, state: "dropped" };
@@ -462,71 +485,82 @@ export async function sendWithEvidence(o: {
   const deps = o.deps ?? realDeps;
   const ablation = evidenceAblation();
   const pub = o.publicClient;
-  await guard(pub, o.intent, deps);
-  let r = findOpenIntent(o.intent);
-  if (!r) {
-    const pinnedNonce = Number(await pub.getTransactionCount({ address: o.intent.sender, blockTag: "pending" }));
-    const before = await readEffect(pub, o.intent.effect).catch(() => null);
-    const base = { account: o.request.account, chain: o.request.chain, to: o.request.to, value: o.request.value ?? 0n, data: o.request.data ?? "0x" };
-    const prepared = await o.walletClient.prepareTransactionRequest({ ...base, nonce: pinnedNonce });
-    const request: StoredRequest = {
-      ...base,
-      data: base.data as Hex,
-      gas: prepared.gas,
-      maxFeePerGas: prepared.maxFeePerGas,
-      maxPriorityFeePerGas: prepared.maxPriorityFeePerGas,
-      gasPrice: prepared.maxFeePerGas === undefined ? prepared.gasPrice : undefined,
-      type: prepared.type,
-    };
-    const hash = await o.walletClient.sendTransaction({ ...base, nonce: pinnedNonce, gas: request.gas, ...fees(request) });
-    r = {
-      key: intentKey(o.intent),
-      intent: o.intent,
-      pinnedNonce,
-      hashes: [hash],
-      sentNonces: [pinnedNonce],
-      snapshot: { effectBefore: before === null ? null : before.toString() },
-      state: "sent",
-      decision: "wait",
-      waitReason: "not_seen",
-      observations: [],
-      rounds: 0,
-      lastSendAtMs: deps.now(),
-      headSince: null,
-      receiptSeen: null,
-      landed: false,
-      request,
-    };
-    evidenceLedger(o.intent.chainId, o.intent.sender).push(r);
-  } else {
-    // Re-send rule: same calldata, the pinned nonce (fresh under no_nonce_pin), fees bumped by at least 10%.
-    const req = r.request;
-    const bumped: StoredRequest = { ...req, maxFeePerGas: bump(req.maxFeePerGas), maxPriorityFeePerGas: bump(req.maxPriorityFeePerGas), gasPrice: bump(req.gasPrice) };
-    const nonce = ablation === "no_nonce_pin" ? Number(await pub.getTransactionCount({ address: o.intent.sender, blockTag: "pending" })) : r.pinnedNonce;
-    try {
-      const hash = await o.walletClient.sendTransaction({
-        account: req.account,
-        chain: req.chain,
-        to: req.to,
-        value: req.value,
-        data: req.data,
-        nonce,
-        gas: req.gas,
-        ...fees(bumped),
-      });
-      r.hashes.push(hash);
-      r.sentNonces.push(nonce);
-      r.request = bumped;
-      r.lastSendAtMs = deps.now();
-      if (r.state === "orphaned" || r.state === "dropped") r.receiptSeen = null;
-    } catch (error) {
-      const c = classifySendError(error);
-      if (c === "error") throw error;
-      if (c === "landed") r.landed = true;
-      r.request = bumped;
+  const r = await serializeSend(o.intent, async () => {
+    await guard(pub, o.intent, deps);
+    let r = findOpenIntent(o.intent);
+    if (!r) {
+      const pinnedNonce = Number(await pub.getTransactionCount({ address: o.intent.sender, blockTag: "pending" }));
+      const before = await readEffect(pub, o.intent.effect).catch(() => null);
+      const base = { account: o.request.account, chain: o.request.chain, to: o.request.to, value: o.request.value ?? 0n, data: o.request.data ?? "0x" };
+      const prepared = await o.walletClient.prepareTransactionRequest({ ...base, nonce: pinnedNonce });
+      const request: StoredRequest = {
+        ...base,
+        data: base.data as Hex,
+        gas: prepared.gas,
+        maxFeePerGas: prepared.maxFeePerGas,
+        maxPriorityFeePerGas: prepared.maxPriorityFeePerGas,
+        gasPrice: prepared.maxFeePerGas === undefined ? prepared.gasPrice : undefined,
+        type: prepared.type,
+      };
+      r = {
+        key: intentKey(o.intent),
+        intent: o.intent,
+        pinnedNonce,
+        hashes: [],
+        sentNonces: [],
+        snapshot: { effectBefore: before === null ? null : before.toString() },
+        state: "sent",
+        decision: "wait",
+        waitReason: "not_seen",
+        observations: [],
+        rounds: 0,
+        lastSendAtMs: deps.now(),
+        headSince: null,
+        receiptSeen: null,
+        landed: false,
+        request,
+      };
+      // Reserve before dispatch: an RPC error does not establish that broadcast failed.
+      evidenceLedger(o.intent.chainId, o.intent.sender).push(r);
+      try {
+        const hash = await o.walletClient.sendTransaction({ ...base, nonce: pinnedNonce, gas: request.gas, ...fees(request) });
+        r.hashes.push(hash);
+        r.sentNonces.push(pinnedNonce);
+      } catch {
+        r.state = "pending";
+        throw new EvidenceError("EVIDENCE_PENDING", `Your ${o.intent.label} could not be acknowledged and may have been submitted. Do not start another transaction; check its status with tx_status. Retrying this same operation keeps its nonce.`, r);
+      }
+    } else {
+      // Re-send rule: same calldata, the pinned nonce (fresh under no_nonce_pin), fees bumped by at least 10%.
+      const req = r.request;
+      const bumped: StoredRequest = { ...req, maxFeePerGas: bump(req.maxFeePerGas), maxPriorityFeePerGas: bump(req.maxPriorityFeePerGas), gasPrice: bump(req.gasPrice) };
+      const nonce = ablation === "no_nonce_pin" ? Number(await pub.getTransactionCount({ address: o.intent.sender, blockTag: "pending" })) : r.pinnedNonce;
+      try {
+        const hash = await o.walletClient.sendTransaction({
+          account: req.account,
+          chain: req.chain,
+          to: req.to,
+          value: req.value,
+          data: req.data,
+          nonce,
+          gas: req.gas,
+          ...fees(bumped),
+        });
+        r.hashes.push(hash);
+        r.sentNonces.push(nonce);
+        r.request = bumped;
+        r.lastSendAtMs = deps.now();
+        if (r.state === "orphaned" || r.state === "dropped") r.receiptSeen = null;
+      } catch (error) {
+        const c = classifySendError(error);
+        if (c === "error") throw error;
+        if (c === "landed") r.landed = true;
+        r.request = bumped;
+      }
+      if (r.state === "orphaned" || r.state === "dropped") r.state = "sent";
     }
-    if (r.state === "orphaned" || r.state === "dropped") r.state = "sent";
-  }
+    return r;
+  });
   // Check loop: poll every CHECK_INTERVAL_MS for at most CHECK_BUDGET_MS; stop early on a decision that ends it.
   r.rounds++;
   const start = deps.now();
