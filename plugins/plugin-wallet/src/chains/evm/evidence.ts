@@ -315,10 +315,11 @@ export function findOpenIntent(intent: EvidenceIntent): IntentRecord | undefined
     : (r: IntentRecord) => r.baseline?.reported == null;
   return [...evidenceLedger(intent.chainId, intent.sender)].reverse().find((r) => r.key === key && open(r));
 }
-/** The most recent record that is unresolved, else the most recent record. */
+/** Surface a positively orphaned nonce gap first; otherwise the latest unresolved record, then latest record. */
 export function latestIntent(chainId: number, sender: string): IntentRecord | undefined {
   const l = evidenceLedger(chainId, sender);
-  return [...l].reverse().find(isUnresolved) ?? l[l.length - 1];
+  const orphan = l.filter((r) => r.state === "orphaned").sort((a, b) => a.pinnedNonce - b.pinnedNonce)[0];
+  return orphan ?? [...l].reverse().find(isUnresolved) ?? l[l.length - 1];
 }
 
 // ---- evidence ----------------------------------------------------------------------------------------------
@@ -923,6 +924,8 @@ export function evidenceMessage(r: IntentRecord): string {
     case "failed":
       return `${what} was mined in block ${block} but did not succeed; it had no effect.${tail}`;
     case "wait_and_recheck":
+      if (o && o.nonceLatest <= r.pinnedNonce && o.receiptBlock === null && o.txBlock === null)
+        return `${what} is pending at the node, but has not been observed in a canonical block and its reserved nonce is not confirmed as used. Do not send it again; check its status with tx_status.${tail}`;
       return `${what} was probably included (the account's nonce moved) but its receipt is not visible yet. Do not send it again; check its status with tx_status.${tail}`;
     case "resend_same_nonce":
       return `${what} was not found on chain and the account nonce is unchanged, so it was dropped. Repeating the same ${r.intent.label} is safe: it reuses the same nonce, so at most one can execute.${tail}`;
@@ -1048,7 +1051,7 @@ function fees(req: StoredRequest) {
 }
 
 /** Recheck reservations before new sends; permit an existing earlier pinned nonce to repair a gap. */
-async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: EvidenceDeps) {
+async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: EvidenceDeps, afterDispatch = false) {
   const key = intentKey(intent);
   const ledger = evidenceLedger(intent.chainId, intent.sender);
   const previous = [...ledger].reverse().find((r) => r.key === key);
@@ -1065,7 +1068,9 @@ async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: Ev
       const msg =
         evidenceAblation() === "no_grading"
           ? `Transaction failed: an earlier ${r.intent.label} is not settled.`
-          : `An earlier ${r.intent.label} is not resolved yet, so nothing else is sent: ${evidenceMessage(r)} Check its status with tx_status first.`;
+          : afterDispatch
+            ? `Your ${intent.label} was submitted, but an earlier ${r.intent.label} is unresolved: ${evidenceMessage(r)} No further transaction is sent. Check its status with tx_status first.`
+            : `An earlier ${r.intent.label} is not resolved yet, so nothing else is sent: ${evidenceMessage(r)} Check its status with tx_status first.`;
       logDecision("guard", r, deps);
       throw new EvidenceError("EVIDENCE_UNRESOLVED", msg, r);
     }
@@ -1198,6 +1203,12 @@ export async function sendWithEvidence(o: {
     if (TERMINAL.includes(r.decision) || deps.now() - start >= CHECK_BUDGET_MS) break;
     await deps.sleep(CHECK_INTERVAL_MS);
   }
+  // A next-send reorg can fire inside dispatch, after the pre-send guard. A queued transaction above
+  // the canonical nonce cannot establish its earlier dependencies: recheck them before returning its
+  // result. The existing guard surfaces/reopens a positively orphaned operation; it never resends it.
+  const last = r.observations[r.observations.length - 1];
+  if (last && last.receiptBlock === null && last.txBlock === null && last.nonceLatest < r.pinnedNonce)
+    await guard(pub, r.intent, deps, true);
   closeRound(r);
   logDecision("send", r, deps);
   const hash = (r.observations[r.observations.length - 1]?.hash ?? r.hashes[r.hashes.length - 1]) as Hex;

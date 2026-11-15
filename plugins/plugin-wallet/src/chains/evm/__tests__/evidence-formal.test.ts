@@ -187,6 +187,69 @@ const send = (c: Chain, tokenOut: Address, value: bigint) =>
     deps: c.deps(),
   });
 
+function approvalFixture(c: Chain, orphanDuringDispatch: boolean) {
+  const abi = parseAbi(["function approve(address,uint256) returns (bool)"]);
+  const data = encodeFunctionData({ abi, functionName: "approve", args: [ROUTER, 50n] });
+  const intent = describeCall({
+    chainId: 1,
+    sender: SENDER,
+    holder: SENDER,
+    to: USDC,
+    value: 0n,
+    data,
+  });
+  let approved = 0n;
+  let queued: { hash: Hex; tx: Tx } | null = null;
+  const attempts: number[] = [];
+  const originalRead = c.pub.readContract;
+  c.pub.readContract = async (a: any) =>
+    a.functionName === "allowance" ? approved : originalRead(a);
+  const originalSend = c.wallet.sendTransaction;
+  c.wallet.sendTransaction = async (a: any) => {
+    attempts.push(a.nonce);
+    if (a.data === data) {
+      if (a.nonce < c.nonce)
+        throw Object.assign(new Error("nonce too low"), { name: "NonceTooLowError" });
+      if (!queued) {
+        if (orphanDuringDispatch) c.reorg(101);
+        const hash = c.h("queued-approval");
+        const tx: Tx = {
+          nonce: a.nonce,
+          block: null,
+          blockHash: null,
+          to: USDC,
+          credit: "0x0000000000000000000000000000000000000000",
+          amount: 0n,
+        };
+        queued = { hash, tx };
+        c.txs.set(hash, tx);
+      }
+      return queued.hash;
+    }
+    const hash = await originalSend(a);
+    if (queued && c.nonce === queued.tx.nonce) {
+      c.mine();
+      queued.tx.block = c.head;
+      queued.tx.blockHash = c.hashes.get(c.head)!;
+      c.nonce++;
+      approved = 50n;
+    }
+    return hash;
+  };
+  return {
+    attempts,
+    allowance: () => approved,
+    send: () =>
+      sendWithEvidence({
+        walletClient: c.wallet,
+        publicClient: reader(c) as never,
+        request: { account: ACCOUNT, chain: mainnet, to: USDC, value: 0n, data },
+        intent,
+        deps: c.deps(),
+      }),
+  };
+}
+
 async function outcome(p: Promise<{ decision: string }>): Promise<string> {
   try {
     return (await p).decision;
@@ -351,11 +414,67 @@ describe.each(["full", "full_quorum"])("recovery counterexamples (%s)", (mode) =
       return hash;
     };
     expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
-    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_PENDING:wait_and_recheck");
+    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_UNRESOLVED:orphaned");
     expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
     expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("confirmed");
     expect(c.canonical(USDC)).toBe(1);
     expect(c.canonical(DAI)).toBe(1);
+  });
+
+  // Recorded gate3 random seed 10: a next-send reorg fires INSIDE approval dispatch, after the
+  // pre-send guard checked the sale. The approval remains pooled above the now-empty sale nonce.
+  it("C10: an approval queued by a dispatch-time reorg surfaces its orphaned sale dependency", async () => {
+    const c = new Chain();
+    const approval = approvalFixture(c, true);
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    const sale = latestIntent(1, SENDER)!;
+    const failure = await approval.send().catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(EvidenceError);
+    expect((failure as EvidenceError).code).toBe("EVIDENCE_UNRESOLVED");
+    expect((failure as EvidenceError).message).toContain("no longer part of the chain (reorg)");
+    expect((failure as EvidenceError).message).toContain("Your token approval was submitted");
+    expect((failure as EvidenceError).message).not.toContain("nothing else is sent");
+    expect((failure as EvidenceError).message).not.toContain(
+      "token approval was probably included"
+    );
+    expect(sale.state).toBe("orphaned");
+    expect(latestIntent(1, SENDER)).toBe(sale); // tx_status must expose the blocking operation.
+    expect(approval.attempts).toEqual([7, 8]); // no automatic unrelated resend inside the approval.
+    expect(c.canonical(USDC)).toBe(0);
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    expect(approval.attempts.slice(0, 3)).toEqual([7, 8, 7]);
+    expect(await outcome(approval.send())).toBe("confirmed");
+    expect(c.canonical(USDC)).toBe(1);
+    expect(approval.allowance()).toBe(50n);
+  });
+
+  it("a known pending approval without an orphan does not claim its nonce moved or it was included", async () => {
+    const c = new Chain();
+    const approval = approvalFixture(c, false);
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    const sale = latestIntent(1, SENDER)!;
+    const failure = await approval.send().catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(EvidenceError);
+    expect((failure as EvidenceError).code).toBe("EVIDENCE_PENDING");
+    expect((failure as EvidenceError).message).not.toMatch(/probably included|nonce.*moved/i);
+    expect((failure as EvidenceError).message).toContain("pending");
+    expect(sale.state).toBe("confirmed");
+    expect(latestIntent(1, SENDER)!.intent.label).toBe("token approval");
+    expect(c.canonical(USDC)).toBe(1);
+    expect(approval.attempts).toEqual([7, 8]);
+  });
+
+  it("a nonce gap without positive managed orphan evidence remains pending without invented recovery", async () => {
+    const c = new Chain();
+    const approval = approvalFixture(c, false);
+    c.pub.getTransactionCount = async (a?: { blockTag?: string }) =>
+      c.nonce + (a?.blockTag === "pending" ? 1 : 0);
+    const failure = await approval.send().catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(EvidenceError);
+    expect((failure as EvidenceError).code).toBe("EVIDENCE_PENDING");
+    expect(latestIntent(1, SENDER)!.state).toBe("pending");
+    expect(approval.attempts).toEqual([8]);
+    expect(c.nonce).toBe(7);
   });
 
   it("C7: a same-key retry reuses a positively orphaned operation instead of allocating past its pooled nonce", async () => {
