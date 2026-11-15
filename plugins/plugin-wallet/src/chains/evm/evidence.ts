@@ -353,7 +353,10 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
     orphanEvidence = !!b && Number(b.number) === r.receiptSeen.block && b.hash !== r.receiptSeen.blockHash;
   }
   const balanceEffectSeen = effectSeen(r, effectNow);
-  if (orphanEvidence) r.landed = false;
+  if (orphanEvidence) {
+    r.landed = false;
+    reportedOutcomes.delete(r);
+  }
   const blockHash = receipt?.blockHash ?? tx?.blockHash;
   // Keep the old anchor while an orphaned transaction is still below K on its new branch.
   if (canonical === true && included !== null && blockHash && best?.hash &&
@@ -389,7 +392,7 @@ export function decide(r: IntentRecord, now: number): { decision: EvidenceDecisi
   const inclState: IntentState = included ? "included" : o.txKnown ? "pending" : "sent";
   if (o.receiptStatus === "reverted") return { decision: "failed", waitReason: null, state: "failed" };
   const canonicalEffect = o.canonical === true && o.confirmations >= EVIDENCE_K && o.balanceEffectSeen;
-  if (o.orphanEvidence && !canonicalEffect) return { decision: "orphaned", waitReason: null, state: "orphaned" };
+  if (o.orphanEvidence && o.canonical !== true) return { decision: "orphaned", waitReason: null, state: "orphaned" };
   if (r.landed) {
     // The node rejected a same-nonce replacement as "nonce too low": the pinned nonce is used. Verify the effect.
     // A lost acknowledgement can leave us with no hash. Do not fabricate a successful receipt identity.
@@ -424,7 +427,8 @@ export async function checkOnce(pub: EvidencePublicClient, r: IntentRecord, deps
   const wasConfirmed = r.state === "confirmed";
   const d = decide(r, deps.now());
   // A confirmed intent changes only on positive reorg evidence, never on a (possibly stale) missing read.
-  if (!(wasConfirmed && d.decision !== "orphaned")) {
+  const reorgVisible = r.observations[r.observations.length - 1]?.orphanEvidence === true;
+  if (!(wasConfirmed && !reorgVisible)) {
     apply(r, d);
     if (countRound) closeRound(r);
   }
@@ -451,7 +455,7 @@ export function evidenceMessage(r: IntentRecord): string {
     case "resend_same_nonce":
       return `${what} was not found on chain and the account nonce is unchanged, so it was dropped. Repeating the same ${r.intent.label} is safe: it reuses the same nonce, so at most one can execute.${tail}`;
     case "orphaned":
-      return `${what} was confirmed in block ${r.receiptSeen?.block}, but that block is no longer part of the chain (reorg). The ${r.intent.label} is not on chain now. Repeating the same ${r.intent.label} is safe (same nonce).${tail}`;
+      return `${what} was observed in block ${r.receiptSeen?.block}, but that block is no longer part of the chain (reorg). The ${r.intent.label} is not on chain now. Repeating the same ${r.intent.label} is safe (same nonce).${tail}`;
     case "landed":
       return `The reserved nonce has been used, but I cannot confirm ${what.toLowerCase()} from canonical transaction evidence yet. Check its status with tx_status.${tail}`;
     case "ask_user": {
@@ -509,12 +513,19 @@ function fees(req: StoredRequest) {
     : { maxFeePerGas: req.maxFeePerGas, maxPriorityFeePerGas: req.maxPriorityFeePerGas };
 }
 
-/** Refuses a send for a different intent while another is unresolved (after re-checking it once). */
+/** Recheck reservations before new sends; permit an existing earlier pinned nonce to repair a gap. */
 async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: EvidenceDeps) {
   const key = intentKey(intent);
-  for (const r of evidenceLedger(intent.chainId, intent.sender)) {
+  const ledger = evidenceLedger(intent.chainId, intent.sender);
+  const previous = [...ledger].reverse().find((r) => r.key === key);
+  // A same-key call after a visible reorg resumes its old nonce, rather than becoming a new operation.
+  if (previous?.state === "confirmed") await checkOnce(pub, previous, deps, false);
+  const retry = findOpenIntent(intent);
+  for (const r of ledger) {
     if (r.key === key) continue;
-    if (!isUnresolved(r) && r.state !== "confirmed") continue;
+    // Restoring a lower nonce cannot duplicate a later queued operation; it unblocks its inclusion.
+    if (retry && evidenceAblation() !== "no_nonce_pin" && retry.pinnedNonce < r.pinnedNonce) continue;
+    if (!isUnresolved(r) && r.state !== "confirmed" && r.state !== "included") continue;
     await checkOnce(pub, r, deps, false);
     if (isUnresolved(r)) {
       const msg =

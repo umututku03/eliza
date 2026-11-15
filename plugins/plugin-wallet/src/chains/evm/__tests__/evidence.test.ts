@@ -177,13 +177,17 @@ class FakeChain {
         } catch {}
         if (i === 0) await this.deps().sleep(timeout);
       }
-      throw Object.assign(new Error(`Timed out while waiting for transaction with hash "${hash}" to be confirmed.`), {
-        name: "WaitForTransactionReceiptTimeoutError",
-      });
+      throw Object.assign(
+        new Error(`Timed out while waiting for transaction with hash "${hash}" to be confirmed.`),
+        {
+          name: "WaitForTransactionReceiptTimeoutError",
+        }
+      );
     },
     /** eth_call at the head (pace_style). */
     call: vi.fn(async (_: any) => {
-      if (this.simulateFail) throw Object.assign(new Error("execution reverted"), { details: this.simulateFail });
+      if (this.simulateFail)
+        throw Object.assign(new Error("execution reverted"), { details: this.simulateFail });
       return { data: "0x" };
     }),
     readContract: async (a: any) => {
@@ -383,7 +387,7 @@ describe("decision table (one test per row)", () => {
     expect(ev(e).decision).toBe("orphaned");
     expect(c.t).toBeLessThan(CHECK_BUDGET_MS); // stops early
     expect(e.message).toContain(
-      "Your swap was confirmed in block 101, but that block is no longer part of the chain (reorg). The swap is not on chain now. Repeating the same swap is safe (same nonce)."
+      "Your swap was observed in block 101, but that block is no longer part of the chain (reorg). The swap is not on chain now. Repeating the same swap is safe (same nonce)."
     );
   });
 
@@ -692,14 +696,22 @@ function useMode(mode: string) {
 const PACE_POLICY = {
   router: ROUTER,
   rules: [
-    { tokenIn: "0x0000000000000000000000000000000000000000", tokenOut: USDC, maxAmountIn: SALE_WEI.toString(), keepAtLeastIn: null, minAmountOut: null },
+    {
+      tokenIn: "0x0000000000000000000000000000000000000000",
+      tokenOut: USDC,
+      maxAmountIn: SALE_WEI.toString(),
+      keepAtLeastIn: null,
+      minAmountOut: null,
+    },
     { tokenIn: USDC, tokenOut: DAI, maxAmountIn: null, keepAtLeastIn: "50", minAmountOut: null },
   ],
 };
 
 describe("mode switch", () => {
   it("unset is off; the legacy flag is full; unknown or conflicting values are refused", async () => {
-    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled } = await import("../evidence");
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled } = await import(
+      "../evidence"
+    );
     delete process.env.EVM_EVIDENCE_LAYER;
     expect(evidenceMode()).toBe("off");
     expect(evidenceSendsEnabled()).toBe(false);
@@ -730,7 +742,12 @@ describe("nonce_only baseline", () => {
     expect(r.decision).toBe("confirmed");
     expect(c.wallet.sendTransaction.mock.calls[0][0].nonce).toBe(7);
     expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
-    expect(r.record!.baseline).toMatchObject({ mode: "nonce_only", reported: "success", consumed: true, nonceGap: null });
+    expect(r.record!.baseline).toMatchObject({
+      mode: "nonce_only",
+      reported: "success",
+      consumed: true,
+      nonceGap: null,
+    });
   });
 
   it('lost acknowledgement (receipt hidden): stock timeout, then the same-nonce re-send gets "nonce too low" -> success, no duplicate', async () => {
@@ -739,7 +756,9 @@ describe("nonce_only baseline", () => {
     const first = await outcomeOf(send(c));
     expect(first.ok).toBe(false);
     expect(first.error).not.toBeInstanceOf(EvidenceError);
-    expect(first.error!.message).toMatch(/^Timed out while waiting for transaction with hash "0x[0-9a-f]+" to be confirmed\.$/);
+    expect(first.error!.message).toMatch(
+      /^Timed out while waiting for transaction with hash "0x[0-9a-f]+" to be confirmed\.$/
+    );
     const again = await outcomeOf(send(c, saleIntent(9_999n), saleData(9_999n)));
     expect(again.ok).toBe(true);
     const r = evidenceLedger(1, SENDER)[0];
@@ -791,7 +810,9 @@ describe("nonce_only baseline", () => {
     expect(step2.error!.message).toMatch(/^Timed out while waiting/);
     const r = evidenceLedger(1, SENDER)[1];
     expect(r.baseline!.nonceGap).toEqual({ nonce: 8, pendingCount: 7, reserved: [7] });
-    expect(warn.mock.calls.some((a) => /nonce gap: swap sent with nonce 8/.test(String(a[0])))).toBe(true);
+    expect(
+      warn.mock.calls.some((a) => /nonce gap: swap sent with nonce 8/.test(String(a[0])))
+    ).toBe(true);
     warn.mockRestore();
   });
 
@@ -820,7 +841,13 @@ describe("verify_binary baseline", () => {
     const c = new FakeChain();
     const r = await send(c);
     expect(r.decision).toBe("confirmed");
-    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({
+      account: ACCOUNT,
+      chain: mainnet,
+      to: ROUTER,
+      value: SALE_WEI,
+      data: saleData(),
+    });
     expect(c.wallet.prepareTransactionRequest).not.toHaveBeenCalled();
     expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
   });
@@ -832,7 +859,9 @@ describe("verify_binary baseline", () => {
     const again = await outcomeOf(send(c));
     expect(again.ok).toBe(true);
     expect(c.sent).toHaveLength(1);
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks.map((x) => [x.result, x.reason])).toEqual([["complete", "balance effect visible"]]);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks.map((x) => [x.result, x.reason])).toEqual([
+      ["complete", "balance effect visible"],
+    ]);
   });
 
   it("complete by receipt (status 1)", async () => {
@@ -854,7 +883,10 @@ describe("verify_binary baseline", () => {
     expect(c.sent.map((a) => a.nonce)).toEqual([undefined, undefined]);
     expect("nonce" in c.wallet.sendTransaction.mock.calls[1][0]).toBe(false);
     expect(c.sales()).toBe(1);
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "no receipt and no balance effect" });
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({
+      result: "incomplete",
+      reason: "no receipt and no balance effect",
+    });
   });
 
   it("an inconclusive read counts as incomplete", async () => {
@@ -867,7 +899,10 @@ describe("verify_binary baseline", () => {
     };
     expect((await outcomeOf(send(c))).ok).toBe(true);
     c.pub.readContract = read;
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "inconclusive: the balance read failed" });
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({
+      result: "incomplete",
+      reason: "inconclusive: the balance read failed",
+    });
     expect(c.sales()).toBe(2); // the landed sale is repeated: the binary design's false incomplete
   });
 
@@ -901,15 +936,28 @@ describe("pace_style baseline", () => {
     const r = await send(c);
     expect(r.decision).toBe("confirmed");
     expect(r.record).toBeNull();
-    expect(c.pub.call).toHaveBeenCalledWith({ account: ACCOUNT, to: ROUTER, data: saleData(), value: SALE_WEI });
-    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(c.pub.call).toHaveBeenCalledWith({
+      account: ACCOUNT,
+      to: ROUTER,
+      data: saleData(),
+      value: SALE_WEI,
+    });
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({
+      account: ACCOUNT,
+      chain: mainnet,
+      to: ROUTER,
+      value: SALE_WEI,
+      data: saleData(),
+    });
     expect(evidenceLedger(1, SENDER)).toHaveLength(0); // stateless
   });
 
   it("a simulation failure is a refusal (nothing is sent)", async () => {
     const c = new FakeChain();
     c.simulateFail = "UniswapV2Router: EXPIRED";
-    await expect(send(c)).rejects.toThrow(/^Refused by the pre-signing check: the simulation at the head failed \(UniswapV2Router: EXPIRED\)\.$/);
+    await expect(send(c)).rejects.toThrow(
+      /^Refused by the pre-signing check: the simulation at the head failed \(UniswapV2Router: EXPIRED\)\.$/
+    );
     expect(c.sent).toHaveLength(0);
   });
 
@@ -933,9 +981,17 @@ describe("pace_style baseline", () => {
       });
     await expect(refuse(saleData(), SALE_WEI, DAI)).rejects.toThrow(/is not the declared router/);
     await expect(refuse(saleData(), 2n * SALE_WEI)).rejects.toThrow(/exceeds the declared maximum/);
-    const toDai = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [1n, [WETH, DAI], SENDER, 2200n] });
+    const toDai = encodeFunctionData({
+      abi: ROUTER_ABI,
+      functionName: "swapExactETHForTokens",
+      args: [1n, [WETH, DAI], SENDER, 2200n],
+    });
     await expect(refuse(toDai, SALE_WEI)).rejects.toThrow(/is not declared/);
-    const noMin = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [0n, [WETH, USDC], SENDER, 2200n] });
+    const noMin = encodeFunctionData({
+      abi: ROUTER_ABI,
+      functionName: "swapExactETHForTokens",
+      args: [0n, [WETH, USDC], SENDER, 2200n],
+    });
     await expect(refuse(noMin, SALE_WEI)).rejects.toThrow(/sets no minimum output/);
     c.usdc = 60n; // the step spends 60_000_000 base units while 50 must stay
     await expect(refuse(step2Data, 0n)).rejects.toThrow(/would leave less than the declared/);
@@ -1080,7 +1136,11 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
       };
       const pub = {
         readContract: vi.fn(async (a: any) =>
-          a.functionName === "WETH" ? WETH : a.functionName === "balanceOf" ? 0n : [SALE_WEI, 237_636_476n]
+          a.functionName === "WETH"
+            ? WETH
+            : a.functionName === "balanceOf"
+              ? 0n
+              : [SALE_WEI, 237_636_476n]
         ),
         getBlock: vi.fn(async () => ({ timestamp: 1_000n })),
         waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })),
@@ -1088,7 +1148,10 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
         call: vi.fn(async () => ({ data: "0x" })),
       };
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const action = new SwapAction(fakeProvider(wallet, pub), { uniswapV2Router: ROUTER, exclusive: true });
+      const action = new SwapAction(fakeProvider(wallet, pub), {
+        uniswapV2Router: ROUTER,
+        exclusive: true,
+      });
       await action.swap({
         chain: "mainnet",
         fromToken: "0x0000000000000000000000000000000000000000",
@@ -1099,10 +1162,24 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
       expect(warn).toHaveBeenCalledWith(`[evidence] EVM_EVIDENCE_MODE=${mode}`);
       warn.mockRestore();
       const minOut = (237_636_476n * 9_700n) / 10_000n;
-      const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [minOut, [WETH, USDC], SENDER, 2_200n] });
-      expect(wallet.sendTransaction.mock.calls).toEqual([[{ account: ACCOUNT, to: ROUTER, value: SALE_WEI, data, chain: mainnet }]]);
-      expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual(["account", "to", "value", "data", "chain"]);
-      expect(pub.waitForTransactionReceipt.mock.calls).toEqual([[{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }]]);
+      const data = encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: "swapExactETHForTokens",
+        args: [minOut, [WETH, USDC], SENDER, 2_200n],
+      });
+      expect(wallet.sendTransaction.mock.calls).toEqual([
+        [{ account: ACCOUNT, to: ROUTER, value: SALE_WEI, data, chain: mainnet }],
+      ]);
+      expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual([
+        "account",
+        "to",
+        "value",
+        "data",
+        "chain",
+      ]);
+      expect(pub.waitForTransactionReceipt.mock.calls).toEqual([
+        [{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }],
+      ]);
       expect(wallet.prepareTransactionRequest).not.toHaveBeenCalled();
       expect(pub.getTransactionCount).not.toHaveBeenCalled();
       expect(pub.call).toHaveBeenCalledTimes(mode === "pace_style" ? 1 : 0);

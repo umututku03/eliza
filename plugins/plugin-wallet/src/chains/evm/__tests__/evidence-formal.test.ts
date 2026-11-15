@@ -6,6 +6,7 @@ import { type Address, encodeFunctionData, type Hex, parseAbi } from "viem";
 import { mainnet } from "viem/chains";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  checkOnce,
   describeCall,
   type EvidenceDeps,
   EvidenceError,
@@ -299,5 +300,98 @@ describe("TLA+ counterexamples (research/formal)", () => {
     expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("EVIDENCE_PENDING:wait_and_recheck");
     expect(await outcome(send(c, USDC, 10n ** 17n))).not.toBe("confirmed");
     expect(c.canonical(USDC)).toBe(1);
+  });
+  it("C6: an orphaned earlier nonce can be restored while a later approved operation is pending", async () => {
+    const c = new Chain();
+    const originalSend = c.wallet.sendTransaction;
+    let queued: { hash: Hex; tx: Tx } | null = null;
+    let trigger = true;
+    c.wallet.sendTransaction = async (a: any) => {
+      if (trigger && a.data === buyData(DAI)) {
+        trigger = false;
+        c.reorg(101);
+        const hash = c.h("stranded-followup");
+        const tx: Tx = {
+          nonce: a.nonce,
+          block: null,
+          blockHash: null,
+          to: a.to,
+          credit: DAI,
+          amount: 100n,
+        };
+        queued = { hash, tx };
+        c.txs.set(hash, tx);
+        return hash;
+      }
+      const hash = await originalSend(a);
+      if (queued && c.nonce === queued.tx.nonce) {
+        c.mine();
+        queued.tx.block = c.head;
+        queued.tx.blockHash = c.hashes.get(c.head)!;
+        c.nonce++;
+        c.balances.set(DAI.toLowerCase(), c.bal(DAI) + 100n);
+        queued = null;
+      }
+      return hash;
+    };
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_PENDING:wait_and_recheck");
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("confirmed");
+    expect(c.canonical(USDC)).toBe(1);
+    expect(c.canonical(DAI)).toBe(1);
+  });
+
+  it("C7: a same-key retry reuses a positively orphaned operation instead of allocating past its pooled nonce", async () => {
+    const c = new Chain();
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    const record = latestIntent(1, SENDER)!;
+    const hash = record.hashes[0];
+    const tx = { ...c.txs.get(hash)! };
+    c.reorg(101);
+    tx.block = null;
+    tx.blockHash = null;
+    c.txs.set(hash, tx);
+    c.pub.getTransactionCount = async (a?: { blockTag?: string }) =>
+      c.nonce + (a?.blockTag === "pending" ? 1 : 0);
+    const attempts: number[] = [];
+    c.wallet.sendTransaction = async (a: any) => {
+      attempts.push(a.nonce);
+      throw new Error("stop at replacement dispatch");
+    };
+    try {
+      await send(c, USDC, 10n ** 17n);
+    } catch {
+      /* Stop at the counterfactual send; do not fabricate its outcome. */
+    }
+    expect(attempts).toEqual([7]);
+  });
+
+  it("C8: an included operation is rechecked for a reorg even before a confirmation was reported", async () => {
+    const c = new Chain();
+    c.hideNext = true;
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("EVIDENCE_PENDING:wait_and_recheck");
+    c.reorg(101);
+    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_UNRESOLVED:orphaned");
+    expect(c.canonical(DAI)).toBe(0);
+  });
+
+  it("C9: reinclusion invalidates the old confirmation until the new block has K confirmations", async () => {
+    const c = new Chain();
+    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed");
+    const record = latestIntent(1, SENDER)!;
+    const hash = record.hashes[0];
+    const tx = { ...c.txs.get(hash)! };
+    c.reorg(101);
+    c.mine();
+    tx.block = c.head;
+    tx.blockHash = c.hashes.get(c.head)!;
+    c.txs.set(hash, tx);
+    c.nonce++;
+    c.balances.set(USDC.toLowerCase(), 100n);
+    await checkOnce(c.pub as never, record, c.deps());
+    expect(record.decision).toBe("wait");
+    expect(record.state).toBe("included");
+    expect(await outcome(send(c, DAI, 2n * 10n ** 17n))).toBe("EVIDENCE_UNRESOLVED:wait");
   });
 });
