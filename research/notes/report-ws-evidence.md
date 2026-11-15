@@ -97,3 +97,54 @@ Each cohort writes `results-wse-<name>{,.console.log,.audit.json,.tamper.txt}`. 
 ## Open problems
 - The ID prefix is `-ev` for every ablation; the ablation is recorded only in the manifest.
 - 'dropped' is not "unresolved" (as the spec says), so a different intent can take the dropped nonce. A later same-intent re-send then gets "nonce too low" and reports landed or ask_user. This is safe, but noisy.
+
+
+## Codex recovery takeover (14 November 2026)
+
+The user asked Codex to continue the coordinator work while Claude Code was
+unavailable. Work is isolated on `research/evidence-recovery-1114` in
+`/private/tmp/eliza-evidence-recovery-1114`; original worktrees and their
+running validation sources remain unchanged. This recovery branch integrates
+the coordinator harness so its new batch uses disjoint port bases. No original
+branch has been merged or moved. No paid calls were launched.
+
+Recovery fix commits: `8886759786`, `ce3baafc4e`. Integration: `6d07cc65ea`.
+The first retains the intent before dispatch, serializes sender reservation and
+send preparation, requires positive canonical evidence, and lets positive
+reorg evidence supersede landed state. The second clears obsolete landed state
+when a replacement is accepted. Completed identical swaps remain repeatable;
+the guarantee is explicitly scoped to unresolved tracked operations within
+the process, not durable logical-operation identity.
+
+Four regressions fail on the old module (4 failed / 26 passed) and all 30
+evidence tests pass on fixed code. Final wallet suite: 260 passed, 1 skipped;
+assistant 2743 passed; Anthropic 29 passed; core 382 passed plus the 2 known
+logger environment failures. Wallet production typecheck now passes after
+restoring the installed Bun types link locally, with no manifest/config edit.
+Repository `bun run verify` stops at existing app translation-key gaps; app/UI
+files are unchanged. Initial EPERM listener failures are retained separately
+from the passing unsandboxed local-server test runs.
+
+Real-fork deterministic probes compared original/fixed modules. With a lost
+broadcast acknowledgement, original sends used nonces [0,1], yielding two
+canonical sales and 475261497 X units; fixed attempts used [0,0], yielding one
+sale and 237636476 X units. When the first hash is unknown, fixed code honestly
+asks the user instead of claiming a confirmed hash. An unavailable canonical
+block lookup returned confirmed with canonical=null originally; fixed code
+returns EVIDENCE_PENDING. Probe artifacts and exact outputs are in
+`test-results/evidence-recovery-1114/`.
+
+A new 16-cohort free matrix is running with fresh
+`results-wse-recovery-1114-*` destinations. It covers full/no-layer/three
+ablations in stock and plan_guard, both regression families with and without
+evidence, decoded refusal and agent2 integration. All arms share idle-block
+settings. Expected no_nonce_pin duplicate effects in plan_guard must not be
+asserted blindly: PlanStepEnforcer independently refuses duplicate steps.
+Report actual canonical counts and refusals.
+
+The local restart handoff is
+`research/notes/codex-recovery-handoff-2026-11-14.md` (ignored by existing repo
+rules, intentionally left local). The automatic finalizer appends the final
+cohort results here and to that handoff, then commits/pushes this existing
+tracked report if source is unchanged and the secret scan passes. No merge is
+automatic. Do not launch a duplicate batch while parent PID 96503 is alive.
