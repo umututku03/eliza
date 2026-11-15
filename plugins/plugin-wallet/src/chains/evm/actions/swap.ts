@@ -59,7 +59,7 @@ import {
   describeCall,
   type EvidencePublicClient,
   type EvidenceWalletClient,
-  evidenceLayerEnabled,
+  evidenceSendsEnabled,
   sendWithEvidence,
 } from "../evidence";
 import { parseEvmBaseUnits } from "../exact-units";
@@ -846,8 +846,8 @@ export class SwapAction {
       };
     }
     let hash: Hex;
-    if (evidenceLayerEnabled()) {
-      // Chain-evidence layer (EVM_EVIDENCE_LAYER=1): nonce-pinned intent, graded evidence (see evidence.ts).
+    if (evidenceSendsEnabled()) {
+      // Chain-evidence layer (EVM_EVIDENCE_LAYER=1) or a baseline (EVM_EVIDENCE_MODE; see evidence.ts).
       const sent = await sendWithEvidence({
         walletClient: walletClient as unknown as EvidenceWalletClient,
         publicClient: publicClient as unknown as EvidencePublicClient,
@@ -948,7 +948,7 @@ export class SwapAction {
       functionName: "approve",
       args: [spenderAddress, requiredAmount],
     });
-    if (evidenceLayerEnabled()) {
+    if (evidenceSendsEnabled()) {
       const sent = await sendWithEvidence({
         walletClient: walletClient as unknown as EvidenceWalletClient,
         publicClient: publicClient as unknown as EvidencePublicClient,

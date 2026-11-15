@@ -22,6 +22,7 @@ import {
   type EvidenceWalletClient,
   evidenceAblation,
   evidenceLayerEnabled,
+  evidenceSendsEnabled,
   findOpenIntent,
   sendWithEvidence,
 } from "./evidence";
@@ -132,8 +133,8 @@ export async function executeThroughPlan(
   if (contexts.length === 0) {
     throw new EVMError(EVMErrorCode.INVALID_PARAMS, `Refused by the approved plan: ${what} is not a step of the plan`);
   }
-  // Chain-evidence layer (EVM_EVIDENCE_LAYER=1): the redemption is a nonce-pinned intent keyed by its inner call.
-  const intent = evidenceLayerEnabled()
+  // Chain-evidence layer (EVM_EVIDENCE_LAYER=1) or a baseline (EVM_EVIDENCE_MODE): an intent keyed by its inner call.
+  const intent = evidenceSendsEnabled()
     ? describeCall({ chainId: walletProvider.getChainConfigs(chain).id, sender: account.address, holder: plan.account, ...call })
     : null;
   const redeemWithEvidence = async (data: Hex) => {
@@ -142,6 +143,8 @@ export async function executeThroughPlan(
       publicClient: publicClient as unknown as EvidencePublicClient,
       request: { account, chain: walletClient.chain, to: plan.delegationManager, data, value: 0n },
       intent: intent!,
+      effectiveCall: call,
+      holder: plan.account,
     });
     if (sent.decision === "failed") throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Plan redemption for ${what} failed on-chain. Hash: ${sent.hash}`);
     return sent.hash;
@@ -168,7 +171,7 @@ export async function executeThroughPlan(
     return hash;
   }
   const refused = `Refused by the approved plan (${firstReason}): ${what}`;
-  if (intent && firstReason && firstContext && evidenceAblation() !== "no_refusal_decode") {
+  if (intent && evidenceLayerEnabled() && firstReason && firstContext && evidenceAblation() !== "no_refusal_decode") {
     // Actionable refusal: append the bound the signed step allows, decoded from its caveat terms.
     const sentence = await decodeRefusalSentence(publicClient as unknown as EvidencePublicClient, firstContext, firstReason, call).catch(() => null);
     if (sentence) throw new EVMError(EVMErrorCode.INVALID_PARAMS, `${refused}. ${sentence}`);

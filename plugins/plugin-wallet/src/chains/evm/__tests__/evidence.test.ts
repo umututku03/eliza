@@ -104,6 +104,8 @@ class FakeChain {
   lagUsdc = 0n;
   onTick: ((t: number) => void) | null = null;
   sent: any[] = [];
+  waits: { hash: Hex; timeout: number }[] = [];
+  simulateFail: string | null = null;
   constructor() {
     for (let b = 0; b <= this.head; b++) this.blockHashes.set(b, this.hashFor(`b${b}`));
   }
@@ -166,6 +168,24 @@ class FakeChain {
     },
     getBlockNumber: async () => BigInt(this.lagBlock ?? this.head),
     getBalance: async () => 0n,
+    /** Stock confirmation wait: one look, then (fake) time runs out and viem's timeout error is thrown. */
+    waitForTransactionReceipt: async ({ hash, timeout }: { hash: Hex; timeout: number }) => {
+      this.waits.push({ hash, timeout });
+      for (let i = 0; i < 2; i++) {
+        try {
+          return await this.pub.getTransactionReceipt({ hash });
+        } catch {}
+        if (i === 0) await this.deps().sleep(timeout);
+      }
+      throw Object.assign(new Error(`Timed out while waiting for transaction with hash "${hash}" to be confirmed.`), {
+        name: "WaitForTransactionReceiptTimeoutError",
+      });
+    },
+    /** eth_call at the head (pace_style). */
+    call: vi.fn(async (_: any) => {
+      if (this.simulateFail) throw Object.assign(new Error("execution reverted"), { details: this.simulateFail });
+      return { data: "0x" };
+    }),
     readContract: async (a: any) => {
       if (a.functionName === "balanceOf")
         return a.address.toLowerCase() === USDC.toLowerCase()
@@ -191,13 +211,21 @@ class FakeChain {
     })),
     sendTransaction: vi.fn(async (a: any) => this.submit(a)),
   };
+  /** Transactions whose nonce is above the account nonce: accepted, queued behind the gap, never mined here. */
+  queued: Hex[] = [];
   submit(a: any): Hex {
     this.sent.push(a);
     if (a.nonce < this.accountNonce)
       throw Object.assign(new Error("nonce too low"), { name: "NonceTooLowError" });
+    // No explicit nonce (stock, verify_binary, pace_style): the sending node assigns the next one.
+    a = a.nonce === undefined ? { ...a, nonce: this.accountNonce } : a;
     const hash = this.hashFor(`tx${this.n++}`);
     if (this.dropNext) {
       this.dropNext = false; // accepted, never mined, unknown to the node
+      return hash;
+    }
+    if (a.nonce > this.accountNonce) {
+      this.queued.push(hash);
       return hash;
     }
     this.mine();
@@ -264,10 +292,14 @@ beforeEach(() => {
   resetEvidenceLedgers();
   process.env.EVM_EVIDENCE_LAYER = "1";
   delete process.env.EVM_EVIDENCE_ABLATE;
+  delete process.env.EVM_EVIDENCE_MODE;
+  delete process.env.EVM_PACE_POLICY;
 });
 afterEach(() => {
   delete process.env.EVM_EVIDENCE_LAYER;
   delete process.env.EVM_EVIDENCE_ABLATE;
+  delete process.env.EVM_EVIDENCE_MODE;
+  delete process.env.EVM_PACE_POLICY;
 });
 
 describe("intent key", () => {
@@ -643,6 +675,274 @@ describe("guarantee: at most one canonical transaction per (sender, pinned nonce
   });
 });
 
+// ---- baselines (EVM_EVIDENCE_MODE) ------------------------------------------------------------------------
+/** Result of one wallet call: the stock success hash, or the error as thrown (wording and type). */
+async function outcomeOf(p: Promise<{ hash: Hex; decision: string }>) {
+  try {
+    const r = await p;
+    return { ok: true as const, hash: r.hash, decision: r.decision, error: null as Error | null };
+  } catch (e) {
+    return { ok: false as const, hash: null, decision: null, error: e as Error };
+  }
+}
+function useMode(mode: string) {
+  delete process.env.EVM_EVIDENCE_LAYER;
+  process.env.EVM_EVIDENCE_MODE = mode;
+}
+const PACE_POLICY = {
+  router: ROUTER,
+  rules: [
+    { tokenIn: "0x0000000000000000000000000000000000000000", tokenOut: USDC, maxAmountIn: SALE_WEI.toString(), keepAtLeastIn: null, minAmountOut: null },
+    { tokenIn: USDC, tokenOut: DAI, maxAmountIn: null, keepAtLeastIn: "50", minAmountOut: null },
+  ],
+};
+
+describe("mode switch", () => {
+  it("unset is off; the legacy flag is full; unknown or conflicting values are refused", async () => {
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled } = await import("../evidence");
+    delete process.env.EVM_EVIDENCE_LAYER;
+    expect(evidenceMode()).toBe("off");
+    expect(evidenceSendsEnabled()).toBe(false);
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    expect(evidenceMode()).toBe("full");
+    process.env.EVM_EVIDENCE_MODE = "nonce_only";
+    expect(() => evidenceMode()).toThrow(/cannot be combined/);
+    useMode("verify_binary");
+    expect(evidenceLayerEnabled()).toBe(false);
+    expect(evidenceSendsEnabled()).toBe(true);
+    useMode("bogus");
+    expect(() => evidenceMode()).toThrow(/Unknown EVM_EVIDENCE_MODE/);
+  });
+
+  it("refuses an ablation outside the full layer", async () => {
+    useMode("nonce_only");
+    process.env.EVM_EVIDENCE_ABLATE = "no_grading";
+    await expect(send(new FakeChain())).rejects.toThrow(/full layer only/);
+  });
+});
+
+describe("nonce_only baseline", () => {
+  beforeEach(() => useMode("nonce_only"));
+
+  it("first send pins the pending nonce; success is stock's (receipt after the stock wait)", async () => {
+    const c = new FakeChain();
+    const r = await send(c);
+    expect(r.decision).toBe("confirmed");
+    expect(c.wallet.sendTransaction.mock.calls[0][0].nonce).toBe(7);
+    expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
+    expect(r.record!.baseline).toMatchObject({ mode: "nonce_only", reported: "success", consumed: true, nonceGap: null });
+  });
+
+  it('lost acknowledgement (receipt hidden): stock timeout, then the same-nonce re-send gets "nonce too low" -> success, no duplicate', async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    const first = await outcomeOf(send(c));
+    expect(first.ok).toBe(false);
+    expect(first.error).not.toBeInstanceOf(EvidenceError);
+    expect(first.error!.message).toMatch(/^Timed out while waiting for transaction with hash "0x[0-9a-f]+" to be confirmed\.$/);
+    const again = await outcomeOf(send(c, saleIntent(9_999n), saleData(9_999n)));
+    expect(again.ok).toBe(true);
+    const r = evidenceLedger(1, SENDER)[0];
+    expect(again.hash).toBe(r.hashes[0]); // the earlier attempt, which landed
+    expect(r.sentNonces).toEqual([7]);
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 7]);
+    expect(c.sent[1].data).toBe(saleData()); // the stored calldata, not the new call's
+    expect(c.sent[1].maxFeePerGas).toBeGreaterThanOrEqual((c.sent[0].maxFeePerGas * 110n) / 100n);
+    expect(c.sales()).toBe(1);
+    expect(r.landed).toBe(true);
+  });
+
+  it("dropped send: the re-send reuses the pinned nonce and lands once", async () => {
+    const c = new FakeChain();
+    c.dropNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    expect((await outcomeOf(send(c))).ok).toBe(true);
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 7]);
+    expect(c.sales()).toBe(1);
+  });
+
+  it("reorg: after the attempt is orphaned, a re-send with the same nonce lands once", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    let reorged = false;
+    c.onTick = (t) => {
+      if (t >= 20_000 && !reorged) {
+        reorged = true;
+        c.reorg(101);
+      }
+    };
+    expect((await outcomeOf(send(c))).ok).toBe(false); // mined, unseen, then orphaned during the wait
+    expect(c.sales()).toBe(0);
+    expect((await outcomeOf(send(c))).ok).toBe(true);
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 7]);
+    expect(c.sales()).toBe(1);
+    expect([...c.canonicalByNonce().values()].every((n) => n <= 1)).toBe(true);
+  });
+
+  it("no guard: a different intent goes ahead and takes the next free nonce; the nonce gap is recorded", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = new FakeChain();
+    c.dropNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false); // nonce 7 dropped, stays reserved for the sale
+    const step2 = await outcomeOf(send(c, step2Intent(), step2Data, 0n));
+    expect(step2.error).not.toBeInstanceOf(EvidenceError); // not EVIDENCE_UNRESOLVED: no guard
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 8]);
+    expect(c.queued).toHaveLength(1); // queued behind the gap at 7: real wallet behaviour
+    expect(step2.error!.message).toMatch(/^Timed out while waiting/);
+    const r = evidenceLedger(1, SENDER)[1];
+    expect(r.baseline!.nonceGap).toEqual({ nonce: 8, pendingCount: 7, reserved: [7] });
+    expect(warn.mock.calls.some((a) => /nonce gap: swap sent with nonce 8/.test(String(a[0])))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("releases the reservation once the nonce is observed consumed (no gap)", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false); // mined at 7, receipt hidden: unreported
+    expect((await outcomeOf(send(c, step2Intent(), step2Data, 0n))).ok).toBe(true);
+    expect(c.sent.map((a) => a.nonce)).toEqual([7, 8]);
+    expect(evidenceLedger(1, SENDER)[1].baseline!.nonceGap).toBeNull();
+  });
+
+  it("a revert keeps stock's result (failed) and closes the intent", async () => {
+    const c = new FakeChain();
+    c.revertNext = true;
+    const r = await send(c);
+    expect(r.decision).toBe("failed");
+    expect(r.record!.baseline!.reported).toBe("failed");
+  });
+});
+
+describe("verify_binary baseline", () => {
+  beforeEach(() => useMode("verify_binary"));
+
+  it("sends exactly the stock request (no pinned nonce) and waits as stock does", async () => {
+    const c = new FakeChain();
+    const r = await send(c);
+    expect(r.decision).toBe("confirmed");
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(c.wallet.prepareTransactionRequest).not.toHaveBeenCalled();
+    expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
+  });
+
+  it("complete by balance effect (receipt hidden): success, not sent again", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    const again = await outcomeOf(send(c));
+    expect(again.ok).toBe(true);
+    expect(c.sent).toHaveLength(1);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks.map((x) => [x.result, x.reason])).toEqual([["complete", "balance effect visible"]]);
+  });
+
+  it("complete by receipt (status 1)", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    c.hidden.clear();
+    c.usdc = 0n; // no balance evidence: the receipt alone decides
+    expect((await outcomeOf(send(c))).ok).toBe(true);
+    expect(c.sent).toHaveLength(1);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0].reason).toBe("receipt with status 1");
+  });
+
+  it("incomplete (dropped): re-sends with a fresh nonce, as stock would", async () => {
+    const c = new FakeChain();
+    c.dropNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    expect((await outcomeOf(send(c))).ok).toBe(true);
+    expect(c.sent.map((a) => a.nonce)).toEqual([undefined, undefined]);
+    expect("nonce" in c.wallet.sendTransaction.mock.calls[1][0]).toBe(false);
+    expect(c.sales()).toBe(1);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "no receipt and no balance effect" });
+  });
+
+  it("an inconclusive read counts as incomplete", async () => {
+    const c = new FakeChain();
+    c.hideNext = true;
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    const read = c.pub.readContract;
+    c.pub.readContract = async () => {
+      throw new Error("upstream timeout");
+    };
+    expect((await outcomeOf(send(c))).ok).toBe(true);
+    c.pub.readContract = read;
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "inconclusive: the balance read failed" });
+    expect(c.sales()).toBe(2); // the landed sale is repeated: the binary design's false incomplete
+  });
+
+  it("a stale read node with a fresh sending node: incomplete, so the landed sale is duplicated (expected by design)", async () => {
+    const c = new FakeChain();
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const lag = c.head;
+      const h = submit(a);
+      c.lagBlock = lag; // reads lag behind the sale's block
+      c.lagUsdc = 0n;
+      c.submit = submit;
+      return h;
+    };
+    expect((await outcomeOf(send(c))).ok).toBe(false);
+    // Only reads are stale: sends reach a node that assigns the true next nonce.
+    expect((await outcomeOf(send(c))).ok).toBe(false); // its receipt is stale too
+    expect(c.sales()).toBe(2);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0].result).toBe("incomplete");
+  });
+});
+
+describe("pace_style baseline", () => {
+  beforeEach(() => {
+    useMode("pace_style");
+    process.env.EVM_PACE_POLICY = JSON.stringify(PACE_POLICY);
+  });
+
+  it("approves a declared call, simulates it at the head, then sends and waits exactly as stock", async () => {
+    const c = new FakeChain();
+    const r = await send(c);
+    expect(r.decision).toBe("confirmed");
+    expect(r.record).toBeNull();
+    expect(c.pub.call).toHaveBeenCalledWith({ account: ACCOUNT, to: ROUTER, data: saleData(), value: SALE_WEI });
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(evidenceLedger(1, SENDER)).toHaveLength(0); // stateless
+  });
+
+  it("a simulation failure is a refusal (nothing is sent)", async () => {
+    const c = new FakeChain();
+    c.simulateFail = "UniswapV2Router: EXPIRED";
+    await expect(send(c)).rejects.toThrow(/^Refused by the pre-signing check: the simulation at the head failed \(UniswapV2Router: EXPIRED\)\.$/);
+    expect(c.sent).toHaveLength(0);
+  });
+
+  it("a duplicate intent is approved: each call is checked independently", async () => {
+    const c = new FakeChain();
+    await send(c);
+    await send(c);
+    expect(c.sales()).toBe(2);
+    expect(c.sent.map((a) => a.nonce)).toEqual([undefined, undefined]);
+  });
+
+  it("policy: undeclared router, pair, amount above the maximum, reserve breach and no minimum output are refused", async () => {
+    const c = new FakeChain();
+    const refuse = (data: Hex, value: bigint, to: Address = ROUTER) =>
+      sendWithEvidence({
+        walletClient: c.wallet,
+        publicClient: c.pub as never,
+        request: { account: ACCOUNT, chain: mainnet, to, value, data },
+        intent: describeCall({ chainId: 1, sender: SENDER, holder: SENDER, to, value, data }),
+        deps: c.deps(),
+      });
+    await expect(refuse(saleData(), SALE_WEI, DAI)).rejects.toThrow(/is not the declared router/);
+    await expect(refuse(saleData(), 2n * SALE_WEI)).rejects.toThrow(/exceeds the declared maximum/);
+    const toDai = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [1n, [WETH, DAI], SENDER, 2200n] });
+    await expect(refuse(toDai, SALE_WEI)).rejects.toThrow(/is not declared/);
+    const noMin = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [0n, [WETH, USDC], SENDER, 2200n] });
+    await expect(refuse(noMin, SALE_WEI)).rejects.toThrow(/sets no minimum output/);
+    c.usdc = 60n; // the step spends 60_000_000 base units while 50 must stay
+    await expect(refuse(step2Data, 0n)).rejects.toThrow(/would leave less than the declared/);
+    expect(c.sent).toHaveLength(0);
+  });
+});
+
 // ---- flag unset: byte-for-byte the current path -----------------------------------------------------------
 function fakeProvider(wallet: any, pub: any) {
   return {
@@ -656,6 +956,7 @@ function fakeProvider(wallet: any, pub: any) {
 describe("flag unset: send sites call viem exactly as before", () => {
   it("swap.ts Uniswap V2 send: sendTransaction and waitForTransactionReceipt arguments (snapshot)", async () => {
     delete process.env.EVM_EVIDENCE_LAYER;
+    delete process.env.EVM_EVIDENCE_MODE;
     const wallet = {
       account: ACCOUNT,
       chain: mainnet,
@@ -714,6 +1015,7 @@ describe("flag unset: send sites call viem exactly as before", () => {
 
   it("plan-guard.ts redemption send: arguments (snapshot) and the raw refusal text", async () => {
     delete process.env.EVM_EVIDENCE_LAYER;
+    delete process.env.EVM_EVIDENCE_MODE;
     const wallet = {
       account: ACCOUNT,
       chain: mainnet,
@@ -762,6 +1064,50 @@ describe("flag unset: send sites call viem exactly as before", () => {
       /^Refused by the approved plan \(ERC20BalanceChangeEnforcer:exceeded-balance-decrease\): swap 60 X -> Y$/
     );
   });
+});
+
+describe("baselines that send as stock: swap.ts hands viem the stock arguments", () => {
+  for (const mode of ["verify_binary", "pace_style"]) {
+    it(`${mode}: sendTransaction and waitForTransactionReceipt arguments equal the flag-unset snapshot`, async () => {
+      useMode(mode);
+      process.env.EVM_PACE_POLICY = JSON.stringify(PACE_POLICY);
+      const wallet = {
+        account: ACCOUNT,
+        chain: mainnet,
+        getAddresses: vi.fn(async () => [SENDER]),
+        sendTransaction: vi.fn(async () => `0x${"ab".repeat(32)}`),
+        prepareTransactionRequest: vi.fn(),
+      };
+      const pub = {
+        readContract: vi.fn(async (a: any) =>
+          a.functionName === "WETH" ? WETH : a.functionName === "balanceOf" ? 0n : [SALE_WEI, 237_636_476n]
+        ),
+        getBlock: vi.fn(async () => ({ timestamp: 1_000n })),
+        waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })),
+        getTransactionCount: vi.fn(),
+        call: vi.fn(async () => ({ data: "0x" })),
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const action = new SwapAction(fakeProvider(wallet, pub), { uniswapV2Router: ROUTER, exclusive: true });
+      await action.swap({
+        chain: "mainnet",
+        fromToken: "0x0000000000000000000000000000000000000000",
+        toToken: USDC,
+        amount: "0.1",
+        slippageBps: 300,
+      } as any);
+      expect(warn).toHaveBeenCalledWith(`[evidence] EVM_EVIDENCE_MODE=${mode}`);
+      warn.mockRestore();
+      const minOut = (237_636_476n * 9_700n) / 10_000n;
+      const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [minOut, [WETH, USDC], SENDER, 2_200n] });
+      expect(wallet.sendTransaction.mock.calls).toEqual([[{ account: ACCOUNT, to: ROUTER, value: SALE_WEI, data, chain: mainnet }]]);
+      expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual(["account", "to", "value", "data", "chain"]);
+      expect(pub.waitForTransactionReceipt.mock.calls).toEqual([[{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }]]);
+      expect(wallet.prepareTransactionRequest).not.toHaveBeenCalled();
+      expect(pub.getTransactionCount).not.toHaveBeenCalled();
+      expect(pub.call).toHaveBeenCalledTimes(mode === "pace_style" ? 1 : 0);
+    });
+  }
 });
 
 // ---- actionable refusals ---------------------------------------------------------------------------------

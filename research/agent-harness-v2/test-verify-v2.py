@@ -84,6 +84,21 @@ if compound_ep:
         j = d['forkJournal']; i = next(k for k, e in enumerate(j) if e.get('event') in ('scheduled_market_change', 'chain_reorg'))
         j.insert(0, j.pop(i))
     cases['compound events reordered'] = lambda p: edit_json(p / 'episodes' / f'{compound_ep}.json', reorder)
+# Named baselines (run-v2.ts --arm): relabelling the arm must be rejected, and so must the prompt_only text appearing
+# in another arm's request or missing from a prompt_only request.
+man = json.loads((src / 'manifest.json').read_text())
+if 'arm' in man:
+    def relabel(d):
+        d['arm'] = 'nonce_only' if d['arm'] != 'nonce_only' else 'verify_binary'
+    cases['arm label changed'] = lambda p: edit_json(p / 'manifest.json', relabel)
+    def prompt_presence(p):
+        req = p / 'llm' / 'calls' / f'{first_call}-request.json'
+        if man['arm'] == 'prompt_only':
+            req = next(f for f in sorted((p / 'llm' / 'calls').glob('*-request.json')) if v.ARM_PROMPT in f.read_text())
+            req.write_text(req.read_text().replace(v.ARM_PROMPT, 'Be careful.'))
+        else:
+            edit_json(req, lambda d: d['body'].update(system=v.ARM_PROMPT))
+    cases['arm prompt presence changed'] = prompt_presence
 # agent2 (run-v2.ts --agent=agent2): a swap submitted without a matching confirmed preview must be rejected.
 if json.loads((src / 'manifest.json').read_text()).get('agent') == 'agent2':
     def forge_gate(p):
