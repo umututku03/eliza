@@ -84,6 +84,46 @@ if compound_ep:
         j = d['forkJournal']; i = next(k for k, e in enumerate(j) if e.get('event') in ('scheduled_market_change', 'chain_reorg'))
         j.insert(0, j.pop(i))
     cases['compound events reordered'] = lambda p: edit_json(p / 'episodes' / f'{compound_ep}.json', reorder)
+# Random schedules (WS-J): the journal must match the recorded schedule, and the schedule its seed.
+if json.loads((src / 'manifest.json').read_text()).get('schedules'):
+    rand = [n for n in json.loads((src / 'complete.json').read_text())['episodes'] if '-random-s' in n]
+    ev_of = lambda n: json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal']
+    armed_ep = next((n for n in rand if any(j.get('event') == 'fault_armed' for j in ev_of(n))), None)
+    def edit_window(d):
+        seed = str(d['scheduleSeeds'][0]); e = next((e for e in d['schedules'][seed]['entries'] if 'windowMs' in e), d['schedules'][seed]['entries'][0])
+        if 'windowMs' in e: e['windowMs'] += 1000
+        else: e['target'] = 'followup' if e['target'] == 'critical' else 'critical'
+    cases['recorded schedule edited (manifest)'] = lambda p: edit_json(p / 'manifest.json', edit_window)
+    def swap_schedule(d):
+        es = d['schedule']['entries']
+        if len(es) > 1: d['schedule']['entries'] = list(reversed(es))
+        else: es[0]['target'] = 'followup' if es[0]['target'] == 'critical' else 'critical'
+    cases['episode schedule differs from the manifest'] = lambda p: edit_json(p / 'episodes' / f'{rand[0]}.json', swap_schedule)
+    if armed_ep:
+        def forge_fault_id(d):
+            a = next(j for j in d['forkJournal'] if j.get('event') == 'fault_armed'); a['faultId'] += 7
+        cases['journal fault id differs from the schedule'] = lambda p: edit_json(p / 'episodes' / f'{armed_ep}.json', forge_fault_id)
+        def forge_kind(d):
+            a = next(j for j in d['forkJournal'] if j.get('event') == 'fault_armed'); a['kind'] = 'hide' if a['kind'] != 'hide' else 'stale'
+        cases['journal fault kind differs from the schedule'] = lambda p: edit_json(p / 'episodes' / f'{armed_ep}.json', forge_kind)
+        def remove_armed(d):
+            d['forkJournal'] = [j for j in d['forkJournal'] if j.get('event') != 'fault_armed']
+        cases['fault binding removed'] = lambda p: edit_json(p / 'episodes' / f'{armed_ep}.json', remove_armed)
+    win_ep = next((n for n in rand if any(j.get('event') == 'fault_armed' and j.get('until') for j in ev_of(n))), None)
+    if win_ep:
+        def stretch(d):
+            a = next(j for j in d['forkJournal'] if j.get('event') == 'fault_armed' and j.get('until')); a['until'] += 60000
+        cases['journal fault window differs from the schedule'] = lambda p: edit_json(p / 'episodes' / f'{win_ep}.json', stretch)
+    # A fault event the schedule does not contain: a receipt_hidden right after the first send of an episode without a hide.
+    plain_ep = next((n for n in rand if not any(e['kind'] == 'hide' for e in json.loads((src / 'episodes' / f'{n}.json').read_text())['schedule']['entries'])
+                     and any(j.get('event') == 'send' and j.get('hash') for j in ev_of(n))), None)
+    if plain_ep:
+        def inject(d):
+            s0 = next(j for j in d['forkJournal'] if j.get('event') == 'send' and j.get('hash'))
+            k = d['forkJournal'].index(s0) + 1
+            while k < len(d['forkJournal']) and d['forkJournal'][k].get('event') in ('fault_armed', 'dropped_send'): k += 1
+            d['forkJournal'].insert(k, {'at': s0['at'] + 1, 'event': 'receipt_hidden', 'hash': s0['hash'], 'faultId': 0})
+        cases['fault event outside the schedule'] = lambda p: edit_json(p / 'episodes' / f'{plain_ep}.json', inject)
 # Named baselines (run-v2.ts --arm): relabelling the arm must be rejected, and so must the prompt_only text appearing
 # in another arm's request or missing from a prompt_only request.
 man = json.loads((src / 'manifest.json').read_text())
