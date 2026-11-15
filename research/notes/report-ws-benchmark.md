@@ -59,3 +59,79 @@ In the first launch, the H2 lane on base 500 hit port 19045, which another works
 - **Compound scenarios:** no fault time or BDT is defined for them in `metrics.py` yet.
 - **Mixed-task IVL:** the scorecard median pools tasks with different X; use `--by-task`.
 - **Must fix before live runs:** in `rpc_stale` and `sale_reorged`, a live agent that never sells fails the audit instead of being scored.
+
+
+## Independent analysis recovery (Codex, 14 November 2026)
+
+On isolated branch `research/scorecard-recovery-1114`, fixes `57409afc8a` and
+`9080fe3e1f` correct two analysis bugs without changing running cohort source.
+Mixed evidence/no-layer scorecards previously raised TypeError because boolean
+and string arm keys were sorted together. Ablations were also pooled into the
+full-layer group. String arm labels and explicit metadata now retain five
+separate groups. JSON, Markdown and --by-task all passed; real input audits
+passed. Synthetic copies test grouping only, not ablation performance.
+
+The metrics Markdown median previously selected the upper middle value for
+even samples. It now uses statistics.median; even, odd and empty cases passed.
+The actual pilot per-episode JSON output is byte-for-byte unchanged. No raw
+result or historical report was overwritten.
+
+Detailed local artifacts: `test-results/scorecard-recovery-1114/`. A separate
+main-study readiness memo and planning-only budget are in
+`test-results/main-study-readiness-1114/`. They identify missing baseline/fault
+implementations, held-out exposure wording, clock/confirmation comparability,
+gas and expected-loss caveats, and bounds on offline counterfactual replay.
+No draft/preregistration was rewritten and no new spend was approved or used.
+
+Authored-by: Codex (OpenAI).
+
+## Further recovery completion — Codex, 14 November 2026
+
+`ee869365ce` adds bounded offline replay over the thirty pilot episodes.
+Three recorded rpc_stale duplicate-sale decisions enter the actual fixed evidence
+module and reuse the original nonce; six changed-amount/expired-window negatives
+are rejected. The replay stops at the first changed send. It makes no claim
+about later agent behavior, completion, latency, loss or unique benefit beyond
+nonce pinning. All six normal-episode counterfactual false-hold outcomes remain
+indeterminate. Inputs and module hashes are retained locally in
+`test-results/pilot-replay-1114-02/`. No RPC/model calls were made by the replay.
+
+`193298cccf` makes evidence attribution read the trusted structured snapshot.
+A pending ActionResult with success=false is not a definitive chain failure;
+pre-fault observations inside a turn that spans the fault are skipped. Synthetic
+positive/negative cases passed, and per-episode JSON for all thirty old pilot
+episodes remains byte-for-byte unchanged.
+
+`8177e51620` adds inclusive descriptive quartiles, IQR and n-defined/n-total to
+scorecards, plus BDT status and limit-censor counts. The same helper checks fail
+on the old implementation (missing distribution) and pass on the new one:
+empty, singleton, even and odd samples; missing observations excluded. JSON and
+Markdown over all three pilot cohorts pass (thirty episodes). Existing median
+fields are retained; unknown/censored times are not imputed as zero. Local exact
+outputs: `test-results/scorecard-quartiles-1114/`.
+
+The main-study draft now has an appended readiness addendum. Its original text
+and the frozen pilot remain intact. Missing named baselines, the reinclusion
+fault, the next-send trigger and the agent2 adapter are explicitly open. The
+main study is not falsely labelled frozen or approved for spending.
+
+Authored-by: Codex (OpenAI).
+
+## Coordinator closure of the earlier WS-B open list (14 November)
+
+The original open-problem list above is historical. Compound fault timing/BDT
+was implemented in coordinator commit `2e2d7426b4`; fault parameters and the
+second dropped_then_reorg re-send were integrated in `cf0e73b538`. That same
+commit permits genuinely unfired rpc_stale/reorg episodes to be scored instead
+of rejecting them. The pilot audits and its four retained unfired faults exercise
+that distinction. Mixed-asset pooling is still avoided with --by-task.
+
+Further analysis commits `a381c77207` and `5eac1c15de` preserve the difference
+between a structured confirmation of the orphaned block and a new replacement's
+confirmation, and expose fault-fired/undefined-BDT/status/censor counts. The
+first regression fails on the prior implementation; the replacement-block
+negative remains truthful. All thirty original pilot JSON rows remain unchanged.
+The scorecard retains the pilot's six normal and four unfired-fault episodes,
+with reconciled BDT denominators and aligned Markdown columns.
+
+Authored-by: Codex (OpenAI).

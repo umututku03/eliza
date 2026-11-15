@@ -7,6 +7,16 @@
  */
 import type { ActionResult, IAgentRuntime } from "@elizaos/core";
 import { formatEther, isHash } from "viem";
+import {
+  checkOnce,
+  type EvidencePublicClient,
+  evidenceAblation,
+  evidenceLayerEnabled,
+  evidenceLedger,
+  evidenceMessage,
+  evidenceSnapshot,
+  latestIntent,
+} from "../evidence";
 import { initWalletProvider, trackedTokenBalances } from "../providers/wallet";
 import type { SupportedChain } from "../types";
 
@@ -49,11 +59,52 @@ function failure(subaction: "tx_status" | "balance", text: string, code: string)
   };
 }
 
+/**
+ * Chain-evidence layer (EVM_EVIDENCE_LAYER=1): one read-only check of the open intent, or of the intent that sent
+ * `hash`, with the layer's decision. Null when there is no such intent (the plain status read then applies).
+ */
+async function evidenceTxStatus(runtime: IAgentRuntime, params: Record<string, unknown>, hash: unknown): Promise<ActionResult | null> {
+  const walletProvider = await initWalletProvider(runtime);
+  const chain = resolveChain(walletProvider, params.target ?? params.chain);
+  if (!chain) return null;
+  const chainId = walletProvider.chains[chain].id;
+  const sender = walletProvider.getAddress();
+  const record =
+    typeof hash === "string" && isHash(hash)
+      ? evidenceLedger(chainId, sender).find((r) => r.hashes.some((h) => h.toLowerCase() === hash.toLowerCase()))
+      : latestIntent(chainId, sender);
+  if (!record) return null;
+  try {
+    await checkOnce(walletProvider.getPublicClient(chain) as unknown as EvidencePublicClient, record);
+  } catch (error) {
+    return failure("tx_status", `Could not check the transaction on ${chain}: ${error instanceof Error ? error.message : String(error)}`, "RPC_ERROR");
+  }
+  const binary = evidenceAblation() === "no_grading";
+  const settled = record.decision === "confirmed";
+  return {
+    success: true,
+    text: binary ? (settled ? "The transaction succeeded." : "The transaction has not succeeded.") : evidenceMessage(record),
+    values: { walletActionSucceeded: true, walletSubaction: "tx_status" },
+    data: {
+      actionName: "WALLET",
+      subaction: "tx_status",
+      chain,
+      transactionHash: record.hashes[record.hashes.length - 1],
+      decision: binary ? (settled ? "confirmed" : "failed") : record.decision,
+      evidence: binary ? null : (evidenceSnapshot(record) as never),
+    },
+  };
+}
+
 export async function evmTxStatusHandler(
   runtime: IAgentRuntime,
   params: Record<string, unknown>
 ): Promise<ActionResult> {
   const hash = params.transactionHash ?? params.hash;
+  if (evidenceLayerEnabled()) {
+    const result = await evidenceTxStatus(runtime, params, hash);
+    if (result) return result;
+  }
   if (typeof hash !== "string" || !isHash(hash)) {
     return failure(
       "tx_status",

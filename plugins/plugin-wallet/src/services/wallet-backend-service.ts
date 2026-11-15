@@ -29,6 +29,11 @@ import {
   ServiceType,
 } from "@elizaos/core";
 import { validateWalletBridgeParams } from "../chains/evm/bridge-router.js";
+import {
+  EvidenceError,
+  evidenceAblation,
+  evidenceLayerEnabled,
+} from "../chains/evm/evidence.js";
 import { validateWalletGovParams } from "../chains/evm/gov-router.js";
 import {
   registerDefaultWalletChainHandlers,
@@ -323,6 +328,21 @@ export class WalletBackendService extends Service {
         result,
       };
     } catch (error) {
+      if (
+        evidenceLayerEnabled() &&
+        evidenceAblation() !== "no_grading" &&
+        error instanceof EvidenceError
+      ) {
+        const code = String(error.code);
+        if (code === "EVIDENCE_PENDING" || code === "EVIDENCE_UNRESOLVED") {
+          return {
+            ok: false,
+            error: code,
+            detail: error.message,
+            evidence: error.data.evidence,
+          };
+        }
+      }
       return {
         ok: false,
         error: "EXECUTION_FAILED",

@@ -19,6 +19,7 @@ import type {
   WalletRouterExecution,
   WalletRouterParams,
 } from "../../types/wallet-router";
+import { EvidenceError, type IntentRecord } from "../evm/evidence";
 import { registerDefaultWalletChainHandlers } from "../registry";
 import { walletRouterAction } from "../wallet-action";
 import { recentWalletSubmissions } from "../wallet-submissions";
@@ -219,6 +220,128 @@ async function run(
 }
 
 describe("wallet router action", () => {
+  it("keeps pending evidence through the backend and financial action without exposing signer objects", async () => {
+    vi.stubEnv("EVM_EVIDENCE_LAYER", "1");
+    try {
+      const { runtime, service } = createService();
+      const evm = handler("mainnet", "Ethereum", "1", "evm");
+      service.registerChainHandler(evm);
+      const sender = "0x1111111111111111111111111111111111111111" as const;
+      const record: IntentRecord = {
+        key: "recorded-pending-sale",
+        intent: {
+          chainId: 1,
+          sender,
+          effectiveTarget: sender,
+          selector: "0x12345678",
+          tokenIn: "ETH",
+          tokenOut: USDC_EVM,
+          amountIn: 100000000000000000n,
+          label: "swap",
+          effect: null,
+        },
+        pinnedNonce: 7,
+        hashes: ["0x1234"],
+        sentNonces: [7],
+        snapshot: { effectBefore: "0" },
+        state: "pending",
+        decision: "wait_and_recheck",
+        waitReason: null,
+        observations: [],
+        rounds: 1,
+        lastSendAtMs: 0,
+        headSince: null,
+        receiptSeen: null,
+        landed: false,
+        request: {
+          account: { marker: "signer-object-not-forwarded" },
+          chain: { marker: "chain-object-not-forwarded" },
+          to: sender,
+          value: 100000000000000000n,
+          data: "0x",
+          gas: 300000n,
+        },
+      };
+      vi.mocked(evm.execute).mockRejectedValue(
+        new EvidenceError(
+          "EVIDENCE_PENDING",
+          "Your swap was probably included but its receipt is not visible yet.",
+          record,
+        ),
+      );
+      const result = await runConfirmed(runtime, {
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: "ETH",
+        toToken: USDC_EVM,
+        amount: "0.1",
+        mode: "execute",
+      });
+      expect(result?.success).toBe(false);
+      expect(result?.data?.error).toBe("EVIDENCE_PENDING");
+      const data = result?.data?.evidence as Record<string, unknown>;
+      expect(data.pinnedNonce).toBe(7);
+      expect(data.decision).toBe("wait_and_recheck");
+      expect(JSON.stringify(data)).not.toContain("signer-object-not-forwarded");
+      expect(JSON.stringify(data)).not.toContain("chain-object-not-forwarded");
+      expect(result?.effectReceipts).toBeUndefined();
+      vi.stubEnv("EVM_EVIDENCE_LAYER", "0");
+      const off = await service.routeWalletAction({
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: "ETH",
+        toToken: USDC_EVM,
+        amount: "0.1",
+        mode: "execute",
+      });
+      expect(off.ok).toBe(false);
+      if (!off.ok) expect(off.error).toBe("EXECUTION_FAILED");
+      expect(off).not.toHaveProperty("evidence");
+      vi.stubEnv("EVM_EVIDENCE_LAYER", "1");
+      vi.stubEnv("EVM_EVIDENCE_ABLATE", "no_grading");
+      const binary = await service.routeWalletAction({
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: "ETH",
+        toToken: USDC_EVM,
+        amount: "0.1",
+        mode: "execute",
+      });
+      expect(binary.ok).toBe(false);
+      if (!binary.ok) expect(binary.error).toBe("EXECUTION_FAILED");
+      expect(binary).not.toHaveProperty("evidence");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not forward arbitrary error data that impersonates pending evidence", async () => {
+    vi.stubEnv("EVM_EVIDENCE_LAYER", "1");
+    try {
+      const { runtime, service } = createService();
+      const evm = handler("mainnet", "Ethereum", "1", "evm");
+      service.registerChainHandler(evm);
+      vi.mocked(evm.execute).mockRejectedValue(
+        Object.assign(new Error("ordinary provider failure"), {
+          code: "EVIDENCE_PENDING",
+          data: { evidence: { marker: "untrusted-error-data" } },
+        }),
+      );
+      const result = await runConfirmed(runtime, {
+        subaction: "swap",
+        chain: "mainnet",
+        fromToken: "ETH",
+        toToken: USDC_EVM,
+        amount: "0.1",
+        mode: "execute",
+      });
+      expect(result?.data?.error).toBe("EXECUTION_FAILED");
+      expect(result?.data?.evidence).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("refreshes turn context after the recorded dev4 sale, but never for its proposal or an unconfirmed/tampered result", async () => {
     const { runtime, service } = createService();
     const evm = handler("mainnet", "Ethereum", "1", "evm");

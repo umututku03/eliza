@@ -40,6 +40,7 @@ SOURCE_TREES = {'core': 'packages/core/src', 'assistant': 'plugins/plugin-assist
                 'sql': 'plugins/plugin-sql/src', 'openai': 'plugins/plugin-openai', 'anthropic': 'plugins/plugin-anthropic'}
 SECRETS = [re.compile(r'sk-ant-api[0-9A-Za-z_-]{10,}'), re.compile(r'sk-(proj|svcacct)-[0-9A-Za-z_-]{20,}'), re.compile(r'alchemy\.com/v2/(?!<redacted>)[0-9A-Za-z_-]{8,}'),
            re.compile(r'infura\.io/v3/[0-9A-Fa-f]{16,}'), re.compile(r'quiknode\.pro/[0-9A-Za-z_-]{16,}')]
+EVIDENCE_ABLATIONS = ['none', 'no_nonce_pin', 'no_grading', 'no_refusal_decode']
 class AuditError(AssertionError): pass
 def need(c, *why):
     if not c: raise AuditError(*why)
@@ -50,6 +51,15 @@ def tree_digest(d):
     files = sorted(str(f.relative_to(d)) for f in d.rglob('*') if f.is_file() and 'node_modules' not in f.relative_to(d).parts)
     return hashlib.sha256('\n'.join(f'{r}:{sha(d / r)}' for r in files).encode()).hexdigest()
 def units(s, dec): return int(Decimal(str(s)) * (10 ** dec))
+def redeemed_context(data):
+    """First permission context of a DelegationManager.redeemDelegations(bytes[],bytes32[],bytes[]) call, or None."""
+    try:
+        b = bytes.fromhex(str(data)[2:])
+        if b[:4] != bytes.fromhex('cef6d209'): return None
+        a = b[4:]; word = lambda o: int.from_bytes(a[o:o + 32], 'big')
+        arr = word(0); first = arr + 32 + word(arr + 32); n = word(first)
+        return '0x' + a[first + 32:first + 32 + n].hex()
+    except Exception: return None
 
 def usage_cost(model, provider, resp):
     """Independent cost from a recorded response (JSON or buffered SSE)."""
@@ -88,16 +98,23 @@ def audit(folder):
     if mode == 'live': need(not m['elizaSourceDirty'], 'live run from uncommitted sources')
     models = [x['key'] for x in m['models']]
     need(models == [k for k in MODEL_ORDER if k in models], 'model order')
+    evidence = bool(m.get('evidence', False))
+    need(m.get('evidenceAblate', 'none') in EVIDENCE_ABLATIONS and (evidence or m.get('evidenceAblate', 'none') == 'none'), 'evidence ablation')
     agent = m.get('agent', 'elizaos')
     need(agent in AGENTS, 'unknown agent type', agent)
     if agent == 'agent2':
+        need(not evidence, 'agent2 evidence layer is not implemented')
         need(m.get('condition') == 'stock' and all(x['provider'] == 'openai' for x in m['models']), 'agent2 runs stock with OpenAI-format models only')
         need('agent2-child.ts' in m['files'], 'agent2 child not hashed in the manifest')
-    tag = ('a2' if agent == 'agent2' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '')
+    tag = ('a2' if agent == 'agent2' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '') + ('-ev' if evidence else '')
     scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
     need(scenarios == list(m.get('scenarios', SCENARIOS)), 'scenario subset not in predeclared order')
     planned_eps = [f'{k}-{tag}-r{r}-{s}' for k in models for r in range(1, m['reps'] + 1) for s in scenarios]
     planned = [f'control-{s}' for s in scenarios] + planned_eps
+    need(all(('-ev-' in e) == evidence for e in planned_eps), 'episode id prefix must carry -ev exactly when the evidence layer is on')
+    plan_steps = {}
+    if m.get('plan'):
+        for st in json.loads(m['plan']['planJson'])['steps']: plan_steps[st['permissionContext'].lower()] = st['step']
     dm = m.get('derivedMoves')
     if any(s in DISTINGUISHING for s in scenarios):
         need(dm is not None and all(k in dm for k in DISTINGUISHING), 'distinguishing scenarios without derived moves')
@@ -251,6 +268,21 @@ def audit(folder):
                  'fault window differs from the recorded parameter', eid, 'hideMs')
         if s != 'receipt_hidden': need(not hidden, 'unexpected hidden receipt', eid)
         txs = o['transactions']
+        # Guarantee: at most one canonical transaction per (sender, nonce); canonical nonces are exactly before..final.
+        if all('nonce' in t for t in txs):
+            canon = [t['nonce'] for t in txs if t['status'] != 'not_canonical']
+            need(len(canon) == len(set(canon)), 'second canonical transaction for one nonce', eid)
+            need(all(t['nonce'] is None for t in txs if t['status'] == 'not_canonical'), 'noncanonical transaction with a nonce', eid)
+            need(sorted(canon) == list(range(o['before']['nonce'], o['final']['nonce'])), 'canonical nonces differ from the nonce range', eid)
+        # Plan modes: at most one successful redemption per plan step (the step's enforcers guarantee it on chain).
+        if plan_steps:
+            data_by_hash = {j['hash']: j.get('data') for j in sends if j.get('hash')}
+            per_step = {}
+            for t in txs:
+                if t['status'] != 'success': continue
+                st = plan_steps.get((redeemed_context(data_by_hash.get(t['hash'])) or '').lower())
+                if st is not None: per_step[st] = per_step.get(st, 0) + 1
+            need(all(v <= 1 for v in per_step.values()), 'more than one successful redemption of a plan step', eid, per_step)
         need({t['hash'] for t in txs} == {j['hash'] for j in sends if j.get('from') == m['sender'].lower() and j.get('hash')}, 'transactions vs journal', eid)
         allowed_missing = {j['hash'] for j in dropped} | {h for j in reorgs for h in j['droppedHashes']}
         need(len({t['hash'] for t in txs}) == len(txs), 'duplicate transaction records', eid)

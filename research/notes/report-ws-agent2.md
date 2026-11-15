@@ -70,3 +70,20 @@ Status: 2026-11-14.
 2. **Tamper thresholds:** agent2 folders have one extra case (10 for the default four, 11 with chain faults).
 3. **Open-weight model:** agent2 needs only MODELS and PRICES entries for the compat upstream; its tool-calling quality is untested.
 4. **Merging with ws/benchmark:** small conflicts expected. agent2 uses only `spec.llmUrl` and `spec.forkProxyUrl`, so `--port-base` needs no agent2 change.
+
+## Coordinator recovery addendum (14 November 2026)
+
+The ElizaOS receipt_hidden protocol text was corrected in `2e2d7426b4`.
+Agent2 retains its explicit polling/submitted behavior; this observation-channel
+difference must accompany any architecture comparison. The paid pilot is not
+an isolated test of framework architecture, and its two unfired agent2 reorgs
+are not recoveries. The new integration explicitly rejects agent2 + evidence,
+since the adapter is not implemented. Open-weight/provider setup is still open.
+No model account configuration or paid smoke run was performed in the recovery.
+
+The corrected-source default-four agent2 regression passed audit and 12/12
+negative tests in results-wse-recovery-1114-agent2-reg. A final-source normal +
+four-fault regression is recorded in the completion handoff when it finishes.
+Its source is preserved separately from the original WS-A mock results.
+
+Authored-by: Codex (OpenAI).

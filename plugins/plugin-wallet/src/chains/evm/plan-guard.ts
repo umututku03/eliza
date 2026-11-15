@@ -15,6 +15,16 @@
 import type { IAgentRuntime } from "@elizaos/core";
 import { type Address, encodeFunctionData, encodePacked, type Hex, isAddress, isHex, parseAbi } from "viem";
 import { NATIVE_TOKEN_ADDRESS, TX_CONFIRMATION_TIMEOUT_MS } from "./constants";
+import {
+  decodeRefusalSentence,
+  describeCall,
+  type EvidencePublicClient,
+  type EvidenceWalletClient,
+  evidenceAblation,
+  evidenceLayerEnabled,
+  findOpenIntent,
+  sendWithEvidence,
+} from "./evidence";
 import type { WalletProvider } from "./providers/wallet";
 import { EVMError, EVMErrorCode, type SupportedChain } from "./types";
 
@@ -122,15 +132,34 @@ export async function executeThroughPlan(
   if (contexts.length === 0) {
     throw new EVMError(EVMErrorCode.INVALID_PARAMS, `Refused by the approved plan: ${what} is not a step of the plan`);
   }
+  // Chain-evidence layer (EVM_EVIDENCE_LAYER=1): the redemption is a nonce-pinned intent keyed by its inner call.
+  const intent = evidenceLayerEnabled()
+    ? describeCall({ chainId: walletProvider.getChainConfigs(chain).id, sender: account.address, holder: plan.account, ...call })
+    : null;
+  const redeemWithEvidence = async (data: Hex) => {
+    const sent = await sendWithEvidence({
+      walletClient: walletClient as unknown as EvidenceWalletClient,
+      publicClient: publicClient as unknown as EvidencePublicClient,
+      request: { account, chain: walletClient.chain, to: plan.delegationManager, data, value: 0n },
+      intent: intent!,
+    });
+    if (sent.decision === "failed") throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Plan redemption for ${what} failed on-chain. Hash: ${sent.hash}`);
+    return sent.hash;
+  };
+  // A repeated request for an open intent re-sends its signed redemption with the pinned nonce (no new simulation).
+  if (intent && findOpenIntent(intent)) return redeemWithEvidence(redeemCalldata(contexts[0], call));
   let firstReason: string | null = null;
+  let firstContext: Hex | null = null;
   for (const context of contexts) {
     const data = redeemCalldata(context, call);
     try {
       await publicClient.call({ account, to: plan.delegationManager, data });
     } catch (error) {
       firstReason ??= planRefusalReason(error);
+      firstContext ??= context;
       continue;
     }
+    if (intent) return redeemWithEvidence(data);
     const hash = await walletClient.sendTransaction({ account, chain: walletClient.chain, to: plan.delegationManager, data, value: 0n });
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: TX_CONFIRMATION_TIMEOUT_MS });
     if (receipt.status !== "success") {
@@ -138,5 +167,11 @@ export async function executeThroughPlan(
     }
     return hash;
   }
-  throw new EVMError(EVMErrorCode.INVALID_PARAMS, `Refused by the approved plan (${firstReason}): ${what}`);
+  const refused = `Refused by the approved plan (${firstReason}): ${what}`;
+  if (intent && firstReason && firstContext && evidenceAblation() !== "no_refusal_decode") {
+    // Actionable refusal: append the bound the signed step allows, decoded from its caveat terms.
+    const sentence = await decodeRefusalSentence(publicClient as unknown as EvidencePublicClient, firstContext, firstReason, call).catch(() => null);
+    if (sentence) throw new EVMError(EVMErrorCode.INVALID_PARAMS, `${refused}. ${sentence}`);
+  }
+  throw new EVMError(EVMErrorCode.INVALID_PARAMS, refused);
 }
