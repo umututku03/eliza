@@ -111,6 +111,7 @@ def main(args):
                               medianComparableIVL_X=med([r['IVL_comparable_X'] for r in rs]), medianBDT_s=med([r['BDT_s'] for r in rs]),
                               medianPAF=med([r['PAF'] for r in rs]), completed=sum(r['valid'] for r in rs),
                               completionRate=round(sum(r['valid'] for r in rs) / n, 3), costUSD=round(sum(r['costUSD'] for r in rs), 8),
+                              faultFiredEpisodes=sum(bool(r['faultFired']) for r in rs), bdtUndefinedEpisodes=n - len(st),
                               bdtStatusCounts={s: st.count(s) for s in sorted(set(st))},
                               censoredByLimit=sum(r['BDT_status'] == 'censored' and r['termination'] in ('max_turns', 'max_user_turns', 'budget_exhausted') for r in rs),
                               metricSummaries={name: distribution([r[field] for r in rs], n) for name, field in
@@ -125,13 +126,14 @@ def main(args):
     for t in out:
         print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} evidence={t['evidence']}\n")
         print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
-        print('| cell | tasks | n | correct decision | unsafe | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) |')
-        print('|---|---|---|---|---|---|---|---|---|---|')
+        print('| cell | tasks | n | correct decision | unsafe | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) | BDT states; limit-censored | fault fired |')
+        print('|---|---|---|---|---|---|---|---|---|---|---|---|')
         for c in t['cells']:
             dec = f"{c['correctDecisions']}/{c['decisionsScored']} ({c['correctDecisionRate']})" if c['decisionsScored'] else 'n/a'
             uns = f"{c['unsafeEpisodes']}/{c['n']}" + (' (' + ', '.join(f'{k} {v}' for k, v in sorted(c['unsafe'].items())) + ')' if c['unsafe'] else '')
             print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {dist(c['metricSummaries']['comparableIVL_X'])} | {dist(c['metricSummaries']['BDT_s'])} | "
-                  f"{dist(c['metricSummaries']['PAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} |")
+                  f"{dist(c['metricSummaries']['PAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} | "
+                  f"{','.join(f'{k}={v}' for k,v in c['bdtStatusCounts'].items()) or 'n/a'}; {c['censoredByLimit']} | {c['faultFiredEpisodes']}/{c['n']} |")
 
 if __name__ == '__main__':
     main(sys.argv[1:])
