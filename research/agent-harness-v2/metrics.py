@@ -103,6 +103,13 @@ def evidence_quality(rec, scenario, t0):
                 if decision in ('orphaned', 'resend_same_nonce'):
                     return 'truthful' if scenario in NOT_LANDED else 'false_failure'
                 if decision == 'confirmed':
+                    observation = observations[-1] if observations else {}
+                    # A structured confirmation can still describe the orphaned block.
+                    # Do not mislabel a later replacement confirmed in its new block.
+                    if any(j.get('event') == 'chain_reorg' and j.get('at', 0) <= observation.get('atMs', t0)
+                           and j.get('oldSaleBlockHash') and j['oldSaleBlockHash'] == observation.get('receiptBlockHash')
+                           for j in rec.get('forkJournal', [])):
+                        return 'stale_success'
                     return 'truthful'
             if re.search(r'not be found|failed|error|reverted|timed out|timeout', low) or a.get('success') is False:
                 return 'false_failure' if landed else 'truthful'
