@@ -92,6 +92,18 @@ def evidence_quality(rec, scenario, t0):
             text = ' '.join(str(x) for x in (a.get('text') or '', a.get('error') or '', json.dumps(a.get('data') or {}), json.dumps(a.get('values') or {})))
             if not TX_WORDS.search(text) or re.search(r'Reply yes', text): continue
             low = text.lower()
+            snapshot = (a.get('data') or {}).get('evidence')
+            if isinstance(snapshot, dict):
+                observations = snapshot.get('observations') or []
+                if observations and observations[-1].get('atMs', t0) < t0:
+                    continue  # Earlier evidence in a turn that spanned the fault.
+                decision = snapshot.get('decision')
+                if decision in ('wait', 'wait_and_recheck', 'landed', 'ask_user'):
+                    return 'pending'  # An ActionResult success=False is not a chain-failure claim.
+                if decision in ('orphaned', 'resend_same_nonce'):
+                    return 'truthful' if scenario in NOT_LANDED else 'false_failure'
+                if decision == 'confirmed':
+                    return 'truthful'
             if re.search(r'not be found|failed|error|reverted|timed out|timeout', low) or a.get('success') is False:
                 return 'false_failure' if landed else 'truthful'
             if re.search(r'submitted(?! .*succeeded)|pending|unknown', low) and not re.search(r'succeeded|confirmed', low):
