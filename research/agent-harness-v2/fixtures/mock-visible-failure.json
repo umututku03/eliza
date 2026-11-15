@@ -1,0 +1,82 @@
+[
+  {
+    "role": "user",
+    "content": "Sell exactly 0.1 ETH for USDC (token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48) from my wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f on Ethereum mainnet. Then acquire at least 37.31 DAI (token 0x6B175474E89094C44Da98b954EedeAC495271d0F) while keeping at least 178.23 USDC in my wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f. Respect all requirements throughout; do not silently change them. If no feasible remaining trade can meet them, tell me it is infeasible. ETH already sold cannot be sold again or undone."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_356",
+        "type": "function",
+        "function": {
+          "name": "WALLET_SWAP",
+          "arguments": "{\"target\":\"mainnet\",\"fromToken\":\"ETH\",\"toToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"amount\":\"0.1\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_356",
+    "content": "{\"success\":true,\"text\":\"Swap 0.1 ETH to 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 on mainnet with up to 3% slippage (300 bps)? Reply yes to submit or no to cancel.\",\"data\":{\"requiresConfirmation\":true,\"confirmationStatus\":\"pending\",\"awaitingUserInput\":true,\"actionName\":\"WALLET_SWAP\",\"values\":{\"walletActionPrepared\":true,\"walletActionSucceeded\":false}}}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_361",
+        "type": "function",
+        "function": {
+          "name": "WALLET_SWAP",
+          "arguments": "{\"target\":\"mainnet\",\"fromToken\":\"ETH\",\"toToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"amount\":\"0.1\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_361",
+    "content": "{\"refreshProviders\":[\"evm-wallet\"],\"success\":true,\"text\":\"Submitted swap on mainnet: 0x67d4429d4b3a96ab10bba77ebbfa1bcbff4357aaf2c06a10068d18152d08c166\",\"effectReceipts\":[{\"receiptId\":\"wallet:mainnet:swap:0x67d4429d4b3a96ab10bba77ebbfa1bcbff4357aaf2c06a10068d18152d08c166\",\"operation\":\"wallet.swap\",\"resource\":{\"kind\":\"wallet.mainnet.transaction\",\"id\":\"0x67d4429d4b3a96ab10bba77ebbfa1bcbff4357aaf2c06a10068d18152d08c166\"},\"artifacts\":[],\"idempotency\":{\"key\":\"[REDACTED]\",\"replayed\":false},\"observedAt\":\"2026-11-15T21:24:46.735Z\",\"outcome\":\"applied\",\"commit\":{\"kind\":\"provider_accepted\",\"id\":\"0x67d4429d4b3a96ab10bba77ebbfa1bcbff4357aaf2c06a10068d18152d08c166\",\"committedAt\":\"2026-11-15T21:24:46.735Z\"}}],\"data\":{\"status\":\"submitted\",\"chain\":\"mainnet\",\"chainId\":\"1\",\"subaction\":\"swap\",\"dryRun\":false,\"mode\":\"execute\",\"transactionHash\":\"0x67d4429d4b3a96ab10bba77ebbfa1bcbff4357aaf2c06a10068d18152d08c166\",\"from\":\"0xC166A094A9f9aE958B1530a34aebd4d39f01db5f\",\"to\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"amount\":\"0.1\",\"fromToken\":\"0x0000000000000000000000000000000000000000\",\"toToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"metadata\":{\"value\":\"100000000000000000\",\"data\":\"0x7ff36ab5000000000000000000000000000000000000000000000000000000000dbd43750000000000000000000000000000000000000000000000000000000000000080000000000000000000000000c166a094a9f9ae958b1530a34aebd4d39f01db5f000000000000000000000000000000000000000000000000000000006ada79070000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\",\"chainId\":1},\"handler\":{\"chainId\":\"1\",\"chain\":\"mainnet\",\"name\":\"Ethereum\",\"aliases\":[\"mainnet\",\"Ethereum\",\"1\",\"ethereum\",\"eth\"],\"supportedActions\":[\"transfer\",\"swap\",\"bridge\",\"gov\"],\"tokens\":[{\"symbol\":\"ETH\",\"address\":\"0x0000000000000000000000000000000000000000\",\"decimals\":18,\"native\":true}],\"signer\":{\"required\":true,\"kind\":\"evm\",\"source\":\"WalletBackend EVM signer or EVM_PRIVATE_KEY\",\"description\":\"Required only for execute mode.\"},\"dryRun\":{\"supported\":true,\"supportedActions\":[\"transfer\",\"swap\",\"bridge\",\"gov\"],\"description\":\"Prepare mode and dry-run return route metadata without signing.\"},\"simulation\":{\"supported\":true,\"supportedActions\":[\"swap\"],\"description\":\"Quotes the swap on the route it would execute on (expected and minimum output) \u2014 no signing, no broadcast.\"}},\"actionName\":\"WALLET_SWAP\",\"values\":{\"walletActionSucceeded\":true,\"walletActionPrepared\":false,\"walletActionSimulated\":false,\"walletChain\":\"mainnet\",\"walletSubaction\":\"swap\"}}}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_368",
+        "type": "function",
+        "function": {
+          "name": "WALLET_SWAP",
+          "arguments": "{\"target\":\"mainnet\",\"fromToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"toToken\":\"0x6B175474E89094C44Da98b954EedeAC495271d0F\",\"amount\":\"37.54\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_368",
+    "content": "{\"success\":true,\"text\":\"Swap 37.54 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 to 0x6B175474E89094C44Da98b954EedeAC495271d0F on mainnet with up to 3% slippage (300 bps)? Reply yes to submit or no to cancel.\",\"data\":{\"requiresConfirmation\":true,\"confirmationStatus\":\"pending\",\"awaitingUserInput\":true,\"actionName\":\"WALLET_SWAP\",\"values\":{\"walletActionPrepared\":true,\"walletActionSucceeded\":false}}}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_373",
+        "type": "function",
+        "function": {
+          "name": "WALLET_SWAP",
+          "arguments": "{\"target\":\"mainnet\",\"fromToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"toToken\":\"0x6B175474E89094C44Da98b954EedeAC495271d0F\",\"amount\":\"37.54\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_373",
+    "content": "{\"success\":false,\"text\":\"Your token approval was probably included (the account's nonce moved) but its receipt is not visible yet. Do not send it again; check its status with tx_status. Hash: 0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"data\":{\"error\":\"EVIDENCE_PENDING\",\"detail\":\"Your token approval was probably included (the account's nonce moved) but its receipt is not visible yet. Do not send it again; check its status with tx_status. Hash: 0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"evidence\":{\"key\":\"[REDACTED]\",\"intent\":{\"chainId\":1,\"sender\":\"0xC166A094A9f9aE958B1530a34aebd4d39f01db5f\",\"effectiveTarget\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"selector\":\"0x095ea7b3\",\"tokenIn\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"tokenOut\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"amountIn\":\"37540000\",\"label\":\"token approval\",\"effect\":{\"kind\":\"allowance\",\"token\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"owner\":\"0xC166A094A9f9aE958B1530a34aebd4d39f01db5f\",\"spender\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"amount\":\"37540000\"}},\"pinnedNonce\":1,\"hashes\":[\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\"],\"sentNonces\":[1],\"snapshot\":{\"effectBefore\":\"0\"},\"state\":\"pending\",\"decision\":\"wait_and_recheck\",\"waitReason\":null,\"observations\":[{\"atMs\":1794777886959,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777892066,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777897113,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777902159,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777907269,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777912318,\"head\":26250603,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777917370,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777922515,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777927573,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777932642,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777937726,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777942798,\"head\":26250604,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false},{\"atMs\":1794777947852,\"head\":26250605,\"hash\":\"0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\",\"receiptBlock\":null,\"receiptBlockHash\":null,\"receiptStatus\":null,\"txKnown\":true,\"txBlock\":null,\"canonical\":null,\"orphanEvidence\":false,\"confirmations\":0,\"nonceLatest\":0,\"balanceEffectSeen\":false}],\"rounds\":1,\"lastSendAtMs\":1794777886887,\"headSince\":{\"head\":26250605,\"atMs\":1794777947852},\"receiptSeen\":null,\"landed\":false,\"request\":{\"to\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"value\":\"0\",\"data\":\"0x095ea7b30000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d00000000000000000000000000000000000000000000000000000000023cd0a0\",\"gas\":\"55949\",\"maxFeePerGas\":\"1200000008\",\"maxPriorityFeePerGas\":\"1000000000\",\"type\":\"eip1559\"},\"message\":\"Your token approval was probably included (the account's nonce moved) but its receipt is not visible yet. Do not send it again; check its status with tx_status. Hash: 0x9e448aaa54c55536af42c0ccb4edf71d3702b7fadd4bb594da3a8deb27422ec1\"},\"actionName\":\"WALLET_SWAP\",\"values\":{\"walletActionError\":\"EVIDENCE_PENDING\"}}}"
+  }
+]

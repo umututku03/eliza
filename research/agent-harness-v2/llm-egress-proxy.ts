@@ -60,7 +60,9 @@ const UPSTREAM: Record<string, string> = {openai: 'https://api.openai.com', anth
 if (testUpstream) { UPSTREAM.openai = testUpstream; UPSTREAM.anthropic = testUpstream; }
 
 let context: any = null;            // {episodeId, turn, turnKind, mockPlan?, forbidden} while a turn is active
-let mockState: any = {step: 0, callsThisTurn: 0};
+const freshMockState = (episodeId: unknown = null) => ({episodeId, step: 0, callsThisTurn: 0,
+  observations: new Map<string, any>(), sequence: 0});
+let mockState = freshMockState();
 let calls = 0, usedUSD = priorUSD, budgetRefusals = 0, inFlight = 0;
 const ledgerPath = join(dest, 'ledger.jsonl');
 
@@ -167,19 +169,120 @@ function lastToolResult(provider: string, body: any): string {
   }
   return '';
 }
+// visible-financial-results-v1: mock verdicts trust only structured tool claims the agent saw.
+// The required action identities come from the public task, never a scenario/oracle label. This is
+// conservative mock QA, not independent chain-finality or balance/goal verification (the auditor does that).
+const FINANCIAL_TOOLS = new Set(['swap', 'transfer', 'bridge', 'gov', 'pump_fun_buy', 'approve_token', 'aave_supply']);
+const mockToolName = (name: string) => String(name).split('__').at(-1)!.toLowerCase().replace(/^wallet_/, '');
+function mockIdentity(value: any): any {
+  if (Array.isArray(value)) return value.map(mockIdentity);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, mockIdentity(value[k])]));
+  if (typeof value !== 'string') return value;
+  if (/^0x[0-9a-f]+$/i.test(value)) return value.toLowerCase();
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+    const negative = value.startsWith('-'), [whole, frac = ''] = value.replace(/^-/, '').split('.');
+    const n = whole.replace(/^0+(?=\d)/, ''), f = frac.replace(/0+$/, '');
+    return `${negative && (n !== '0' || f) ? '-' : ''}${n}${f ? `.${f}` : ''}`;
+  }
+  return value;
+}
+function mockResult(value: any): any {
+  for (let depth = 0; depth < 5; depth++) {
+    if (typeof value === 'string') { try { value = JSON.parse(value); } catch { return null; } continue; }
+    if (Array.isArray(value)) { value = value.filter(x => x?.type === 'text').map(x => x.text).join(''); continue; }
+    if (value && typeof value === 'object' && Array.isArray(value.content)) { value = value.content; continue; }
+    return value && typeof value === 'object' ? value : null;
+  }
+  return null;
+}
+const mockHash = (x: unknown): x is string => typeof x === 'string' && /^0x[0-9a-f]{64}$/i.test(x);
+function rememberMockResults(provider: string, body: any) {
+  const issued = (id: unknown, name: string, args: any) => {
+    const tool = mockToolName(name);
+    if (typeof id !== 'string' || (!FINANCIAL_TOOLS.has(tool) && tool !== 'tx_status')) return;
+    try { if (typeof args === 'string') args = JSON.parse(args); } catch { args = null; }
+    const identity = mockIdentity(args), key = JSON.stringify([tool, identity]);
+    const old = mockState.observations.get(id);
+    if (!old) mockState.observations.set(id, {tool, args: identity, key, state: 'unknown', hashes: [], nonce: null, sequence: 0});
+    else if (old.key !== key) { old.state = 'unknown'; old.contradicted = true; }
+  };
+  const observed = (id: unknown, raw: any, isError = false) => {
+    const r = mockState.observations.get(String(id));
+    if (!r) return; // Unmatched prose or an unrecognized tool cannot establish an execution.
+    const fingerprint = JSON.stringify([raw, isError]);
+    if (r.fingerprint === fingerprint) return; // Prompt history is repeated across planner/helper calls.
+    if (r.fingerprint) r.contradicted = true; // A tool receipt cannot silently change under the same call id.
+    r.fingerprint = fingerprint; r.sequence = ++mockState.sequence;
+    const v = mockResult(raw), data = v?.data ?? v, ev = data?.evidence;
+    r.hashes = [...new Set([v?.hash, v?.transactionHash, data?.hash, data?.transactionHash,
+      ...(ev?.hashes ?? []), ...(v?.effectReceipts ?? []).map((x: any) => x?.resource?.id)].filter(mockHash).map((h: string) => h.toLowerCase()))];
+    const nonce = ev?.pinnedNonce ?? data?.pinnedNonce ?? v?.pinnedNonce;
+    r.nonce = Number.isSafeInteger(nonce) && nonce >= 0 ? nonce : null;
+    const last = ev?.observations?.at(-1);
+    const orphan = ev?.state === 'orphaned' || ev?.decision === 'orphaned' || (last?.orphanEvidence === true && last?.canonical !== true);
+    const failedStatus = ['pending', 'not_found', 'reverted', 'failed', 'orphaned'].includes(String(data?.status));
+    if (orphan || (r.tool === 'tx_status' && failedStatus)) {
+      for (const prior of mockState.observations.values()) {
+        if (prior.state !== 'applied' || (r.hashes.length && !prior.hashes.some((h: string) => r.hashes.includes(h)))) continue;
+        prior.state = 'pending'; prior.sequence = mockState.sequence;
+        if (orphan && r.nonce !== null) prior.nonce = r.nonce;
+      }
+    }
+    const proposal = v?.requiresConfirmation === true || data?.requiresConfirmation === true || data?.status === 'awaiting_confirmation';
+    const failed = isError || v?.success === false || !!v?.error || !!data?.error;
+    const receiptApplied = v?.success === true && (v?.effectReceipts ?? []).some((x: any) => x?.outcome === 'applied' && /^wallet\./.test(x?.operation ?? ''));
+    const mined = data?.status === 'success' && mockHash(data?.hash) && Number.isSafeInteger(data?.block) && data.block >= 0;
+    const reverted = data?.status === 'reverted' && mockHash(data?.hash) && Number.isSafeInteger(data?.block);
+    r.state = r.contradicted ? 'unknown' : reverted ? 'no_effect' : failed ? 'pending' : proposal ? 'proposal'
+      : r.tool === 'tx_status' ? 'read' : (receiptApplied && r.hashes.length > 0) || mined ? 'applied' : 'pending';
+  };
+  for (const m of body.messages ?? []) {
+    if (provider === 'openai') {
+      for (const t of m.tool_calls ?? []) issued(t.id, t.function?.name ?? t.name, t.function?.arguments ?? t.arguments);
+      if (m.role === 'tool') observed(m.tool_call_id, m.content);
+    } else if (Array.isArray(m.content)) {
+      for (const c of m.content) {
+        if (c.type === 'tool_use') issued(c.id, c.name, c.input);
+        if (c.type === 'tool_result') observed(c.tool_use_id, c.content, c.is_error === true);
+      }
+    }
+  }
+}
+function mockVerdict(): 'COMPLETED' | 'IN_PROGRESS' {
+  const required = context?.mockPlan?.requiredFinancialActions;
+  if (!Array.isArray(required) || !required.length) return 'IN_PROGRESS';
+  const attempts = [...mockState.observations.values()].filter(r => FINANCIAL_TOOLS.has(r.tool));
+  const applied = attempts.filter(r => r.state === 'applied');
+  // Distinct applied hashes for one operation are a possible duplicate, not another completion proof.
+  if (applied.some((a, i) => applied.slice(i + 1).some(b => a.key === b.key &&
+    !a.hashes.some((h: string) => b.hashes.includes(h))))) return 'IN_PROGRESS';
+  for (const r of attempts) {
+    if (r.state === 'applied' || r.state === 'proposal' || r.state === 'no_effect') continue;
+    const reconciled = applied.some(a => a.key === r.key && a.sequence > r.sequence &&
+      (a.hashes.some((h: string) => r.hashes.includes(h)) || (a.nonce !== null && a.nonce === r.nonce)));
+    if (!reconciled) return 'IN_PROGRESS';
+  }
+  const subset = (wanted: any, actual: any): boolean => wanted && typeof wanted === 'object'
+    ? actual && typeof actual === 'object' && Object.keys(wanted).every(k => subset(wanted[k], actual[k]))
+    : wanted === actual;
+  return required.every(r => FINANCIAL_TOOLS.has(mockToolName(r?.tool)) && r?.args && typeof r.args === 'object' && !Array.isArray(r.args) &&
+    applied.some(a => a.tool === mockToolName(r.tool) && subset(mockIdentity(r.args), a.args))) ? 'COMPLETED' : 'IN_PROGRESS';
+}
 function mockDecision(provider: string, body: any): {kind: string; tool?: {name: string; args: any}; text?: string} {
-  const plan = context?.mockPlan ?? {calls: [], declared: 'IN_PROGRESS'};
+  const plan = context?.mockPlan ?? {calls: []};
+  rememberMockResults(provider, body);
+  const verdict = mockVerdict();
   const closing = context?.turnKind === 'closing';
   const tools = toolsOf(provider, body);
   const byName = (n: string) => tools.find(t => t.name === n);
-  const next = plan.calls[mockState.step];
+  const next = plan.calls?.[mockState.step];
   const handle = byName('HANDLE_RESPONSE');
   if (handle) {
     const contextsSchema = handle.schema?.properties?.contexts?.items;
     const enumCtx: string[] = contextsSchema?.enum ?? [];
     const walletCtx = enumCtx.find(c => /wallet|finance|crypto/i.test(c)) ?? 'wallet';
     const prefs = {...PREFS, contexts: closing || !next ? ['simple'] : [walletCtx], intents: closing ? ['report status'] : ['run wallet action'],
-      replyText: closing ? plan.declared : 'Working on it.', replyEffectStatus: closing ? 'none' : 'pending',
+      replyText: closing ? verdict : 'Working on it.', replyEffectStatus: closing ? 'none' : 'pending',
       candidateActionNames: closing || !next ? [] : [next.tool], facts: [], relationships: []};
     return {kind: 'stage1', tool: {name: 'HANDLE_RESPONSE', args: fillSchema(handle.schema, prefs)}};
   }
@@ -189,12 +292,12 @@ function mockDecision(provider: string, body: any): {kind: string; tool?: {name:
     return {kind: 'planner_call', tool: {name: next.tool, args: next.args}};
   }
   const reply = byName('REPLY');
-  if (reply) return {kind: 'planner_reply', tool: {name: 'REPLY', args: fillSchema(reply.schema, {...PREFS, text: closing ? plan.declared : 'Please confirm to continue.'})}};
+  if (reply) return {kind: 'planner_reply', tool: {name: 'REPLY', args: fillSchema(reply.schema, {...PREFS, text: closing ? verdict : 'Please confirm to continue.'})}};
   if (tools.length === 1) return {kind: 'forced_tool', tool: {name: tools[0].name, args: fillSchema(tools[0].schema, PREFS)}};
   // Structured output: OpenAI response_format, Anthropic output_config.format.
   const fmt = body.response_format?.json_schema?.schema ?? body.output_config?.format?.schema;
   if (fmt) return {kind: 'structured', text: JSON.stringify(fillSchema(fmt, PREFS))};
-  return {kind: 'text', text: closing ? plan.declared : 'ok'};
+  return {kind: 'text', text: closing ? verdict : 'ok'};
 }
 function mockBody(provider: string, model: string, d: ReturnType<typeof mockDecision>, promptChars: number, n: number) {
   const outChars = JSON.stringify(d.tool ?? d.text ?? '').length;
@@ -236,7 +339,7 @@ Bun.serve({
     if (url.pathname.startsWith('/control/')) {
       if (url.pathname === '/control/turn' && req.method === 'POST') {
         context = await req.json();
-        if (context.resetMock) mockState = {step: 0, callsThisTurn: 0};
+        if (context.resetMock || context.episodeId !== mockState.episodeId) mockState = freshMockState(context.episodeId);
         mockState.callsThisTurn = 0;
         return Response.json({ok: true});
       }

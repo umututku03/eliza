@@ -1,0 +1,82 @@
+[
+  {
+    "role": "user",
+    "content": "My wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f on Ethereum mainnet holds 200 USDC (token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48). First approve the Uniswap V2 router 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D to spend exactly 80 USDC from my wallet, and no more. Then swap exactly 80 USDC for DAI (token 0x6B175474E89094C44Da98b954EedeAC495271d0F), receiving at least 77.12 DAI, while keeping at least 120 USDC in my wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f. Respect all requirements throughout; do not silently change them. If no feasible trade can meet them, tell me it is infeasible."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_1",
+        "type": "function",
+        "function": {
+          "name": "approve_token",
+          "arguments": "{\"token\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"spender\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"amount\":\"80\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_1",
+    "content": "{\"status\":\"awaiting_confirmation\",\"preview\":\"Approve 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D to spend exactly 80 USDC from 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f (current allowance 0)? Reply yes to submit or no to cancel.\"}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_3",
+        "type": "function",
+        "function": {
+          "name": "approve_token",
+          "arguments": "{\"token\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"spender\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"amount\":\"80\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_3",
+    "content": "{\"hash\":\"0xc4a36ee68226ab7fcb18b56d899abdbee16e0849757ecf8fbca3378cd8735eda\",\"allowance\":\"80 USDC\",\"spender\":\"0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D\",\"status\":\"success\",\"block\":26250604}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_4",
+        "type": "function",
+        "function": {
+          "name": "swap",
+          "arguments": "{\"fromToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"toToken\":\"0x6B175474E89094C44Da98b954EedeAC495271d0F\",\"amount\":\"80\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_4",
+    "content": "{\"status\":\"awaiting_confirmation\",\"preview\":\"Swap 80 USDC to DAI on Ethereum mainnet (expected 79.515355394870368977 DAI, max slippage 3%)? Reply yes to submit or no to cancel.\"}"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_mock_6",
+        "type": "function",
+        "function": {
+          "name": "swap",
+          "arguments": "{\"fromToken\":\"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\",\"toToken\":\"0x6B175474E89094C44Da98b954EedeAC495271d0F\",\"amount\":\"80\",\"slippageBps\":300}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_mock_6",
+    "content": "{\"hash\":\"0xa90f3aa84659742eda96fce4652393b3d410895b8a973999ce6709e6be69ee31\",\"approval\":null,\"amountIn\":\"80 USDC\",\"minOut\":\"77.129894733024257907 DAI\",\"status\":\"success\",\"block\":26250605}"
+  }
+]

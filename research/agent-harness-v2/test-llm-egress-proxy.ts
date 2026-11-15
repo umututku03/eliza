@@ -106,5 +106,150 @@ c.p.kill();
 const bad = Bun.spawnSync([process.execPath, join(import.meta.dir, 'llm-egress-proxy.ts'), '--port=18673', `--dest=${join(import.meta.dir, 'should-not-exist')}`, '--mode=live',
   '--test-upstream=http://127.0.0.1:18661', '--cohort-cap-usd=1', '--cumulative-cap-usd=1'], {env: {PATH: process.env.PATH ?? '', TMPDIR: tmpdir()}});
 check('test upstream refused outside temp folders', bad.exitCode !== 0);
+// visible-financial-results-v1: replay actual agent-visible histories through the HTTP proxy.
+// Failure fixture: gate3 random seed 10; positive fixtures: real ElizaOS, agent2 and MCP normal tool claims.
+// Fixtures contain only the user's task and assistant tool calls/results, never outcomes, scenario or arm fields.
+const visible = (name: string): any[] => JSON.parse(readFileSync(join(import.meta.dir, 'fixtures', `mock-visible-${name}.json`), 'utf8'));
+const clone = (x: any) => JSON.parse(JSON.stringify(x));
+function messagesFor(messages: any[], provider: string): any[] {
+  const out: any[] = [];
+  for (const m of messages) {
+    if (provider === 'anthropic' && m.tool_calls) {
+      out.push({role: 'assistant', content: m.tool_calls.map((t: any) => ({type: 'tool_use', id: t.id,
+        name: t.function.name, input: JSON.parse(t.function.arguments)}))});
+    } else if (provider === 'anthropic' && m.role === 'tool') {
+      out.push({role: 'user', content: [{type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content}]});
+    } else if (provider === 'openai' && Array.isArray(m.content)) {
+      for (const x of m.content) {
+        if (x.type === 'tool_use') out.push({role: 'assistant', content: null, tool_calls: [{id: x.id, type: 'function',
+          function: {name: x.name, arguments: JSON.stringify(x.input)}}]});
+        else if (x.type === 'tool_result') out.push({role: 'tool', tool_call_id: x.tool_use_id,
+          content: typeof x.content === 'string' ? x.content : JSON.stringify(x.content)});
+      }
+    } else out.push(clone(m));
+  }
+  return out;
+}
+function financialCalls(messages: any[]) {
+  const out: any[] = [];
+  for (const m of messagesFor(messages, 'openai')) for (const t of m.tool_calls ?? [])
+    out.push({tool: t.function.name, args: JSON.parse(t.function.arguments)});
+  return [...new Map(out.map(x => [JSON.stringify(x), x])).values()];
+}
+const mockDir = mkdtempSync(join(tmpdir(), 'mock-visible-proof-'));
+const mockProc = Bun.spawn([process.execPath, join(import.meta.dir, 'llm-egress-proxy.ts'), '--port=18678', `--dest=${mockDir}`, '--mode=mock'],
+  {env: {PATH: process.env.PATH ?? '', TMPDIR: tmpdir()}, stdout: 'ignore', stderr: 'inherit'});
+const mockUrl = 'http://127.0.0.1:18678';
+for (let i = 0; i < 100; i++) { try { await fetch(`${mockUrl}/control/ledger`); break; } catch { await Bun.sleep(50); } }
+let mockEpisode = 0;
+const finalShape = (provider: string, kind: string) => {
+  const name = kind === 'stage1' ? 'HANDLE_RESPONSE' : 'REPLY';
+  const schema = {type: 'object', properties: {[kind === 'stage1' ? 'replyText' : 'text']: {type: 'string'}},
+    required: [kind === 'stage1' ? 'replyText' : 'text']};
+  return kind === 'text' ? [] : provider === 'openai' ? [{type: 'function', function: {name, parameters: schema}}]
+    : [{name, input_schema: schema}];
+};
+async function mockRequest(provider: string, messages: any[], kind = 'text') {
+  const response = await post(`${mockUrl}/${provider}/v1/${provider === 'openai' ? 'chat/completions' : 'messages'}`,
+    {model: provider === 'openai' ? 'gpt-6-luna' : 'claude-haiku-5-5', max_tokens: 100,
+      messages: messagesFor(messages, provider), tools: finalShape(provider, kind)});
+  assert.equal(response.status, 200);
+  const body: any = await response.json();
+  if (provider === 'openai') {
+    const m = body.choices[0].message;
+    return m.tool_calls ? Object.values(JSON.parse(m.tool_calls[0].function.arguments))[0] : m.content;
+  }
+  const c = body.content[0]; return c.type === 'tool_use' ? Object.values(c.input)[0] : c.text;
+}
+async function beginMock(required: any, declared = 'COMPLETED', extra: any = {}) {
+  await post(`${mockUrl}/control/turn`, {episodeId: `visible-proof-${++mockEpisode}`, turn: 0, turnKind: 'task', resetMock: true,
+    mockPlan: {calls: [], declared, ...(required === undefined ? {} : {requiredFinancialActions: required})}, ...extra});
+}
+async function closeMock(provider: string, required: any, kind = 'text') {
+  await post(`${mockUrl}/control/idle`, {});
+  await post(`${mockUrl}/control/turn`, {episodeId: `visible-proof-${mockEpisode}`, turn: 1, turnKind: 'closing',
+    mockPlan: {calls: [], declared: 'COMPLETED', ...(required === undefined ? {} : {requiredFinancialActions: required})}});
+  return mockRequest(provider, [{role: 'user', content: 'Report whether my original task is complete.'}], kind);
+}
+try {
+  for (const provider of ['openai', 'anthropic']) {
+    const applied = visible('applied'), required = financialCalls(applied);
+    await beginMock(required); await mockRequest(provider, visible('failure'));
+    check(`${provider}: recorded failed approval remains IN_PROGRESS across idle/closing without tool history`, await closeMock(provider, required) === 'IN_PROGRESS');
+    for (const kind of ['stage1', 'reply', 'text']) {
+      await beginMock(required); await mockRequest(provider, applied);
+      check(`${provider}: actual applied Eliza financial claims permit COMPLETED via ${kind}`, await closeMock(provider, required, kind) === 'COMPLETED');
+    }
+    for (const name of ['direct', 'mcp']) {
+      const messages = visible(name), need = financialCalls(messages);
+      await beginMock(need); await mockRequest(provider, messages);
+      check(`${provider}: actual ${name} receipt success/hash/block permits COMPLETED`, await closeMock(provider, need) === 'COMPLETED');
+    }
+    const finalIndex = applied.findLastIndex(m => m.role === 'tool');
+    const finalCall = applied[finalIndex - 1].tool_calls[0];
+    const finalResult = JSON.parse(applied[finalIndex].content);
+    const hash = finalResult.data.transactionHash;
+    const pending = {success: false, data: {error: 'EVIDENCE_PENDING', evidence: {hashes: [hash], pinnedNonce: 8}}};
+    const recover = clone(applied);
+    recover[finalIndex].content = JSON.stringify(pending);
+    const call = clone(finalCall); call.id = 'visible-recovery';
+    const args = JSON.parse(call.function.arguments); args.amount = String(args.amount).includes('.') ? `${args.amount}0` : `${args.amount}.0`; call.function.arguments = JSON.stringify(args);
+    recover.push({role: 'assistant', content: null, tool_calls: [call]}, {role: 'tool', tool_call_id: call.id, content: JSON.stringify(finalResult)});
+    await beginMock(required); await mockRequest(provider, recover);
+    check(`${provider}: later explicit same-hash recovery clears pending same-operation attempt`, await closeMock(provider, required) === 'COMPLETED');
+    const ambiguous = clone(recover); const first = JSON.parse(ambiguous[finalIndex].content);
+    first.data.evidence.hashes = ['0x' + 'a'.repeat(64)]; ambiguous[finalIndex].content = JSON.stringify(first);
+    await beginMock(required); await mockRequest(provider, ambiguous);
+    check(`${provider}: new-hash success without same-nonce proof cannot erase ambiguous earlier attempt`, await closeMock(provider, required) === 'IN_PROGRESS');
+    const pinned = clone(ambiguous); const last = JSON.parse(pinned.at(-1).content);
+    last.data.pinnedNonce = 8; pinned.at(-1).content = JSON.stringify(last);
+    await beginMock(required); await mockRequest(provider, pinned);
+    check(`${provider}: explicit same-pinned-nonce recovery can clear an ambiguous replacement`, await closeMock(provider, required) === 'COMPLETED');
+    const corrupted = clone(applied); const missingReceipt = JSON.parse(corrupted[finalIndex].content); delete missingReceipt.effectReceipts;
+    corrupted[finalIndex].content = JSON.stringify(missingReceipt);
+    await beginMock(required); await mockRequest(provider, corrupted);
+    check(`${provider}: bare submitted/hash or wallet success without an applied receipt stays IN_PROGRESS`, await closeMock(provider, required) === 'IN_PROGRESS');
+    await beginMock(undefined); await mockRequest(provider, applied);
+    check(`${provider}: missing public-task action contract fails closed`, await closeMock(provider, undefined) === 'IN_PROGRESS');
+    const saleOnly = applied.slice(0, 5);
+    await beginMock(required, 'INFEASIBLE'); await mockRequest(provider, saleOnly);
+    check(`${provider}: sale-only recipe cannot infer infeasibility or completion of the missing goal action`, await closeMock(provider, required) === 'IN_PROGRESS');
+    for (const declared of ['INFEASIBLE', 'IN_PROGRESS', 'COMPLETED']) {
+      await beginMock(required, declared, {scheduleSeed: 999, arm: 'arbitrary', condition: 'arbitrary'}); await mockRequest(provider, applied);
+      check(`${provider}: actual visible proof is independent of scripted declaration ${declared}`, await closeMock(provider, required) === 'COMPLETED');
+    }
+    await beginMock(required); await mockRequest(provider, applied.slice(0, 3));
+    check(`${provider}: confirmation proposal and plan progress are not an applied effect`, await closeMock(provider, required) === 'IN_PROGRESS');
+    const quoted = clone(visible('failure'));
+    quoted.push({role: 'assistant', content: null, tool_calls: [{id: 'read-after-failure', type: 'function',
+      function: {name: 'get_balances', arguments: '{}'}}]},
+      {role: 'tool', tool_call_id: 'read-after-failure', content: JSON.stringify({success: true, data: {available: '999'}})});
+    await beginMock(required); await mockRequest(provider, quoted);
+    check(`${provider}: unrelated read success does not clear a failed financial step`, await closeMock(provider, required) === 'IN_PROGRESS');
+    const statusHistory = (status: any) => [...clone(applied), {role: 'assistant', content: null,
+      tool_calls: [{id: 'visible-status', type: 'function', function: {name: 'tx_status', arguments: JSON.stringify({hash})}}]},
+      {role: 'tool', tool_call_id: 'visible-status', content: JSON.stringify({success: true, data: {hash, ...status}})}];
+    await beginMock(required); await mockRequest(provider, statusHistory({status: 'pending'}));
+    check(`${provider}: a later pending status invalidates a cached applied claim`, await closeMock(provider, required) === 'IN_PROGRESS');
+    await beginMock(required); await mockRequest(provider, statusHistory({status: 'orphaned', evidence: {state: 'orphaned', hashes: [hash], pinnedNonce: 8}}));
+    check(`${provider}: a later visible orphan invalidates a cached applied claim`, await closeMock(provider, required) === 'IN_PROGRESS');
+    const differentNonce = clone(ambiguous); const other = JSON.parse(differentNonce.at(-1).content);
+    other.data.pinnedNonce = 9; differentNonce.at(-1).content = JSON.stringify(other);
+    await beginMock(required); await mockRequest(provider, differentNonce);
+    check(`${provider}: a distinct nonce cannot reconcile the earlier ambiguous dispatch`, await closeMock(provider, required) === 'IN_PROGRESS');
+    const duplicate = clone(applied), duplicateCall = clone(finalCall); duplicateCall.id = 'visible-second-applied';
+    const duplicateResult = clone(finalResult); duplicateResult.data.transactionHash = '0x' + 'b'.repeat(64);
+    for (const receipt of duplicateResult.effectReceipts) receipt.resource.id = duplicateResult.data.transactionHash;
+    duplicate.push({role: 'assistant', content: null, tool_calls: [duplicateCall]},
+      {role: 'tool', tool_call_id: duplicateCall.id, content: JSON.stringify(duplicateResult)});
+    await beginMock(required); await mockRequest(provider, duplicate);
+    check(`${provider}: two distinct applied transaction claims for one task leg do not prove exactly once`, await closeMock(provider, required) === 'IN_PROGRESS');
+    await beginMock(required); await mockRequest(provider, []);
+    check(`${provider}: unknown evidence does not prove completion`, await closeMock(provider, required) === 'IN_PROGRESS');
+    await beginMock(required); await mockRequest(provider, applied);
+    await post(`${mockUrl}/control/turn`, {episodeId: 'different-episode', turn: 0, turnKind: 'closing', mockPlan: {calls: [], declared: 'COMPLETED', requiredFinancialActions: required}});
+    check(`${provider}: changing episode without resetMock cannot inherit old completion proof`, await mockRequest(provider, []) === 'IN_PROGRESS');
+  }
+} finally { mockProc.kill(); }
 fake.stop(true);
 console.log(results.join('\n'));

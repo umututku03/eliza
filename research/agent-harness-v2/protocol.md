@@ -76,3 +76,9 @@ Counts show that something happened, not rates.
 ## Hardening disclosure: external analytics readiness (26 October 2026)
 
 The episode child now sets WALLET_ANALYTICS_ENABLED=false to declare its existing localhost-only network policy to wallet capability selection. External token_info and Birdeye search_address are marked unavailable and refused before HTTP. The network guard, task text, confirmation rules, faults and chain scoring are unchanged. Every new result records the changed harness and source hashes; older results remain at their original hashes.
+
+## Mock-only closing-policy correction (15 November 2026)
+
+Mock QA now records `mockPolicy: visible-financial-results-v1`. The closing answer no longer copies the recipe's precomputed declared word. A task-derived list of required financial actions is fixed across scenarios. The mock may say COMPLETED only after matching agent-visible applied results; missing, pending or ambiguous execution evidence yields IN_PROGRESS. A failed attempt alone does not establish infeasibility. Quotes, proposals and helper success flags do not establish an applied transaction.
+
+This is a change to the deterministic mock, not a measured improvement in live-model behavior. Tool claims still need independent chain-state scoring: an applied acknowledgement does not prove finality or all task constraints. Old results retain their original source hashes and closing words. The task, live model prompts, confirmation policy, chain scorer, scenario parameters and paid-call approval gate are unchanged.

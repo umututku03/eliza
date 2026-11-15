@@ -1,0 +1,142 @@
+[
+  {
+    "role": "user",
+    "content": "Sell exactly 0.1 ETH for USDC (token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48) from my wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f on Ethereum mainnet. Then acquire at least 37.31 DAI (token 0x6B175474E89094C44Da98b954EedeAC495271d0F) while keeping at least 178.23 USDC in my wallet 0xC166A094A9f9aE958B1530a34aebd4d39f01db5f. Respect all requirements throughout; do not silently change them. If no feasible remaining trade can meet them, tell me it is infeasible. ETH already sold cannot be sold again or undone."
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_mock_1",
+        "name": "mcp__wallet__swap",
+        "input": {
+          "fromToken": "ETH",
+          "toToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "amount": "0.1",
+          "slippageBps": 300
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "tool_use_id": "toolu_mock_1",
+        "type": "tool_result",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"awaiting_confirmation\",\"preview\":\"Swap 0.1 ETH to USDC on Ethereum mainnet (expected 237.636476 USDC, max slippage 3%)? Reply yes to submit or no to cancel.\"}"
+          }
+        ],
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_mock_3",
+        "name": "mcp__wallet__swap",
+        "input": {
+          "fromToken": "ETH",
+          "toToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "amount": "0.1",
+          "slippageBps": 300
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "tool_use_id": "toolu_mock_3",
+        "type": "tool_result",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"hash\":\"0x958fdfd69446ab436693f10407ffb23251c12e2f1590b2594386145f431cdfd2\",\"approval\":null,\"amountIn\":\"0.1 ETH\",\"minOut\":\"230.507381 USDC\",\"status\":\"success\",\"block\":26250602}"
+          }
+        ],
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_mock_4",
+        "name": "mcp__wallet__swap",
+        "input": {
+          "fromToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "toToken": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "amount": "59.406476",
+          "slippageBps": 300
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "tool_use_id": "toolu_mock_4",
+        "type": "tool_result",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"awaiting_confirmation\",\"preview\":\"Swap 59.406476 USDC to DAI on Ethereum mainnet (expected 59.046981018462803274 DAI, max slippage 3%)? Reply yes to submit or no to cancel.\"}"
+          }
+        ],
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_mock_6",
+        "name": "mcp__wallet__swap",
+        "input": {
+          "fromToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "toToken": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "amount": "59.406476",
+          "slippageBps": 300
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "tool_use_id": "toolu_mock_6",
+        "type": "tool_result",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"hash\":\"0x290326cc2492925f3116509e523892baab933f2e97326cf1e3a3f3522c2127a9\",\"approval\":{\"hash\":\"0xa375ff9e8124f498dd7c2c1ae678b8e869e4486ac3bc5671cee35c9fc1f3456f\",\"status\":\"success\"},\"amountIn\":\"59.406476 USDC\",\"minOut\":\"57.275571587908919175 DAI\",\"status\":\"success\",\"block\":26250604}"
+          }
+        ],
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ]
+  }
+]
