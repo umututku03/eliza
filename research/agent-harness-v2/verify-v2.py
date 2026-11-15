@@ -347,6 +347,7 @@ def audit(folder):
     p = Path(folder); p = p if p.is_absolute() else ROOT / p
     m = read(p / 'manifest.json'); mode = m['mode']; frozen = m['frozen']
     need(mode in ('mock', 'live'), 'mode')
+    if mode == 'mock': need(m.get('mockPolicy') == 'visible-financial-results-v1', 'mock result policy differs')
     for name, digest in m['files'].items(): need(sha(ROOT / name) == digest, 'frozen harness file changed', name)
     if m.get('taskId'):
         tasks_file = REPO / m.get('tasksFile', 'research/benchmark/tasks.json')

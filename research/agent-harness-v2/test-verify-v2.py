@@ -29,6 +29,8 @@ cases = {
     'credential pasted': lambda p: (p / 'episodes' / f'{first_ep}.child-stderr.log').write_text('sk-ant-api03-' + 'x' * 40),
     'episode removed from marker': lambda p: edit_json(p / 'complete.json', lambda d: d['episodes'].pop()),
 }
+if json.loads((src / 'manifest.json').read_text()).get('mode') == 'mock':
+    cases['mock policy forged'] = lambda p: edit_json(p / 'manifest.json', lambda d: d.update(mockPolicy='scripted-declaration'))
 # The reference must stay independent of the off-chain treatment and report its goal truthfully.
 controls = [n for n in json.loads((src / 'complete.json').read_text())['episodes'] if n.startswith('control-')]
 if controls:

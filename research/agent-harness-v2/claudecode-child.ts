@@ -98,8 +98,10 @@ const errText = (e: any) => String(e?.message ?? e).split('\n')[0].slice(0, 300)
 
 // The harness's scripted mock answers by tool name with plugin-wallet's WALLET_SWAP calls; they map to the MCP swap
 // tool with the same token, amount and slippage arguments, exactly as agent2 maps them (AGENT-INTERFACE.md, "Mock mode").
-const mockPlan = spec.mockPlan ? {...spec.mockPlan, calls: spec.mockPlan.calls.map((c: any) => c.tool === 'WALLET_SWAP'
-  ? {tool: 'mcp__wallet__swap', args: {fromToken: c.args.fromToken, toToken: c.args.toToken, amount: c.args.amount, slippageBps: c.args.slippageBps}} : c)} : null;
+const mapMockCall = (c: any) => c.tool === 'WALLET_SWAP'
+  ? {tool: 'mcp__wallet__swap', args: {fromToken: c.args.fromToken, toToken: c.args.toToken, ...(c.args.amount ? {amount: c.args.amount} : {}), ...(c.args.slippageBps !== undefined ? {slippageBps: c.args.slippageBps} : {})}} : c;
+const mockPlan = spec.mockPlan ? {...spec.mockPlan, calls: spec.mockPlan.calls.map(mapMockCall),
+  requiredFinancialActions: spec.mockPlan.requiredFinancialActions?.map(mapMockCall)} : null;
 
 let budgetExhausted = false, logOffset = 0;
 const turns: any[] = [];

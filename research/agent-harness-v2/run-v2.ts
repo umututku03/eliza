@@ -603,6 +603,7 @@ const manifest = {
   armPrompt: ARM === "prompt_only" ? ARM_PROMPT : null,
   armPromptPosition: ARM === "prompt_only" ? "ElizaOS character.system (the first section of the canonical system prompt)" : null,
   mockAgent: MOCK_AGENT,
+  ...(mode === "mock" ? { mockPolicy: "visible-financial-results-v1" } : {}),
   idleBlockMs: IDLE_BLOCK_MS,
   portBase: PORT_BASE,
   // Read endpoints by role (never URLs). Only full_quorum has more than one; null elsewhere.
@@ -1834,7 +1835,27 @@ export function correctSaleSends(entries: ScheduleEntry[]) {
   }
   return sends;
 }
+// The mock task contract uses only routes/amounts stated in the user's task. It is invariant across
+// scenarios, arms and feasibility labels; script exhaustion is not evidence that the task was completed.
+function mockRequiredFinancialActions() {
+  const swap = (fromToken: string, toToken: string, amount?: string) => ({
+    tool: "WALLET_SWAP", args: { target: "mainnet", fromToken, toToken, ...(amount ? { amount } : {}) },
+  });
+  if (WORKFLOW === "approve_swap") {
+    const amount = formatUnits(SWAP_X, X.decimals);
+    return [
+      ...(AGENT_KIND === "agent2" ? [{ tool: "approve_token", args: { token: X.address, spender: frozen.spender, amount } }] : []),
+      swap(X.address, Y.address, amount),
+    ];
+  }
+  if (WORKFLOW === "supply") return [swap("ETH", X.address, frozen.saleEth),
+    { tool: "aave_supply", args: { token: X.address, amount: formatUnits(SUPPLY_X, X.decimals) } }];
+  return [swap("ETH", X.address, frozen.saleEth), swap(X.address, Y.address)];
+}
 async function mockPlan(scenario: string, seed: number | null = null) {
+  return { ...await scriptedMockPlan(scenario, seed), requiredFinancialActions: mockRequiredFinancialActions() };
+}
+async function scriptedMockPlan(scenario: string, seed: number | null = null) {
   const swap = (fromToken: string, toToken: string, amount: string) => ({
     tool: "WALLET_SWAP",
     args: { target: "mainnet", fromToken, toToken, amount, slippageBps: 300 },
