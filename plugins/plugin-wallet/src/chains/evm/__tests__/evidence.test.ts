@@ -28,6 +28,7 @@ import {
   intentKey,
   isUnresolved,
   latestIntent,
+  quorumClient,
   resetEvidenceLedgers,
   sendWithEvidence,
 } from "../evidence";
@@ -1308,4 +1309,305 @@ describe("full layer: byte-identical traces (snapshot taken before full_quorum e
       expect(await naiveTrace(fault)).toMatchSnapshot();
     });
   }
+});
+
+// ---- full_quorum (WS-Q): quorum reads inside the evidence layer ---------------------------------------------
+/** What one read endpoint shows of the fake chain: honest, frozen at a block (stale), lying, on another fork, or down. */
+interface EndpointFaults {
+  /** Frozen view: head, nonce and USDC balance as of `block`; later receipts and transactions unknown. */
+  stale?: { block: number; nonce: number; usdc: bigint } | null;
+  /** Claims a success receipt (and a mined transaction) in the current head block for these hashes. */
+  lieAbout?: Set<Hex>;
+  /** Reports different block hashes from `fromBlock` on (another fork). */
+  fork?: { fromBlock: number };
+  down?: boolean;
+}
+function endpoint(c: FakeChain, f: EndpointFaults = {}) {
+  const lag = () => f.stale?.block ?? null;
+  const hide = (block: number | null) => block !== null && lag() !== null && block > lag()!;
+  const hashAt = (n: number) => (f.fork && n >= f.fork.fromBlock ? c.hashFor(`fork${n}`) : c.blockHashes.get(n) ?? null);
+  const up = () => {
+    if (f.down) throw new Error("fetch failed: connection refused");
+  };
+  return {
+    getBlockNumber: async () => (up(), BigInt(lag() ?? c.head)),
+    getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
+      up();
+      const n = lag() !== null && Number(blockNumber) > lag()! ? lag()! : Number(blockNumber);
+      return { hash: hashAt(n), number: BigInt(n) };
+    },
+    getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      up();
+      if (f.lieAbout?.has(hash)) return { status: "success" as const, blockNumber: BigInt(c.head), blockHash: hashAt(c.head)! };
+      const tx = c.txs.get(hash);
+      if (!tx || tx.block === null || c.hidden.has(hash) || hide(tx.block)) throw c.notFound("TransactionReceiptNotFoundError");
+      return { status: tx.status, blockNumber: BigInt(tx.block), blockHash: hashAt(tx.block)! };
+    },
+    getTransaction: async ({ hash }: { hash: Hex }) => {
+      up();
+      if (f.lieAbout?.has(hash)) return { blockNumber: BigInt(c.head), blockHash: hashAt(c.head) };
+      const tx = c.txs.get(hash);
+      if (!tx || hide(tx.block)) throw c.notFound("TransactionNotFoundError");
+      return { blockNumber: tx.block === null ? null : BigInt(tx.block), blockHash: tx.block === null ? null : hashAt(tx.block) };
+    },
+    getTransactionCount: async (_: { address: Address; blockTag?: string; blockNumber?: bigint }) => (up(), f.stale ? f.stale.nonce : c.accountNonce),
+    getBalance: async () => (up(), 0n),
+    readContract: async (a: any) => {
+      up();
+      if (a.functionName === "balanceOf") return a.address.toLowerCase() === USDC.toLowerCase() ? (f.stale ? f.stale.usdc : c.usdc) : c.dai;
+      if (a.functionName === "allowance") return 0n;
+      throw new Error(`unexpected read ${a.functionName}`);
+    },
+  };
+}
+const quorumOf = (c: FakeChain, ...faults: EndpointFaults[]) =>
+  quorumClient(
+    faults.map((f, i) => ({ role: `read${i}`, client: endpoint(c, f) as never })),
+    { stallMs: 1_000 },
+  );
+const sendVia = (c: FakeChain, pub: unknown) =>
+  sendWithEvidence({
+    walletClient: c.wallet,
+    publicClient: pub as never,
+    request: { account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() },
+    intent: saleIntent(),
+    deps: c.deps(),
+  });
+/** The naive agent (repeat the sale once after a non-success) through a quorum client. */
+async function naiveQuorum(c: FakeChain, pub: unknown) {
+  const results: { ok?: string; message?: string; evidence?: any }[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      results.push({ ok: (await sendVia(c, pub)).decision });
+      break;
+    } catch (e) {
+      results.push({ message: (e as Error).message, evidence: (e as EvidenceError).data?.evidence });
+    }
+  }
+  return results;
+}
+const lastQuorum = () => {
+  const r = evidenceLedger(1, SENDER)[0];
+  return r.observations[r.observations.length - 1].quorum!;
+};
+
+describe("full_quorum: mode switch and configuration", () => {
+  it("is the full layer (guard, tx_status, refusal decoding) and needs at least two read endpoints", async () => {
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled, evidenceReadClient } = await import("../evidence");
+    useMode("full_quorum");
+    expect(evidenceMode()).toBe("full_quorum");
+    expect(evidenceLayerEnabled()).toBe(true);
+    expect(evidenceSendsEnabled()).toBe(true);
+    process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1";
+    expect(() => evidenceReadClient(new FakeChain().pub as never)).toThrow(/at least 2 endpoints/);
+    process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1,http://127.0.0.1:2";
+    process.env.EVM_EVIDENCE_READ_ROLES = "primary,secondary";
+    const q = evidenceReadClient(new FakeChain().pub as never) as any;
+    expect(q.quorumEndpoints.map((e: any) => e.role)).toEqual(["primary", "secondary"]);
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    expect(() => evidenceMode()).toThrow(/cannot be combined/);
+    delete process.env.EVM_EVIDENCE_READ_URLS;
+    delete process.env.EVM_EVIDENCE_READ_ROLES;
+    expect(() => quorumClient([{ role: "only", client: new FakeChain().pub as never }])).toThrow(/at least 2/);
+  });
+
+  it("full mode ignores the read-endpoint list: traces are identical with it set", async () => {
+    for (const fault of ["none", "rpc_stale", "sale_reorged"] as NaiveFault[]) {
+      delete process.env.EVM_EVIDENCE_READ_URLS;
+      const plain = await naiveTrace(fault);
+      process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1,http://127.0.0.1:2";
+      const withList = await naiveTrace(fault);
+      delete process.env.EVM_EVIDENCE_READ_URLS;
+      expect(withList).toEqual(plain);
+    }
+  });
+});
+
+describe("full_quorum: agreement rule", () => {
+  beforeEach(() => useMode("full_quorum"));
+
+  it("honest endpoints agree: the same decisions and messages as the full layer", async () => {
+    for (const fault of ["none", "receipt_hidden", "sale_dropped", "sale_reorged"] as NaiveFault[]) {
+      useMode("full_quorum");
+      const q = await naiveTrace(fault, (c) => quorumOf(c, {}, {}));
+      useMode("full");
+      process.env.EVM_EVIDENCE_LAYER = "1";
+      const f = await naiveTrace(fault);
+      delete process.env.EVM_EVIDENCE_LAYER;
+      expect(q.results).toEqual(f.results);
+      expect(q.sales).toBe(f.sales);
+    }
+  });
+
+  it("one lagging (stale) endpoint is outvoted by height: the advanced consistent view confirms the sale", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const stale: EndpointFaults = { stale: null };
+    // Armed when the sale mines, as the harness's rpc_stale proxy does: frozen one block before the sale.
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      stale.stale = { block: c.head - 1, nonce: 7, usdc: 0n };
+      c.submit = submit;
+      return h;
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const results = await naiveQuorum(c, quorumOf(c, stale, {}));
+    expect(results).toEqual([{ ok: "confirmed" }]);
+    expect(c.sales()).toBe(1);
+    const q = lastQuorum();
+    expect(q).toMatchObject({ ok: true, chosen: "read1", members: ["read0", "read1"], lagging: ["read0"], quorum: 2 });
+    expect(q.heads[0]).toBe(100);
+    expect(q.heads[1]).toBeGreaterThanOrEqual(102);
+    expect(warn.mock.calls.some((a) => /\[evidence\] quorum agreed: chosen read1.*lagging \(stale\): read0/.test(String(a[0])))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("an endpoint within the lag tolerance is not reported as lagging", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const behind: EndpointFaults = { stale: null };
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      c.submit = submit;
+      return h;
+    };
+    // One block behind at every read: inside the default tolerance of 1.
+    const ep = endpoint(c, behind);
+    const lagged = { ...ep, getBlockNumber: async () => BigInt(c.head - 1) };
+    const pub = quorumClient([{ role: "read0", client: lagged as never }, { role: "read1", client: endpoint(c) as never }], { stallMs: 1_000 });
+    expect(await naiveQuorum(c, pub)).toEqual([{ ok: "confirmed" }]);
+    expect(lastQuorum().lagging).toEqual([]);
+  });
+
+  it("a lagging endpoint that is not a prefix of the advanced view breaks the quorum (N = 2)", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const pub = quorumOf(c, {}, {});
+    await sendVia(c, pub).catch(() => {});
+    resetEvidenceLedgers();
+    // read0 sits on another fork from block 95 on: its head block's hash is not in read1's chain.
+    const forked = quorumOf(c, { fork: { fromBlock: 95 }, stale: { block: c.head - 1, nonce: 8, usdc: 100n } }, {});
+    const e: any = await sendVia(c, forked).then(() => null, (x) => x);
+    expect(e?.code).toBe("NETWORK_ERROR");
+    expect(e.message).toMatch(/different blocks at the same height/);
+  });
+
+  it("no quorum (endpoints on different forks) => wait, and ask_user after N rounds; nothing re-sent", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const fork: EndpointFaults = {};
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      fork.fork = { fromBlock: c.head }; // read0 shows another block at the sale's height from now on
+      c.submit = submit;
+      return h;
+    };
+    const pub = quorumOf(c, fork, {});
+    const e = await pending(sendVia(c, pub));
+    expect(ev(e).decision).toBe("wait");
+    expect(ev(e).waitReason).toBe("no_quorum");
+    expect(e.message).toMatch(/RPC endpoints disagree about the chain \(the endpoints report different blocks at the same height\)/);
+    expect(e.message).toMatch(/Do not send it again/);
+    const r = evidenceLedger(1, SENDER)[0];
+    for (let i = 0; i < 5; i++) await checkOnce(pub, r, c.deps());
+    expect(r.decision).toBe("ask_user");
+    expect(c.wallet.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("an endpoint that does not answer: no quorum with N = 2, quorum with N = 3", async () => {
+    const c2 = new FakeChain();
+    c2.tickEvery(30_000);
+    const e: any = await sendVia(c2, quorumOf(c2, {}, { down: true })).then(() => null, (x) => x);
+    expect(e?.code).toBe("NETWORK_ERROR");
+    expect(e.message).toMatch(/Nothing was sent: .*1 of 2 endpoints did not answer/);
+    expect(c2.wallet.sendTransaction).not.toHaveBeenCalled();
+    resetEvidenceLedgers();
+    const c3 = new FakeChain();
+    c3.tickEvery(30_000);
+    expect((await sendVia(c3, quorumOf(c3, {}, { down: true }, {}))).decision).toBe("confirmed");
+    expect(lastQuorum()).toMatchObject({ ok: true, members: ["read0", "read2"], quorum: 2 });
+  });
+
+  it("an endpoint stalled past the stall timeout abstains", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = new FakeChain();
+      const slow = { ...endpoint(c), getBlockNumber: () => new Promise<bigint>(() => {}) };
+      const pub = quorumClient([{ role: "read0", client: slow as never }, { role: "read1", client: endpoint(c) as never }], { stallMs: 1_000 });
+      const p = pub.getTransactionCount({ address: SENDER, blockTag: "pending" });
+      const settled = expect(p).rejects.toThrow(/1 of 2 endpoints did not answer/);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("full_quorum: a lying endpoint (success receipt where the others find nothing)", () => {
+  beforeEach(() => useMode("full_quorum"));
+
+  it("N = 2: the tie leaves the receipt unresolved => wait (no confirmation, no 'dropped'); the same-nonce repeat lands once", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      if (liar.lieAbout!.size === 0) liar.lieAbout!.add(h);
+      return h;
+    });
+    const results = await naiveQuorum(c, quorumOf(c, liar, {}));
+    expect(results[0].evidence.decision).toBe("wait");
+    expect(results[0].evidence.waitReason).toBe("no_quorum");
+    expect(results[0].message).toMatch(/no majority on the swap's receipt or inclusion/);
+    expect(results[0].message).not.toMatch(/dropped|confirmed/);
+    expect(results[1]).toEqual({ ok: "confirmed" });
+    expect(c.sales()).toBe(1);
+    expect([...c.canonicalByNonce().values()].every((n) => n <= 1)).toBe(true);
+    const r = evidenceLedger(1, SENDER)[0];
+    expect(new Set(r.sentNonces)).toEqual(new Set([r.pinnedNonce]));
+    expect(lastQuorum().disagreements).toContain("receipt");
+  });
+
+  it("N = 3: the liar is outvoted; the layer sees what the honest majority sees (dropped => same-nonce re-send)", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      if (liar.lieAbout!.size === 0) liar.lieAbout!.add(h);
+      return h;
+    });
+    const results = await naiveQuorum(c, quorumOf(c, liar, {}, {}));
+    expect(results[0].evidence.decision).toBe("resend_same_nonce");
+    expect(results[1]).toEqual({ ok: "confirmed" });
+    expect(c.sales()).toBe(1);
+  });
+
+  it("the full layer on the lying endpoint alone would confirm a transaction that never landed (the case quorum reads cover)", async () => {
+    useMode("full");
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      liar.lieAbout!.add(h);
+      return h;
+    });
+    // The lie covers the receipt only; the balance effect never appears, so even the single-node layer does not
+    // report confirmed, but it does report the swap as included (and never dropped).
+    const e = await pending(sendVia(c, endpoint(c, liar)));
+    expect(ev(e).state).toBe("included");
+    expect(c.sales()).toBe(0);
+  });
 });
