@@ -1,0 +1,119 @@
+"""Benchmark scorecard over harness-v2 result folders: one table per (agent, model, condition, evidence).
+Usage: python3 -I research/agent-harness-v2/scorecard.py <results dir> [...] [--by-task] [--json]
+
+Per-episode metrics come from metrics.py (imported, not re-implemented); this script only groups them. Each row is a
+fault cell (scenario; with --by-task, task x scenario) over the model episodes of every folder in the group:
+  correct decision   BDT status 'consistent' / episodes with a BDT status (metrics.py defines BDT for the evidence
+                     cells receipt_hidden, rpc_stale, sale_dropped, sale_reorged; n/a elsewhere)
+  unsafe             episodes with any metrics.py unsafe label (duplicate_sale, reserve_breach, goal_miss_after_trade)
+  IVL, BDT, PAF      medians of comparable IVL (X units), BDT seconds and PAF over the episodes where defined
+  completion         episodes whose chain-scored outcome matches the oracle label (validComplete or correctInfeasible)
+  cost               model spend of those episodes from llm/ledger.jsonl (estimatedUSD; 0 in mock mode)
+The group's header line also lists each folder's mode, task, completion marker and ledger newUSD.
+Agent and evidence come from the manifest ('agent', 'evidence'); folders that predate those fields are elizaos / none.
+"""
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import statistics
+import sys
+from collections import defaultdict
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+def metric_rows(folder):
+    """metrics.py's per-episode rows for one folder. metrics.py runs at import time on sys.argv and exits after printing
+    JSON rows, so it is executed with its own argv and quiet stdout, and the rows are read from its namespace."""
+    spec = importlib.util.spec_from_file_location('harness_metrics', os.path.join(HERE, 'metrics.py'))
+    mod = importlib.util.module_from_spec(spec)
+    argv = sys.argv
+    try:
+        sys.argv = [spec.origin, folder]
+        with contextlib.redirect_stdout(io.StringIO()):
+            try: spec.loader.exec_module(mod)
+            except SystemExit: pass
+    finally:
+        sys.argv = argv
+    return mod.rows
+
+def read(path):
+    with open(path) as f: return json.load(f)
+
+def scenario_order():
+    """The predeclared scenario order, from the verifier (which mirrors run-v2.ts)."""
+    spec = importlib.util.spec_from_file_location('verify_v2', os.path.join(HERE, 'verify-v2.py'))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod.SCENARIOS
+
+def folder_info(folder):
+    m = read(os.path.join(folder, 'manifest.json'))
+    marker = next((n for n in ('complete.json', 'run-error.json') if os.path.exists(os.path.join(folder, n))), None)
+    led = (read(os.path.join(folder, marker)).get('ledger') or {}) if marker else {}
+    ledger = os.path.join(folder, 'llm', 'ledger.jsonl')
+    cost = defaultdict(float)
+    if os.path.exists(ledger):
+        with open(ledger) as f:
+            for line in f:
+                e = json.loads(line)
+                if e.get('episodeId'): cost[e['episodeId'].split('#')[0]] += float(e.get('estimatedUSD') or 0)
+    return dict(manifest=m, marker=marker, newUSD=float(led.get('newUSD') or 0), cost=cost)
+
+def med(xs):
+    xs = [x for x in xs if x is not None]
+    return round(statistics.median(xs), 6) if xs else None
+
+def main(args):
+    folders = [os.path.abspath(a) for a in args if not a.startswith('--')]
+    by_task = '--by-task' in args
+    order = scenario_order()
+    groups = defaultdict(lambda: dict(folders=[], cells=defaultdict(list)))
+    for folder in folders:
+        info = folder_info(folder); m = info['manifest']
+        agent = m.get('agent') or 'elizaos'; evidence = m.get('evidence') or 'none'
+        task = m.get('taskId') or 'D1(frozen)'
+        rows = metric_rows(folder)
+        for mk in sorted({r['model'] for r in rows} or {x['key'] for x in m['models']}):
+            g = groups[(agent, mk, m.get('condition', 'stock'), evidence)]
+            g['folders'].append(dict(folder=os.path.basename(folder), mode=m['mode'], task=task, marker=info['marker'], newUSD=info['newUSD']))
+        for r in rows:
+            e = read(os.path.join(folder, 'episodes', f"{r['id']}.json")); o = e['outcome']
+            g = groups[(agent, r['model'], m.get('condition', 'stock'), evidence)]
+            key = (task, r['scenario']) if by_task else r['scenario']
+            g['cells'][key].append(dict(r, task=task, valid=bool(o.get('validComplete') or o.get('correctInfeasible')),
+                                        costUSD=info['cost'].get(r['id'], 0.0)))
+    out = []
+    for (agent, model, condition, evidence), g in sorted(groups.items()):
+        table = []
+        rank = lambda k: (k[0], order.index(k[1]) if k[1] in order else len(order)) if by_task else (order.index(k) if k in order else len(order), k)
+        for key in sorted(g['cells'], key=rank):
+            rs = g['cells'][key]; n = len(rs)
+            st = [r['BDT_status'] for r in rs if r['BDT_status'] is not None]
+            unsafe = defaultdict(int)
+            for r in rs:
+                for u in r['unsafe']: unsafe[u] += 1
+            table.append(dict(cell=' '.join(key) if by_task else key, tasks=sorted({r['task'] for r in rs}), n=n,
+                              correctDecisions=st.count('consistent'), decisionsScored=len(st),
+                              correctDecisionRate=round(st.count('consistent') / len(st), 3) if st else None,
+                              unsafeEpisodes=sum(1 for r in rs if r['unsafe']), unsafe=dict(unsafe),
+                              medianComparableIVL_X=med([r['IVL_comparable_X'] for r in rs]), medianBDT_s=med([r['BDT_s'] for r in rs]),
+                              medianPAF=med([r['PAF'] for r in rs]), completed=sum(r['valid'] for r in rs),
+                              completionRate=round(sum(r['valid'] for r in rs) / n, 3), costUSD=round(sum(r['costUSD'] for r in rs), 8)))
+        out.append(dict(agent=agent, model=model, condition=condition, evidence=evidence, folders=g['folders'], cells=table))
+    if '--json' in args:
+        print(json.dumps(out, indent=2)); return
+    fmt = lambda v: 'n/a' if v is None else str(v)
+    for t in out:
+        print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} evidence={t['evidence']}\n")
+        print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
+        print('| cell | tasks | n | correct decision | unsafe | median comparable IVL (X) | median BDT (s) | median PAF | completion | cost (USD) |')
+        print('|---|---|---|---|---|---|---|---|---|---|')
+        for c in t['cells']:
+            dec = f"{c['correctDecisions']}/{c['decisionsScored']} ({c['correctDecisionRate']})" if c['decisionsScored'] else 'n/a'
+            uns = f"{c['unsafeEpisodes']}/{c['n']}" + (' (' + ', '.join(f'{k} {v}' for k, v in sorted(c['unsafe'].items())) + ')' if c['unsafe'] else '')
+            print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {fmt(c['medianComparableIVL_X'])} | {fmt(c['medianBDT_s'])} | "
+                  f"{fmt(c['medianPAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} |")
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
