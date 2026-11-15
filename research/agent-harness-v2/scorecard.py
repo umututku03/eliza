@@ -1,4 +1,4 @@
-"""Benchmark scorecard over harness-v2 result folders: one table per (agent, model, condition, evidence).
+"""Benchmark scorecard over harness-v2 result folders: one table per (agent, model, condition, arm).
 Usage: python3 -I research/agent-harness-v2/scorecard.py <results dir> [...] [--by-task] [--json]
 
 Per-episode metrics come from metrics.py (imported, not re-implemented); this script only groups them. Each row is a
@@ -11,6 +11,8 @@ fault cell (scenario; with --by-task, task x scenario) over the model episodes o
   cost               model spend of those episodes from llm/ledger.jsonl (estimatedUSD; 0 in mock mode)
 The group's header line also lists each folder's mode, task, completion marker and ledger newUSD.
 Agent and evidence come from the manifest ('agent', 'evidence'); folders that predate those fields are elizaos / none.
+The arm (run-v2.ts --arm: none, prompt_only, nonce_only, verify_binary, full, pace_style) comes from 'arm'; older
+folders are 'full' when the evidence flag is set, else 'none'. Ablations of the full layer stay separate groups.
 """
 import contextlib
 import importlib.util
@@ -83,19 +85,23 @@ def main(args):
         # A sortable arm label also keeps ablations distinct from the full layer.
         ablation = m.get('evidenceAblate') or 'none'
         evidence = ('full' if ablation == 'none' else f'ablate:{ablation}') if m.get('evidence') else 'none'
+        arm = m.get('arm') or ('full' if m.get('evidence') else 'none')
+        arm = evidence if arm == 'full' else arm  # full, or full with an ablation
         task = m.get('taskId') or 'D1(frozen)'
         rows = metric_rows(folder)
         for mk in sorted({r['model'] for r in rows} or {x['key'] for x in m['models']}):
-            g = groups[(agent, mk, m.get('condition', 'stock'), evidence)]
+            g = groups[(agent, mk, m.get('condition', 'stock'), arm)]
             g['folders'].append(dict(folder=os.path.basename(folder), mode=m['mode'], task=task, marker=info['marker'], newUSD=info['newUSD']))
         for r in rows:
             e = read(os.path.join(folder, 'episodes', f"{r['id']}.json")); o = e['outcome']
-            g = groups[(agent, r['model'], m.get('condition', 'stock'), evidence)]
+            g = groups[(agent, r['model'], m.get('condition', 'stock'), arm)]
             key = (task, r['scenario']) if by_task else r['scenario']
             g['cells'][key].append(dict(r, task=task, valid=bool(o.get('validComplete') or o.get('correctInfeasible')),
                                         costUSD=info['cost'].get(r['id'], 0.0), termination=e.get('termination')))
     out = []
-    for (agent, model, condition, evidence), g in sorted(groups.items()):
+    for (agent, model, condition, arm), g in sorted(groups.items()):
+        evidence = arm if arm == 'full' or arm.startswith('ablate:') else 'none'
+
         table = []
         rank = lambda k: (k[0], order.index(k[1]) if k[1] in order else len(order)) if by_task else (order.index(k) if k in order else len(order), k)
         for key in sorted(g['cells'], key=rank):
@@ -116,7 +122,7 @@ def main(args):
                               censoredByLimit=sum(r['BDT_status'] == 'censored' and r['termination'] in ('max_turns', 'max_user_turns', 'budget_exhausted') for r in rs),
                               metricSummaries={name: distribution([r[field] for r in rs], n) for name, field in
                                                [('comparableIVL_X', 'IVL_comparable_X'), ('BDT_s', 'BDT_s'), ('PAF', 'PAF')]}))
-        out.append(dict(agent=agent, model=model, condition=condition, evidence=evidence,
+        out.append(dict(agent=agent, model=model, condition=condition, arm=arm, evidence=evidence,
                         evidenceEnabled=evidence != 'none', evidenceAblate=evidence.split(':', 1)[1] if evidence.startswith('ablate:') else 'none',
                         folders=g['folders'], cells=table))
     if '--json' in args:
@@ -124,7 +130,7 @@ def main(args):
     fmt = lambda v: 'n/a' if v is None else str(v)
     dist = lambda d: f"{fmt(d['median'])} [{fmt(d['q1'])}, {fmt(d['q3'])}]; {d['nDefined']}/{d['nTotal']}"
     for t in out:
-        print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} evidence={t['evidence']}\n")
+        print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} arm={t['arm']} evidence={t['evidence']}\n")
         print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
         print('| cell | tasks | n | correct decision | unsafe | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) | BDT states; limit-censored | fault fired |')
         print('|---|---|---|---|---|---|---|---|---|---|---|---|')

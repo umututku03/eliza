@@ -123,6 +123,8 @@ const runtime = new AgentRuntime({
   character: {
     name: "Agent",
     bio: ["A helpful assistant with an Ethereum wallet."],
+    // --arm=prompt_only only: the fixed instruction as the character's system text (absent otherwise).
+    ...(spec.characterSystem ? { system: spec.characterSystem } : {}),
     settings: {
       chains: { evm: ["mainnet"] },
       secrets: {
