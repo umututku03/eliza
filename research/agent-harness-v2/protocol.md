@@ -32,7 +32,7 @@ All model slots use the cohort model.
 - **Task:** sell exactly 0.1 ETH for USDC, then hold ≥ 37.31 DAI while keeping ≥ 178.23 USDC. The full text is in `run-v2.ts` (`TEXTS`).
 - **Scenarios:**
   - `normal`.
-  - `receipt_hidden`: the sale's receipt is hidden for 200 s; v2 waits 60 s.
+  - `receipt_hidden`: the sale's receipt is hidden for 200 s. (Corrected 14 Nov 2026.) The v2 wallet does **not** wait 60 s here. viem's `waitForTransactionReceipt` throws about 0.2 s into the confirm turn when a mined transaction's receipt is missing, so the agent is told the swap failed. agent2 polls the full 60 s and reports `submitted`. Found by WS-A; see `research/notes/report-ws-agent2.md`.
   - `price_change_feasible` and `price_change_infeasible`: a scheduled WETH/DAI move after the sale.
 
   The faults come from the unchanged fork RPC proxy.

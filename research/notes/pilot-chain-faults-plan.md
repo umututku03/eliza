@@ -20,9 +20,10 @@ A cheap test of whether the chain-fault measurement is worth scaling. It comes b
 - **Harness:** `run-v2.ts` at the accepted chain-faults commit, stock wallet (no smart account), development task D1, fork pinned at block 26,250,601.
 - **Scenarios:** `receipt_hidden`, `sale_dropped`, `rpc_stale`, `sale_reorged`, in that order.
 - **Models:** `luna` and `haiku`, plus at most one open-weight model on the Anyscale credits, if its tool calling passes a single free smoke test.
+- **Agents (advisor review, 14 Nov):** ElizaOS for all models. **agent2** (the minimal loop) × luna × the 4 faults × r = 2 is the early test of framework dependence; agent2 supports only the OpenAI format, so the Anyscale model covers its second model.
 - **Repetitions:** r = 2 for luna and haiku; r = 3 for the Anyscale model (free credits).
 - **Per cohort:** 4 deterministic controls (reference runs) and the episodes.
-- **Episodes:** luna 8 + haiku 8 (+ Anyscale model 12).
+- **Episodes:** ElizaOS luna 8 + haiku 8, agent2 luna 8 (+ the Anyscale model 12).
 
 ## Readouts (fixed now)
 
@@ -36,14 +37,17 @@ A cheap test of whether the chain-fault measurement is worth scaling. It comes b
 - **IVL** where comparable;
 - cost.
 
-**Per cell, as counts:** wrong decisions, duplicate sales, false completions, stalls.
+- **evidence quality**: the first wallet result after the fault, classified as truthful, false failure (the tool said the swap failed although it landed), or pending/unknown. **Every wrong decision is attributed** either to the tool's false evidence or to the model choosing wrongly despite honest evidence. The two are reported separately and never pooled.
+
+**Per cell, as counts:** wrong decisions (by attribution), duplicate sales, false completions, stalls, censored-by-timeout.
 
 ## Decision rule (fixed now)
 
-**Scale up** (build the evidence layer, then the paired pilot) if at least one of these holds:
-- (a) at least one duplicate sale in a landed cell across all models;
+**Scale up** (build the evidence layer, then the paired pilot) if at least one of these holds. Revised after advisor review; frozen before the first paid call.
+- (a) at least one duplicate sale in a landed cell **where the tool's first evidence was not a false failure**. Duplicates after a false "failed" are reported separately as a framework finding.
 - (b) at least 25% of episodes in the not-landed cells end without a successful re-send while the model declares COMPLETED or stalls;
-- (c) at least 25% of all episodes have a wrong or censored BDT status.
+- (c) at least 25% of all episodes have a **wrong** BDT status. Episodes censored only because the turn or wall-clock limit ended them are counted separately and do not trigger scale-up.
+- **Limits, fixed:** 6 user turns as before. Each turn's wall clock is bounded by the fault windows (200 s lag or hide, 20 s reorg delay); no extra timeout.
 
 **If none holds,** the agents handle chain faults well at this scale. Record that as a finding and re-think before spending more.
 
@@ -53,6 +57,7 @@ A cheap test of whether the chain-fault measurement is worth scaling. It comes b
 |---|---|
 | luna, 8 episodes × ≈ 0.06 | ≈ 0.48 |
 | haiku, 8 episodes × ≈ 0.09 | ≈ 0.72 |
-| **New paid spend** | **≈ 1.20**; ceiling **$2.50** (cohort caps luna $0.80, haiku $1.20) |
+| agent2 luna, 8 episodes × ≈ 0.03 | ≈ 0.25 |
+| **New paid spend** | **≈ 1.45**; ceiling **$3.00** (cohort caps: ElizaOS luna $0.80, haiku $1.20, agent2 luna $0.50) |
 
 The Anyscale model is billed to credits, with a cap in credits to be set once rates are known. Stop rules are as in distinguish1114: run error, audit failure, tamper shortfall, or insufficient headroom stops the pilot.
