@@ -31,7 +31,7 @@ const buyData = (tokenOut: Address) =>
 const buyIntent = (tokenOut: Address, value: bigint): EvidenceIntent =>
   describeCall({ chainId: 1, sender: SENDER, holder: SENDER, to: ROUTER, value, data: buyData(tokenOut) });
 
-type Tx = { nonce: number; block: number | null; blockHash: Hex | null; to: Address; credit: Address; amount: bigint };
+type Tx = { nonce: number; block: number | null; blockHash: Hex | null; to: Address; credit: Address; amount: bigint; value: bigint };
 
 /** Minimal chain: one sender, nonce rule, automine on send unless `dropNext`, hidden receipts, emulated reorg. */
 class Chain {
@@ -71,6 +71,9 @@ class Chain {
   canonical(credit: Address) {
     return [...this.txs.values()].filter((t) => t.block !== null && t.credit.toLowerCase() === credit.toLowerCase()).length;
   }
+  executed(value: bigint) {
+    return [...this.txs.values()].some((t) => t.block !== null && t.value === value);
+  }
   notFound = (name: string) => Object.assign(new Error(`${name}: not found`), { name });
   pub = {
     getTransactionCount: async () => this.nonce,
@@ -106,7 +109,7 @@ class Chain {
       }
       const credit = (a.data === buyData(USDC) ? USDC : DAI) as Address;
       this.mine();
-      this.txs.set(hash, { nonce: a.nonce, block: this.head, blockHash: this.hashes.get(this.head)!, to: a.to, credit, amount: 100n });
+      this.txs.set(hash, { nonce: a.nonce, block: this.head, blockHash: this.hashes.get(this.head)!, to: a.to, credit, amount: 100n, value: a.value ?? 0n });
       this.nonce++;
       this.balances.set(credit.toLowerCase(), this.bal(credit) + 100n);
       if (this.hideNext) {
@@ -160,41 +163,36 @@ afterEach(() => {
 });
 
 describe("TLA+ counterexamples (research/formal)", () => {
-  // Trace C1 (MC_full, NoActOnOrphan): hidden receipt -> re-send gets "nonce too low" -> landed + balance effect
-  // -> confirmed without ever recording receiptSeen; a later reorg orphans the swap, and because the orphan rule
-  // needs receiptSeen, the guard keeps it confirmed and lets the next intent take the freed nonce.
-  it.fails("C1: a reorg after a landed confirmation (receipt never visible) is detected before the next intent", async () => {
+  // Trace C1 (legacy model, MC_full_hidden_reorg, NoActOnOrphan / NoFalseConfirm): hidden receipt -> re-send gets
+  // "nonce too low" -> landed + balance effect -> confirmed without receiptSeen; a later reorg orphans the swap and,
+  // since the orphan rule needed receiptSeen, the guard kept it confirmed and let the next intent take the nonce.
+  it.fails("C1: a reorg after a landed confirmation (receipt never visible) blocks the next intent", async () => {
     const c = new Chain();
     c.hideNext = true;
-    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("EVIDENCE_PENDING:wait_and_recheck");
+    await outcome(send(c, USDC, 10n ** 17n));
     c.mine();
-    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("confirmed"); // landed path, receipt still hidden
-    const sale = latestIntent(1, SENDER)!;
-    expect(sale.landed).toBe(true);
-    expect(sale.receiptSeen).toBeNull();
+    const first = await outcome(send(c, USDC, 10n ** 17n)); // re-send: "nonce too low" -> landed
     c.reorg(101); // the swap's block is replaced; the swap is gone and not re-included
-    expect(c.canonical(USDC)).toBe(0);
-    // The property: the guard must refuse the next intent (the earlier one is orphaned).
+    expect(c.executed(10n ** 17n)).toBe(false);
     const next = await outcome(send(c, DAI, 2n * 10n ** 17n));
-    expect(next).toBe("EVIDENCE_UNRESOLVED:orphaned");
+    // The property: with the earlier intent confirmed but orphaned, nothing else is sent.
+    if (first === "confirmed") expect(next).toMatch(/^EVIDENCE_UNRESOLVED/);
+    expect(c.executed(2n * 10n ** 17n)).toBe(false);
   });
 
-  // Trace C2 (MC_full_shared, NoFalseConfirm): a dropped swap is graded resend_same_nonce, whose record state
-  // "dropped" does not hold the guard; a different intent crediting the same token takes the pinned nonce;
-  // the re-send of the first intent gets "nonce too low" -> landed, and the other intent's balance increase is
-  // read as its effect -> confirmed, although it never executed.
-  it.fails("C2: a dropped intent is not confirmed by another intent's execution at its nonce", async () => {
+  // Trace C2 (dropped, shared token, interleaving agent; reproduced here on the pre-hardening code): a dropped swap's
+  // record state "dropped" did not hold the guard; a different intent crediting the same token took the pinned nonce;
+  // the first intent's re-send got "nonce too low" -> landed, and the other intent's balance increase was read as its
+  // effect -> confirmed, although it never executed.
+  it.fails("C2: an intent is confirmed only if it executed", async () => {
     const c = new Chain();
     c.dropNext = true;
-    expect(await outcome(send(c, USDC, 10n ** 17n))).toBe("EVIDENCE_PENDING:resend_same_nonce");
-    expect(latestIntent(1, SENDER)!.state).toBe("dropped");
-    // A different intent (another amount, same output token) is not refused, pins nonce 7 and lands.
-    expect(await outcome(send(c, USDC, 3n * 10n ** 17n))).not.toMatch(/^EVIDENCE_UNRESOLVED/);
+    await outcome(send(c, USDC, 10n ** 17n)); // dropped -> resend_same_nonce
+    await outcome(send(c, USDC, 3n * 10n ** 17n)); // a different intent, same output token
     c.mine();
     c.wait(60_000);
-    const first = await outcome(send(c, USDC, 10n ** 17n)); // re-send: "nonce too low" -> landed
-    expect(c.canonical(USDC)).toBe(1); // only the other intent executed
-    // The property: the first intent must not be reported confirmed.
-    expect(first).not.toBe("confirmed");
+    const first = await outcome(send(c, USDC, 10n ** 17n));
+    // The property: confirmed implies the intent itself has a canonical execution.
+    if (first === "confirmed") expect(c.executed(10n ** 17n)).toBe(true);
   });
 });
