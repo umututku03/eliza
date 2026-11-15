@@ -84,3 +84,35 @@ gas and expected-loss caveats, and bounds on offline counterfactual replay.
 No draft/preregistration was rewritten and no new spend was approved or used.
 
 Authored-by: Codex (OpenAI).
+
+## Further recovery completion — Codex, 14 November 2026
+
+`ee869365ce` adds bounded offline replay over the thirty pilot episodes.
+Three recorded rpc_stale duplicate-sale decisions enter the actual fixed evidence
+module and reuse the original nonce; six changed-amount/expired-window negatives
+are rejected. The replay stops at the first changed send. It makes no claim
+about later agent behavior, completion, latency, loss or unique benefit beyond
+nonce pinning. All six normal-episode counterfactual false-hold outcomes remain
+indeterminate. Inputs and module hashes are retained locally in
+`test-results/pilot-replay-1114-02/`. No RPC/model calls were made by the replay.
+
+`193298cccf` makes evidence attribution read the trusted structured snapshot.
+A pending ActionResult with success=false is not a definitive chain failure;
+pre-fault observations inside a turn that spans the fault are skipped. Synthetic
+positive/negative cases passed, and per-episode JSON for all thirty old pilot
+episodes remains byte-for-byte unchanged.
+
+`8177e51620` adds inclusive descriptive quartiles, IQR and n-defined/n-total to
+scorecards, plus BDT status and limit-censor counts. The same helper checks fail
+on the old implementation (missing distribution) and pass on the new one:
+empty, singleton, even and odd samples; missing observations excluded. JSON and
+Markdown over all three pilot cohorts pass (thirty episodes). Existing median
+fields are retained; unknown/censored times are not imputed as zero. Local exact
+outputs: `test-results/scorecard-quartiles-1114/`.
+
+The main-study draft now has an appended readiness addendum. Its original text
+and the frozen pilot remain intact. Missing named baselines, the reinclusion
+fault, the next-send trigger and the agent2 adapter are explicitly open. The
+main study is not falsely labelled frozen or approved for spending.
+
+Authored-by: Codex (OpenAI).
