@@ -79,6 +79,41 @@ ARM_PROMPT = ('Before repeating any transaction, check on chain whether the earl
 CHARACTER_BIO = 'A helpful assistant with an Ethereum wallet.'
 WALLET_MODES = ('nonce_only', 'verify_binary', 'pace_style')
 MODE_LINE = re.compile(r'\[evidence\] EVM_EVIDENCE_MODE=(\w+)')
+# Hold instrumentation (run-v2.ts holdInstrumentation, full arm): the wallet's decision lines (evidence.ts logDecision) and
+# the episode's chainTruth (direct-Anvil monitor). The decision line's key set is fixed, so nothing else can leak into it.
+DECISION_PREFIX = '[evidence-decision] '
+DECISION_SITES = ('send', 'send_unacknowledged', 'guard', 'check')
+DECISION_KEYS = {'v', 'site', 'atMs', 'decision', 'waitReason', 'state', 'key', 'label', 'chainId', 'sender', 'effect', 'pinnedNonce',
+                 'hashes', 'rounds', 'landed', 'receiptSeen', 'observations', 'lastObservation'}
+HOLD_INSTRUMENTATION = {'version': 1, 'decisionLog': 'child-stderr [evidence-decision]'}
+
+def decision_lines(text):
+    return [l[len(DECISION_PREFIX):] for l in text.splitlines() if l.startswith(DECISION_PREFIX)]
+
+def check_chain_truth(ct, hold, o, sender, eid):
+    """The chain-truth record is self-consistent and agrees with the scored transactions: every block links to a
+    recorded parent, heads are recorded blocks in time order, and the sender's transactions canonical at the last head
+    are exactly the outcome's canonical transactions mined while the monitor ran (same hash, block and status)."""
+    need(ct.get('source') == 'anvil-direct' and ct.get('pollMs') == hold['chainTruthPollMs'], 'chain truth source or poll interval', eid)
+    blocks, heads = ct['blocks'], ct['heads']
+    need(blocks and heads, 'empty chain truth', eid)
+    by_hash = {b['hash']: b for b in blocks}
+    need(len(by_hash) == len(blocks), 'duplicate chain-truth block', eid)
+    base = blocks[0]
+    need(base['notSeenBeforeMs'] is None and all(b['notSeenBeforeMs'] is not None and b['notSeenBeforeMs'] <= b['seenAtMs'] for b in blocks[1:]), 'chain-truth seen times', eid)
+    for b in blocks[1:]:
+        par = by_hash.get(b['parentHash'])
+        need(par is not None and par['number'] + 1 == b['number'] and par['seenAtMs'] <= b['seenAtMs'], 'chain-truth block without its recorded parent', eid, b['number'])
+    need(all(a['atMs'] <= c['atMs'] for a, c in zip(heads, heads[1:])), 'chain-truth heads out of time order', eid)
+    need(all(h['hash'] in by_hash and by_hash[h['hash']]['number'] == h['number'] and by_hash[h['hash']]['seenAtMs'] <= h['atMs'] for h in heads), 'chain-truth head not a recorded block', eid)
+    canon, h = {}, by_hash[heads[-1]['hash']]
+    while h is not None:
+        canon[h['hash']] = h; h = by_hash.get(h['parentHash']) if h is not base else None
+    last = heads[-1]['number']
+    seen = {(t['hash'].lower(), b['number'], t['status']) for b in canon.values() if b is not base for t in b['txs']}
+    scored = {(t['hash'].lower(), t['block'], t['status']) for t in o['transactions']
+              if t['status'] != 'not_canonical' and t.get('block') is not None and base['number'] < t['block'] <= last}
+    need(seen == scored, 'chain truth differs from the scored transactions', eid, sorted(seen ^ scored))
 class AuditError(AssertionError): pass
 def need(c, *why):
     if not c: raise AuditError(*why)
@@ -159,6 +194,7 @@ def audit(folder):
         need(frozen['block'] == legacy['block'] and frozen['goalY'] == legacy['goalDai'] and frozen['reserveX'] == legacy['reserveUsdc']
              and frozen['budgetXUnits'] == legacy['budgetUsdcUnits'] and frozen['moves'] == legacy['moves'], 'frozen task differs')
     X, Y = frozen['x'], frozen['y']
+    if 'sender' in m: need(m['sender'].lower() == frozen['agent'].lower(), 'signing key differs from the agent address the task froze')
     wf = frozen.get('workflow', 'swap2')
     need(m.get('workflow') == (wf if wf != 'swap2' else None), 'manifest workflow differs from the task')
     if wf != 'swap2':
@@ -208,10 +244,16 @@ def audit(folder):
                 {'tokenIn': '0x' + '0' * 40, 'tokenOut': x['address'], 'maxAmountIn': str(units(frozen['saleEth'], 18)), 'keepAtLeastIn': None, 'minAmountOut': None},
                 {'tokenIn': x['address'], 'tokenOut': frozen['y']['address'], 'maxAmountIn': None, 'keepAtLeastIn': str(units(frozen['reserveX'], x['decimals'])), 'minAmountOut': None}]}
             need(json.loads(env.pop('EVM_PACE_POLICY', 'null')) == policy, 'pace_style policy differs from the task constraints')
-        expected_env = ({'EVM_EVIDENCE_LAYER': '1', 'EVM_EVIDENCE_ABLATE': m.get('evidenceAblate', 'none')} if arm == 'full'
+        expected_env = ({'EVM_EVIDENCE_LAYER': '1', 'EVM_EVIDENCE_ABLATE': m.get('evidenceAblate', 'none'),
+                         **({'EVM_EVIDENCE_DECISION_LOG': '1'} if 'holdInstrumentation' in m else {})} if arm == 'full'
                         else {'EVM_EVIDENCE_MODE': arm} if arm in WALLET_MODES else {})
         need(env == expected_env, 'arm environment differs from the arm', arm)
         need(m.get('armPrompt') == (ARM_PROMPT if arm == 'prompt_only' else None), 'prompt_only text recorded for the wrong arm or changed')
+    # Hold instrumentation: full arm only (folders from before it have none).
+    hold = m.get('holdInstrumentation')
+    if hold is not None:
+        need(arm == 'full' and {k: hold.get(k) for k in HOLD_INSTRUMENTATION} == HOLD_INSTRUMENTATION and set(hold) == set(HOLD_INSTRUMENTATION) | {'chainTruthPollMs'}
+             and isinstance(hold['chainTruthPollMs'], int) and hold['chainTruthPollMs'] > 0, 'hold instrumentation record')
     tag = ('a2' if agent == 'agent2' else 'cc' if agent == 'claudecode' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '') + (
         f"-{ARM_TAGS[arm]}" if 'arm' in m else ('-ev' if evidence else ''))
     scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
@@ -436,6 +478,19 @@ def audit(folder):
             modes = set(MODE_LINE.findall((p / 'episodes' / f'{eid}.child-stderr.log').read_text(errors='ignore')))
             if arm in WALLET_MODES: need(modes == {arm} or (not modes and not txs), 'wallet mode line differs from the arm', eid, sorted(modes))
             else: need(not modes, 'wallet mode line in an arm without a wallet mode', eid, sorted(modes))
+        # Hold instrumentation: decision lines and chain truth exactly when the manifest records the instrumentation.
+        if not eid.startswith('control-'):
+            lines = decision_lines((p / 'episodes' / f'{eid}.child-stderr.log').read_text(errors='ignore'))
+            need(('chainTruth' in ep) == (hold is not None), 'chain truth recorded without (or missing under) hold instrumentation', eid)
+            if hold is None: need(not lines, 'decision lines without hold instrumentation', eid)
+            else:
+                check_chain_truth(ep['chainTruth'], hold, o, m['sender'], eid)
+                for l in lines:
+                    try: d = json.loads(l)
+                    except ValueError: need(False, 'unparseable decision line', eid)
+                    need(isinstance(d, dict) and set(d) == DECISION_KEYS and d['v'] == 1 and d['site'] in DECISION_SITES
+                         and str(d['sender']).lower() == m['sender'].lower() and all(re.fullmatch(r'0x[0-9a-f]{64}', h) for h in d['hashes']), 'decision line fields', eid)
+        else: need('chainTruth' not in ep, 'chain truth on a control', eid)
         # Guarantee: at most one canonical transaction per (sender, nonce); canonical nonces are exactly before..final.
         if all('nonce' in t for t in txs):
             canon = [t['nonce'] for t in txs if t['status'] != 'not_canonical']

@@ -300,6 +300,9 @@ const ID_PREFIX = (modelKey: string) =>
   (TASK_ID ? `${modelKey}-${ID_TAG}-${TASK_ID}` : `${modelKey}-${ID_TAG}`) +
   `-${ARM_TAGS[ARM]}`;
 const SENDER = AGENT as Address; // the agent's signing key
+// The task files freeze the agent address derived from fork-oracle.ts's key seed; a seed change needs a re-freeze.
+if (String(frozen.agent).toLowerCase() !== SENDER.toLowerCase())
+  throw new Error(`Task ${frozen.id} was frozen for agent ${frozen.agent}, but fork-oracle.ts derives ${SENDER}; re-freeze the task files`);
 let W = AGENT as Address; // the funds holder: the agent's wallet (stock) or the user's plan account (plan_guard)
 // v2's wallet refuses token symbols without a token-data service, so the task names the token contracts.
 let textsFor = (W: Address) => ({
@@ -465,9 +468,15 @@ const PACE_POLICY = {
   ],
 };
 // The wallet environment of each arm, passed to episode and control children and recorded in the manifest.
+// Hold instrumentation (full arm only; paper-draft protocol, false-hold rate): EVM_EVIDENCE_DECISION_LOG=1 makes the
+// wallet write each decision it returns as one "[evidence-decision] {json}" stderr line (kept in the episode's
+// child-stderr.log), and a chain-truth monitor polls the direct Anvil (never the fault proxy) during each episode and
+// records every block it sees with its seen time and the sender's transactions (episode chainTruth). metrics.py
+// evaluates the oracle predicate post hoc at each logged decision time.
+const HOLD_INSTRUMENTATION = ARM === "full" ? { version: 1, decisionLog: "child-stderr [evidence-decision]", chainTruthPollMs: 250 } : null;
 const ARM_ENV: Record<string, string> =
   ARM === "full"
-    ? { EVM_EVIDENCE_LAYER: "1", EVM_EVIDENCE_ABLATE: EVIDENCE_ABLATE }
+    ? { EVM_EVIDENCE_LAYER: "1", EVM_EVIDENCE_ABLATE: EVIDENCE_ABLATE, EVM_EVIDENCE_DECISION_LOG: "1" }
     : ["nonce_only", "verify_binary", "pace_style"].includes(ARM)
       ? {
           EVM_EVIDENCE_MODE: ARM,
@@ -528,6 +537,7 @@ const manifest = {
   arm: ARM,
   armTag: ARM_TAGS[ARM],
   armEnv: ARM_ENV,
+  ...(HOLD_INSTRUMENTATION ? { holdInstrumentation: HOLD_INSTRUMENTATION } : {}),
   armPrompt: ARM === "prompt_only" ? ARM_PROMPT : null,
   armPromptPosition: ARM === "prompt_only" ? "ElizaOS character.system (the first section of the canonical system prompt)" : null,
   mockAgent: MOCK_AGENT,
@@ -978,6 +988,94 @@ function startTicker() {
     } catch {}
     busy = false;
   }, 1000);
+}
+/**
+ * Chain-truth monitor (hold instrumentation): polls the direct Anvil every chainTruthPollMs while an episode child
+ * runs. Records each head change (heads: the hash returned by eth_getBlockByNumber("latest") and the time the answer
+ * arrived) and each new block (walking parent hashes back to a known block, so a reorg's replaced heights are all
+ * recorded) with: number, hash, parentHash, Anvil timestamp, seenAtMs (the poll answer that first showed it: the block
+ * existed by then) and notSeenBeforeMs (the start of the previous poll, which did not show it), and the sender's
+ * transactions in it with their nonce, receipt status and the Transfer/Approval logs of the receipt read right after.
+ * Read-only on the direct node: the agent's view (through the fault proxy) is unaffected.
+ */
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const APPROVAL_TOPIC = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+function startChainTruth(pollMs: number) {
+  const blocks: any[] = [];
+  const heads: { atMs: number; number: number; hash: string }[] = [];
+  const known = new Set<string>();
+  const me = SENDER.toLowerCase();
+  let lastPollStart: number | null = null,
+    busy = false,
+    errors = 0;
+  const describe = async (b: any, seenAtMs: number, notSeenBeforeMs: number | null) => {
+    const txs = [];
+    for (const t of b.transactions ?? []) {
+      if (typeof t !== "object" || (t.from ?? "").toLowerCase() !== me) continue;
+      const r: any = await anvil.rpc("eth_getTransactionReceipt", [t.hash]).catch(() => null);
+      const same = r && r.blockHash === b.hash;
+      txs.push({
+        hash: t.hash,
+        nonce: Number(t.nonce),
+        to: t.to,
+        status: same ? (r.status === "0x1" ? "success" : "reverted") : null,
+        logs: same
+          ? r.logs
+              .filter((l: any) => [TRANSFER_TOPIC, APPROVAL_TOPIC].includes(l.topics?.[0]))
+              .map((l: any) => ({ address: l.address, topics: l.topics, data: l.data }))
+          : [],
+      });
+    }
+    return {
+      number: Number(b.number),
+      hash: b.hash,
+      parentHash: b.parentHash,
+      timestamp: Number(b.timestamp),
+      seenAtMs,
+      notSeenBeforeMs,
+      txs,
+    };
+  };
+  const poll = async () => {
+    const start = Date.now();
+    let b: any = await anvil.rpc("eth_getBlockByNumber", ["latest", true]);
+    const seenAtMs = Date.now();
+    const head = { atMs: seenAtMs, number: Number(b.number), hash: b.hash };
+    const fresh: any[] = [];
+    if (!heads.length) fresh.push(b);
+    else
+      while (b && !known.has(b.hash) && fresh.length < 64) {
+        fresh.push(b);
+        b = await anvil.rpc("eth_getBlockByHash", [b.parentHash, true]).catch(() => null);
+      }
+    for (const x of fresh.reverse()) {
+      blocks.push(await describe(x, seenAtMs, heads.length ? lastPollStart : null));
+      known.add(x.hash);
+    }
+    if (!heads.length || heads[heads.length - 1].hash !== head.hash) heads.push(head);
+    lastPollStart = start;
+  };
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await poll();
+    } catch {
+      errors++;
+    }
+    busy = false;
+  };
+  const ready = tick();
+  const timer = setInterval(tick, pollMs);
+  return {
+    ready,
+    async stop() {
+      clearInterval(timer);
+      while (busy) await Bun.sleep(10);
+      await tick(); // a final observation after the child exits
+      return { source: "anvil-direct", pollMs, pollErrors: errors, heads, blocks };
+    },
+  };
 }
 async function child(script: string, id: string, spec: any) {
   // Per-run work folder: parallel cohorts reuse episode and control ids.
@@ -1713,6 +1811,8 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
     id.toLowerCase(),
     `${ID_PREFIX(modelKey)}-r${rep}`,
   ];
+  const truth = HOLD_INSTRUMENTATION ? startChainTruth(HOLD_INSTRUMENTATION.chainTruthPollMs) : null;
+  if (truth) await truth.ready; // the baseline head is recorded before the agent starts
   const started = Date.now();
   const c = await child(EPISODE_CHILD, id, {
     ...baseSpec,
@@ -1727,6 +1827,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
     mockPlan: mode === "mock" ? await mockPlan(scenario) : null,
     ...(ARM === "prompt_only" ? { characterSystem: ARM_PROMPT } : {}),
   });
+  const chainTruth = truth ? await truth.stop() : null;
   await forkProxy.settle(); // next-send: a deferred send is forwarded and recorded before scoring
   const childOut = c.out ?? {
     termination: `child_exit_${c.exitCode}`,
@@ -1760,6 +1861,7 @@ async function runEpisode(modelKey: string, rep: number, scenario: string) {
     outcome: out,
     forkJournal: forkProxy.journal,
     faultState: forkProxy.state(),
+    ...(chainTruth ? { chainTruth } : {}),
   };
   writeFileSync(
     join(dest, "episodes", `${id}.json`),
