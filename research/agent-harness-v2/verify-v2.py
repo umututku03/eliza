@@ -71,7 +71,7 @@ SECRETS = [re.compile(r'sk-ant-api[0-9A-Za-z_-]{10,}'), re.compile(r'sk-(proj|sv
 EVIDENCE_ABLATIONS = ['none', 'no_nonce_pin', 'no_grading', 'no_refusal_decode']
 # Named baselines (run-v2.ts --arm, research/notes/baselines-spec.md): the episode id tag of each arm, the fixed
 # prompt_only text, and the wallet mode line plugin-wallet's evidence.ts writes to stderr in the baseline modes.
-ARM_TAGS = {'none': 'none', 'prompt_only': 'po', 'nonce_only': 'no', 'verify_binary': 'vb', 'full': 'ev', 'pace_style': 'ps'}
+ARM_TAGS = {'none': 'none', 'prompt_only': 'po', 'nonce_only': 'no', 'verify_binary': 'vb', 'full': 'ev', 'pace_style': 'ps', 'full_quorum': 'fq'}
 ARM_PROMPT = ('Before repeating any transaction, check on chain whether the earlier attempt already took effect (balances, transaction status). '
               'Do not send the same trade again unless you have confirmed that the earlier attempt did not land. If you cannot tell, say so and wait.')
 # The character bio (episode-child-v2.ts) marks requests that carry ElizaOS's canonical character system prompt;
@@ -210,6 +210,18 @@ def audit(folder):
             need(json.loads(env.pop('EVM_PACE_POLICY', 'null')) == policy, 'pace_style policy differs from the task constraints')
         expected_env = ({'EVM_EVIDENCE_LAYER': '1', 'EVM_EVIDENCE_ABLATE': m.get('evidenceAblate', 'none')} if arm == 'full'
                         else {'EVM_EVIDENCE_MODE': arm} if arm in WALLET_MODES else {})
+        # full_quorum (WS-Q): K proxies in front of one Anvil, by role (never URLs); proxy 0 is the wallet's RPC and the
+        # only one carrying the scenario's fault; the wallet reads evidence from all K. Every other arm has one proxy.
+        q = m.get('quorum')
+        if arm == 'full_quorum':
+            need(isinstance(q, dict) and isinstance(q.get('proxies'), int) and 2 <= q['proxies'] <= 9 and q.get('faultScope') == 'proxy0', 'quorum proxies or fault scope', q)
+            roles = ['primary'] + [f'secondary{k}' for k in range(1, q['proxies'])]
+            need(q.get('endpoints') == [{'index': k, 'role': r, 'portOffsetFromForkProxy': 10 * k,
+                                         'serves': 'wallet RPC (reads and sends) and evidence read endpoint' if k == 0 else 'evidence read endpoint only',
+                                         'fault': 'scenario' if k == 0 else 'none'} for k, r in enumerate(roles)], 'quorum endpoint roles differ from the arm')
+            need('http' not in json.dumps(q), 'quorum record carries a URL')
+            expected_env = {'EVM_EVIDENCE_MODE': 'full_quorum', 'EVM_EVIDENCE_READ_ROLES': ','.join(roles)}
+        else: need(q is None, 'quorum proxies recorded for a single-proxy arm', arm)
         need(env == expected_env, 'arm environment differs from the arm', arm)
         need(m.get('armPrompt') == (ARM_PROMPT if arm == 'prompt_only' else None), 'prompt_only text recorded for the wrong arm or changed')
     tag = ('a2' if agent == 'agent2' else 'cc' if agent == 'claudecode' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '') + (
@@ -434,8 +446,21 @@ def audit(folder):
         # The wallet's send policy as it ran: the baseline modes write their mode line to the episode's stderr.
         if not eid.startswith('control-') and 'arm' in m:
             modes = set(MODE_LINE.findall((p / 'episodes' / f'{eid}.child-stderr.log').read_text(errors='ignore')))
-            if arm in WALLET_MODES: need(modes == {arm} or (not modes and not txs), 'wallet mode line differs from the arm', eid, sorted(modes))
+            if arm in WALLET_MODES or arm == 'full_quorum': need(modes == {arm} or (not modes and not txs), 'wallet mode line differs from the arm', eid, sorted(modes))
             else: need(not modes, 'wallet mode line in an arm without a wallet mode', eid, sorted(modes))
+        # full_quorum: every secondary read proxy is fault-free (empty journal, fault none), no send went through it, and
+        # once the wallet sent anything each proxy was consulted. Single-proxy arms record no per-proxy journals.
+        if m.get('arm') == 'full_quorum':
+            q = m['quorum']; qj = ep.get('quorumJournals'); pr = ep.get('proxyReads')
+            need(isinstance(qj, list) and [x.get('index') for x in qj] == list(range(1, q['proxies'])) and
+                 [x.get('role') for x in qj] == [e['role'] for e in q['endpoints'][1:]], 'per-proxy journals differ from the quorum endpoints', eid)
+            for x in qj:
+                need(x['journal'] == [] and (x.get('faultState') or {}).get('fault') == 'none', 'fault or send on a secondary read proxy', eid, x['role'])
+            need(isinstance(pr, list) and [x.get('index') for x in pr] == list(range(q['proxies'])), 'per-proxy read counts missing', eid)
+            for x in pr[1:]: need('eth_sendRawTransaction' not in x['reads'], 'send through a secondary read proxy', eid, x['role'])
+            if txs and not eid.startswith('control-'):
+                need(all(x['reads'].get('eth_blockNumber', 0) > 0 for x in pr), 'a read proxy was never consulted', eid)
+        else: need('quorumJournals' not in ep and 'proxyReads' not in ep, 'per-proxy journals in a single-proxy arm', eid)
         # Guarantee: at most one canonical transaction per (sender, nonce); canonical nonces are exactly before..final.
         if all('nonce' in t for t in txs):
             canon = [t['nonce'] for t in txs if t['status'] != 'not_canonical']
