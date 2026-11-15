@@ -1,0 +1,11 @@
+Invariant NoFalseConfirm is violated.
+ 1 Initial predicate chain=<<>> view=<<>> pool={} txs={} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[]
+ 2 FullRequest  chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}sent/wait r1]
+ 3 Poll         chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> TRUE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 4 Poll         chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 5 MineTx       chain=<<1>> view=<<1>> pool={} txs={t1=i2@n0} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 6 FullRequest  chain=<<1>> view=<<1>> pool={} txs={t1=i2@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r2 landed]
+ 7 Hide         chain=<<1>> view=<<1>> pool={} txs={t1=i2@n0} hidden={1} pc=[k |-> "poll", r |-> 1, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r2 landed]
+ 8 Poll         chain=<<1>> view=<<1>> pool={} txs={t1=i2@n0} hidden={1} pc=[k |-> "idle"] done=<<FALSE, TRUE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}confirmed/confirmed r2 landed]
+ 9 Reorg        chain=<<2>> view=<<2>> pool={} txs={t1=i2@n0} hidden={1} pc=[k |-> "idle"] done=<<FALSE, TRUE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}confirmed/confirmed r2 landed]
+10 TxStatus     chain=<<2>> view=<<2>> pool={} txs={t1=i2@n0} hidden={1} pc=[k |-> "idle"] done=<<FALSE, TRUE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}confirmed/confirmed r3 landed]

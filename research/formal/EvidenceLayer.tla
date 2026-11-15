@@ -130,11 +130,12 @@ Observe(r, V, late, mid) ==
       head == Len(V)
       conf == IF incl > 0 THEN head - incl + 1 ELSE 0
       eff  == r.before >= 0 /\ Bal(V, Tok(r.intent)) > r.before
-      orph == ~rcpt /\ r.rs # NoRS /\ r.rs.h <= Len(V) /\ V[r.rs.h] # r.rs.b
+      orph == r.rs # NoRS /\ r.rs.h <= Len(V) /\ V[r.rs.h] # r.rs.b   \* positive reorg evidence
       chg  == r.hsHead # head
   IN [rcpt |-> rcpt, known |-> known, incl |-> incl, conf |-> conf, eff |-> eff, orph |-> orph,
       nonceLatest |-> NonceOf(V),
-      rs      |-> IF rcpt THEN [h |-> incl, b |-> V[incl]] ELSE r.rs,
+      \* anchor: last canonical inclusion (receipt or tx lookup); kept while an orphan is below K on its new branch
+      rs      |-> IF incl > 0 /\ (~orph \/ (conf >= K /\ eff)) THEN [h |-> incl, b |-> V[incl]] ELSE r.rs,
       hsHead  |-> head,
       hsOld   |-> IF chg THEN FALSE ELSE IF late THEN (r.hsOld \/ ~r.hsFresh) ELSE r.hsOld,
       hsFresh |-> IF chg THEN mid ELSE r.hsFresh,
@@ -143,15 +144,17 @@ Observe(r, V, late, mid) ==
 WithObs(r, o) ==
   [r EXCEPT !.rs = o.rs, !.hsHead = o.hsHead, !.hsOld = o.hsOld, !.hsFresh = o.hsFresh,
             !.sendOld = o.sendOld,
+            !.landed = IF o.orph THEN FALSE ELSE r.landed,   \* orphan evidence invalidates landed evidence
+            !.rep = IF o.orph THEN FALSE ELSE r.rep,         \* ... and a reported completion
             !.lo = [ex |-> TRUE, canon |-> o.incl > 0, confOK |-> o.conf >= K, effect |-> o.eff]]
 
 \* decide(), evidence.ts L372-393 (no reverts in the model: the "failed" row is unreachable)
 Decide(r, o) ==
   LET inclState == IF o.incl > 0 THEN "included" ELSE IF o.known THEN "pending" ELSE "sent"
       pendState == IF inclState = "sent" THEN "pending" ELSE inclState
-  IN IF ~o.rcpt /\ r.rs # NoRS /\ o.orph /\ ~o.known THEN [d |-> "orphaned", st |-> "orphaned"]
+  IN IF o.orph /\ ~(o.incl > 0) THEN [d |-> "orphaned", st |-> "orphaned"]
      ELSE IF r.landed THEN
-        IF o.eff /\ r.hashes # {} THEN [d |-> "confirmed", st |-> "confirmed"]
+        IF o.incl > 0 /\ o.conf >= K /\ o.eff /\ r.hashes # {} THEN [d |-> "confirmed", st |-> "confirmed"]
         ELSE [d |-> "landed", st |-> pendState]
      ELSE IF o.rcpt THEN
         IF o.conf >= K /\ o.eff THEN [d |-> "confirmed", st |-> "confirmed"]
@@ -162,7 +165,7 @@ Decide(r, o) ==
      ELSE [d |-> "wait", st |-> "sent"]
 
 IsUnresolved(r) ==
-  \/ r.state \in {"sent", "pending", "orphaned"}
+  \/ r.state \in {"sent", "pending", "dropped", "orphaned"}
   \/ r.state = "included" /\ (~r.lo.ex \/ ~r.lo.canon \/ ~r.lo.confOK \/ ~r.lo.effect)
 
 CloseRound(r) ==
@@ -174,26 +177,35 @@ CheckOnce(r, V, count) ==
       o  == Observe(r0, V, FALSE, FALSE)
       r1 == WithObs(r0, o)
       d  == Decide(r1, o)
-  IN IF r.state = "confirmed" /\ d.d # "orphaned" THEN r1
-     ELSE LET r2 == [r1 EXCEPT !.decision = d.d, !.state = d.st]
-          IN IF count THEN CloseRound(r2) ELSE r2
+      r3 == IF r.state = "confirmed" /\ ~o.orph THEN r1
+            ELSE LET r2 == [r1 EXCEPT !.decision = d.d, !.state = d.st]
+                 IN IF count THEN CloseRound(r2) ELSE r2
+  IN IF count /\ r3.state \in {"confirmed", "failed"} THEN [r3 EXCEPT !.rep = TRUE] ELSE r3
 
-RECURSIVE GuardFold(_, _, _, _)
-GuardFold(L, idx, i, V) ==
+RECURSIVE GuardFold(_, _, _, _, _)
+GuardFold(L, idx, i, V, ri) ==
   IF idx > Len(L) THEN [L |-> L, refused |-> FALSE]
-  ELSE IF L[idx].intent = i \/ ~(IsUnresolved(L[idx]) \/ L[idx].state = "confirmed")
-       THEN GuardFold(L, idx + 1, i, V)
+  ELSE IF \/ L[idx].intent = i
+          \/ ri # 0 /\ L[ri].pinned < L[idx].pinned     \* restoring a lower nonce cannot duplicate a later one
+          \/ ~(IsUnresolved(L[idx]) \/ L[idx].state \in {"confirmed", "included"})
+       THEN GuardFold(L, idx + 1, i, V, ri)
        ELSE LET r2 == CheckOnce(L[idx], V, FALSE)
                 L2 == [L EXCEPT ![idx] = r2]
             IN IF IsUnresolved(r2) THEN [L |-> L2, refused |-> TRUE]
-               ELSE GuardFold(L2, idx + 1, i, V)
+               ELSE GuardFold(L2, idx + 1, i, V, ri)
 
 FindOpenFull(L, i) ==
-  LET S == {k \in DOMAIN L : L[k].intent = i /\ L[k].state \notin {"confirmed", "failed"}}
+  LET S == {k \in DOMAIN L : L[k].intent = i /\ L[k].state # "failed" /\ (L[k].state # "confirmed" \/ ~L[k].rep)}
   IN IF S = {} THEN 0 ELSE Max(S)
 FindOpenBase(L, i) ==
   LET S == {k \in DOMAIN L : L[k].intent = i /\ L[k].reported = "none"}
   IN IF S = {} THEN 0 ELSE Max(S)
+\* guard(): re-check the latest same-key record if confirmed (a reorg resumes its nonce), then the others
+GuardFull(L, i, V) ==
+  LET sk   == {k \in DOMAIN L : L[k].intent = i}
+      prev == IF sk = {} THEN 0 ELSE Max(sk)
+      L1   == IF prev # 0 /\ L[prev].state = "confirmed" THEN [L EXCEPT ![prev] = CheckOnce(L[prev], V, FALSE)] ELSE L
+  IN GuardFold(L1, 1, i, V, FindOpenFull(L1, i))
 LatestIntent(L) ==
   LET U == {k \in DOMAIN L : IsUnresolved(L[k])} IN IF U # {} THEN Max(U) ELSE Len(L)
 
@@ -201,7 +213,7 @@ NewRec(i, n, before) ==
   [intent |-> i, pinned |-> n, hashes |-> {}, state |-> "sent", decision |-> "wait",
    rounds |-> 0, sendOld |-> FALSE, hsHead |-> -1, hsOld |-> FALSE, hsFresh |-> FALSE,
    rs |-> NoRS, landed |-> FALSE, lo |-> NoObs, before |-> before,
-   reported |-> "none", consumed |-> FALSE]
+   reported |-> "none", consumed |-> FALSE, rep |-> FALSE]
 
 \* What the wallet currently claims about intent j (used for "acting on" another intent)
 Believed(j) ==
@@ -222,6 +234,9 @@ Outcomes(n, bumped, own) ==
           ELSE IF pool[n] \in own THEN acc
           ELSE acc \cup {"underpriced"}
 
+\* The record's own transactions at nonce n, acknowledged or not (a lost acknowledgement leaves no hash, but the
+\* stored request's fees, bumped on every re-send, still out-bid it).
+Own(i, n, H) == H \cup {t \in 1..Len(txs) : txs[t].intent = i /\ txs[t].nonce = n}
 NewTx == Len(txs) + 1
 ApplySend(i, n, res) ==
   IF res \in {"ack", "lost"}
@@ -270,7 +285,7 @@ FullResend(i, L, oi, extra) ==
   LET r == L[oi]
       n == r.pinned
       reopen == r.state \in {"orphaned", "dropped"}
-  IN \E res \in Outcomes(n, TRUE, r.hashes) :
+  IN \E res \in Outcomes(n, TRUE, Own(i, n, r.hashes)) :
        /\ ApplySend(i, n, res)
        /\ IF res = "lost"
           THEN /\ ledger' = L /\ pc' = pc        \* classifySendError = "error": rethrown, no round
@@ -287,7 +302,7 @@ FullResend(i, L, oi, extra) ==
 
 FullRequest(i) ==
   /\ Policy = "full" /\ pc.k = "idle" /\ AgentMay(i)
-  /\ LET g == GuardFold(ledger, 1, i, view) IN
+  /\ LET g == GuardFull(ledger, i, view) IN
      IF g.refused
      THEN /\ ledger' = g.L                       \* EVIDENCE_UNRESOLVED; not counted as a request
           /\ UNCHANGED <<chainVars, pc, agentVars, falseConfirm, actOnOrphan>>
@@ -309,7 +324,9 @@ Poll ==
            d  == Decide(r1, o)
            r2 == [r1 EXCEPT !.decision = d.d, !.state = d.st]
            ends == late \/ d.d \in Terminal
-           r3 == IF ends THEN CloseRound(r2) ELSE r2
+           r3 == IF ~ends THEN r2
+                 ELSE LET c == CloseRound(r2) IN
+                      IF c.decision \in {"confirmed", "failed"} THEN [c EXCEPT !.rep = TRUE] ELSE c
        IN /\ ledger' = [ledger EXCEPT ![pc.r] = r3]
           /\ IF ends
              THEN /\ pc' = [k |-> "idle"]
@@ -352,7 +369,7 @@ NORequest(i) ==
          extra == OtherBelievedOrphan(i, V)
      IN IF oi # 0
         THEN LET r == L[oi] IN
-             \E res \in Outcomes(r.pinned, TRUE, r.hashes) :
+             \E res \in Outcomes(r.pinned, TRUE, Own(i, r.pinned, r.hashes)) :
                /\ ApplySend(i, r.pinned, res)
                /\ CASE res = "ack" ->
                          /\ ledger' = [L EXCEPT ![oi].hashes = @ \cup {NewTx}]
@@ -572,5 +589,40 @@ EventuallyResolved == \A i \in Intents : <>Resolved(i)
 \* Liveness to the correct state: eventually, forever, every intent the agent was told is
 \* confirmed has exactly one canonical execution.
 EventuallyCorrect == <>[](\A i \in Intents : done[i] => Executions(i) = 1)
+
+
+-----------------------------------------------------------------------------
+(* The fairness of LiveSpec written as []<>(~En \/ <<A>>_vars), with En an explicit state predicate equal to *)
+(* ENABLED <<A>>_vars (checked by the invariant EnabledMatches in MC_full_enabled_check.cfg). TLC evaluates     *)
+(* ENABLED of these actions very slowly (about 10 states/s); explicit predicates avoid that. Full policy only. *)
+EnMineTx    == NonceOf(chain) \in Nonces /\ pool[NonceOf(chain)] # 0 /\ nextBlk <= MaxBlocks
+EnMineEmpty == nextBlk <= MaxBlocks /\ (PriorityMining => ~(NonceOf(chain) \in Nonces /\ pool[NonceOf(chain)] # 0))
+EnViewSync  == view # chain
+EnUnhide    == hidden # {}
+EnPoll      == pc.k = "poll"
+EnTime      == Policy = "full" /\ pc.k = "idle" /\
+               \E k \in DOMAIN ledger : ~ledger[k].sendOld \/ (ledger[k].hsHead # -1 /\ ~ledger[k].hsOld) \/ ledger[k].hsFresh
+EnReq(i)    == Policy = "full" /\ pc.k = "idle" /\ AgentMay(i) /\
+               LET g == GuardFull(ledger, i, view) IN
+               IF g.refused THEN g.L # ledger
+               ELSE LET oi == FindOpenFull(g.L, i) IN
+                    IF oi = 0 THEN Len(g.L) < MaxRecs /\ Outcomes(PendingCount(view), FALSE, {}) # {}
+                    ELSE Outcomes(g.L[oi].pinned, TRUE, Own(i, g.L[oi].pinned, g.L[oi].hashes)) # {}
+\* []<>(~En) \/ []<><<A>>_vars  is  []<>(~En \/ <<A>>_vars), i.e. WF_vars(A) when En = ENABLED <<A>>_vars
+FairnessFull ==
+  /\ ([]<>(~EnMineTx) \/ []<><<MineTx>>_vars)
+  /\ ([]<>(~EnMineEmpty) \/ []<><<MineEmpty>>_vars)
+  /\ ([]<>(~EnViewSync) \/ []<><<ViewSync>>_vars)
+  /\ ([]<>(~EnUnhide) \/ []<><<Unhide>>_vars)
+  /\ ([]<>(~EnPoll) \/ []<><<Poll>>_vars)
+  /\ ([]<>(~EnTime) \/ []<><<TimePasses>>_vars)
+  /\ \A i \in Intents : ([]<>(~EnReq(i)) \/ []<><<FullRequest(i)>>_vars)
+LiveSpecFull == Spec /\ FairnessFull
+
+EnabledMatches ==
+  /\ EnMineTx = ENABLED <<MineTx>>_vars /\ EnMineEmpty = ENABLED <<MineEmpty>>_vars
+  /\ EnViewSync = ENABLED <<ViewSync>>_vars /\ EnUnhide = ENABLED <<Unhide>>_vars
+  /\ EnPoll = ENABLED <<Poll>>_vars /\ EnTime = ENABLED <<TimePasses>>_vars
+  /\ \A i \in Intents : EnReq(i) = ENABLED <<FullRequest(i)>>_vars
 
 =============================================================================
