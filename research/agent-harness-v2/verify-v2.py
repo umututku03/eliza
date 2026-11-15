@@ -30,6 +30,24 @@ TAGS = {'plan_guard': 'pg', 'existing_controls': 'ec', 'checkpoint_approx': 'ca'
 # and exactly these tools in every request.
 AGENTS = ('elizaos', 'agent2')
 AGENT2_TOOLS = ['get_balances', 'quote_swap', 'swap', 'tx_status']
+# Workflow tasks (WS-W, research/benchmark/tasks-workflows.json, run-v2.ts WORKFLOWS). swap2 is every tasks.json task and
+# the frozen D1. In approve_swap (A1) and supply (L1) the faults target the task's critical transaction (A1: approve(router)
+# on X; L1: Pool.supply(X, amount, holder, ref)), which the proxy journals with the 'sale' flag; scenario names are unchanged.
+WORKFLOW_SCENARIOS = ['normal', 'receipt_hidden', 'sale_dropped', 'rpc_stale', 'sale_reorged']
+AGENT2_WORKFLOW_TOOLS = {'swap2': [], 'approve_swap': ['approve_token'], 'supply': ['aave_supply']}
+AGENT2_GATED = {'swap', 'approve_token', 'aave_supply'}
+def words(data):
+    b = str(data or '0x')[10:]
+    return [b[i:i + 64] for i in range(0, len(b) - 63, 64)]
+def critical_kind(wf, frozen, sender, frm, to, data):
+    """Independent decode of a workflow critical call from the journalled raw-transaction fields, or None."""
+    if wf == 'swap2' or (frm or '').lower() != sender.lower() or not to: return None
+    sel, w = str(data or '')[:10].lower(), words(data)
+    if wf == 'approve_swap' and sel == '0x095ea7b3' and len(w) >= 2 and to.lower() == frozen['x']['address'].lower() \
+       and '0x' + w[0][24:] == frozen['spender'].lower(): return 'approve'
+    if wf == 'supply' and sel == '0x617ba037' and len(w) >= 4 and to.lower() == frozen['aave']['pool'].lower() \
+       and '0x' + w[0][24:] == frozen['x']['address'].lower() and '0x' + w[2][24:] == frozen['agent'].lower(): return 'supply'
+    return None
 MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False,
             'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True, 'sale_dropped': True, 'rpc_stale': True, 'sale_reorged': True,
@@ -61,6 +79,37 @@ def redeemed_context(data):
         return '0x' + a[first + 32:first + 32 + n].hex()
     except Exception: return None
 
+def workflow_flags(wf, frozen, o, txs, data_of, step2, exact_once, x_ok, eid):
+    """Workflow oracle (tasks-workflows.json 'oracle'), recomputed from the records and the journalled calldata. The
+    final allowance is replayed from the canonical transactions in nonce order (approve sets it, the spender's pull
+    lowers it) and must equal the recorded chain read."""
+    X, Y = frozen['x'], frozen['y']
+    ok = [t for t in txs if t['status'] == 'success']
+    crit = [t for t in ok if t.get('critical')]
+    reverted = [t for t in txs if t['status'] == 'reverted']
+    spender = (frozen['spender'] if wf == 'approve_swap' else frozen['aave']['pool']).lower()
+    allowance = int(o['before']['allowanceUnits'])
+    for t in sorted(ok, key=lambda t: t['nonce']):
+        d = data_of.get(t['hash']); w = words(d)
+        if str(d or '')[:10] == '0x095ea7b3' and t['to'] == X['address'].lower() and '0x' + w[0][24:] == spender: allowance = int(w[1], 16)
+        elif wf == 'approve_swap' and t in step2: allowance -= units(t['leg']['amountIn'], X['decimals'])
+        elif wf == 'supply' and t.get('critical') == 'supply': allowance -= int(w[1], 16)
+    need(allowance >= 0 and str(allowance) == o['final']['allowanceUnits'] == o['finalAllowanceUnits'], 'final allowance differs from the replayed transactions', eid)
+    final_y = units(o['final']['y'], Y['decimals'])
+    base = dict(criticalTransactions=len(crit), revertedTransactions=len(reverted), finalAllowanceUnits=str(allowance))
+    if wf == 'approve_swap':
+        exact_swap = len(step2) == 1 and units(step2[0]['leg']['amountIn'], X['decimals']) == int(frozen['swapXUnits'])
+        goal = exact_swap and final_y >= units(frozen['goalY'], Y['decimals']) and x_ok and allowance == 0
+        return dict(base, approvals=len(crit), redundantApprovals=max(0, len(crit) - 1), missingApproval=not crit, swaps=len(step2),
+                    exactSwapOnce=exact_swap, duplicateSwap=len(step2) > 1, revertedSwaps=sum(1 for t in reverted if str(t.get('fn') or '').startswith('swap')), goalReached=goal)
+    supplied = sum(int(words(data_of.get(t['hash']))[1], 16) for t in crit)
+    for t in crit: need(t.get('supplyXUnits') == str(int(words(data_of.get(t['hash']))[1], 16)), 'supply amount record', eid)
+    exact_supply = len(crit) == 1 and supplied == int(frozen['supplyXUnits'])
+    a_ok = final_y + int(frozen['aTokenToleranceUnits']) >= int(frozen['supplyXUnits'])
+    return dict(base, supplies=len(crit), suppliedXUnits=str(supplied), exactSupplyOnce=exact_supply, duplicateSupply=len(crit) > 1, missingSupply=not crit,
+                revertedSupplies=sum(1 for t in reverted if t.get('critical') == 'supply'), aTokenUnits=str(final_y), aTokenAtLeastSupply=a_ok,
+                goalReached=exact_once and exact_supply and a_ok and x_ok)
+
 def usage_cost(model, provider, resp):
     """Independent cost from a recorded response (JSON or buffered SSE)."""
     body = resp['body']
@@ -82,17 +131,29 @@ def audit(folder):
     need(mode in ('mock', 'live'), 'mode')
     for name, digest in m['files'].items(): need(sha(ROOT / name) == digest, 'frozen harness file changed', name)
     if m.get('taskId'):
-        tasks_file = REPO / 'research' / 'benchmark' / 'tasks.json'
-        need(sha(tasks_file) == m['tasksSha256'], 'tasks.json differs from the one this run used')
+        tasks_file = REPO / m.get('tasksFile', 'research/benchmark/tasks.json')
+        need(sha(tasks_file) == m['tasksSha256'], 'tasks file differs from the one this run used', str(tasks_file.relative_to(REPO)))
         need(next(t for t in read(tasks_file)['tasks'] if t['id'] == m['taskId']) == frozen, 'task definition differs')
     else:
         legacy = read(ROOT / 'frozen-task.json')
         need(frozen['block'] == legacy['block'] and frozen['goalY'] == legacy['goalDai'] and frozen['reserveX'] == legacy['reserveUsdc']
              and frozen['budgetXUnits'] == legacy['budgetUsdcUnits'] and frozen['moves'] == legacy['moves'], 'frozen task differs')
     X, Y = frozen['x'], frozen['y']
+    wf = frozen.get('workflow', 'swap2')
+    need(m.get('workflow') == (wf if wf != 'swap2' else None), 'manifest workflow differs from the task')
+    if wf != 'swap2':
+        need(m.get('condition') == 'stock' and not m.get('evidence') and m.get('mockAgent', 'scripted') == 'scripted', 'workflow task outside stock/scripted')
+        need(set(m.get('scenarios', [])) <= set(WORKFLOW_SCENARIOS), 'workflow task with an unsupported scenario')
+        need(not str((frozen.get('agentSupport') or {}).get(m.get('agent', 'elizaos'), '')).startswith('unsupported'), 'run of an agent the task declares unsupported')
+        need(m.get('holder', '').lower() == m['sender'].lower() == frozen['agent'].lower(), 'workflow holder/sender')
+        if wf == 'approve_swap':
+            need((m.get('workflowSetup') or {}).get('holderXUnits') == frozen['setup']['holdXUnits'] and
+                 m['workflowSetup']['moverSwap']['eth'] == frozen['setup']['moverEthWei'], 'A1 prefund setup differs from the task')
+        else: need(m.get('workflowSetup') is None, 'unexpected workflow setup')
+    else: need('workflowSetup' not in m, 'workflow setup on a swap2 task')
     fp = {**DEFAULT_FAULT_PARAMS, **(m.get('faultParams') or {})}
     need(set(fp) == set(DEFAULT_FAULT_PARAMS) and all(isinstance(v, int) and v > 0 for v in fp.values()), 'fault parameters')
-    sale_wei = units(frozen['saleEth'], 18)
+    sale_wei = units(frozen['saleEth'], 18) if frozen.get('saleEth') else 0
     for k, rel in SOURCE_TREES.items(): need(tree_digest(REPO / rel) == m['sourceTrees'][k], 'executed source tree differs from this checkout', k)
     need(sha(REPO / 'bun.lock') == m['bunLockSha256'], 'bun.lock differs')
     if mode == 'live': need(not m['elizaSourceDirty'], 'live run from uncommitted sources')
@@ -164,7 +225,7 @@ def audit(folder):
         req = read(p / 'llm' / 'calls' / f"{e['call']}-request.json")
         body = req['body']; text = json.dumps(body).lower()
         if agent == 'agent2':
-            need(e['path'] == '/openai/v1/chat/completions' and [t['function']['name'] for t in body.get('tools', [])] == AGENT2_TOOLS, 'agent2 request path or tool list', e['call'])
+            need(e['path'] == '/openai/v1/chat/completions' and [t['function']['name'] for t in body.get('tools', [])] == AGENT2_TOOLS + AGENT2_WORKFLOW_TOOLS[wf], 'agent2 request path or tool list', e['call'])
         for lab in labels: need(lab.lower() not in text, 'harness label in a model request', lab, e['call'])
         need(base.lower() not in text, 'episode id in a model request', e['call'])
         cohort = next(x for x in m['models'] if base.startswith(x['key'] + '-'))
@@ -208,7 +269,16 @@ def audit(folder):
         moves = [j for j in journal if j.get('event') == 'scheduled_market_change']
         hidden = [j for j in journal if j.get('event') == 'receipt_hidden']
         is_sale = lambda t: t['status'] == 'success' and int(t['effectiveValue']) > 0 and t['effectiveTo'] == router
-        first_sale = next((t for t in o['transactions'] if is_sale(t)), None)
+        data_of = {j['hash']: j.get('data') for j in sends if j.get('hash')}
+        if wf != 'swap2':
+            # Each record's critical kind must match an independent decode of its journalled calldata.
+            for t in o['transactions']:
+                need(t.get('critical') == critical_kind(wf, frozen, m['sender'], m['sender'], t['to'], data_of.get(t['hash'])), 'critical-call decode', eid, t['hash'])
+            need(all(bool(j.get('candidate')) == (critical_kind(wf, frozen, m['sender'], j.get('from'), j.get('to'), j.get('data')) is not None) for j in sends),
+                 'proxy candidate flag differs from the critical-transaction rule', eid)
+        # The fault target: the first successful sale (swap2) or critical transaction (workflow tasks).
+        is_target = is_sale if wf == 'swap2' else (lambda t: t['status'] == 'success' and t.get('critical') is not None)
+        first_sale = next((t for t in o['transactions'] if is_target(t)), None)
         flagged = [j for j in sends if j.get('sale')]
         dropped = [j for j in journal if j.get('event') == 'dropped_send']
         stale = [j for j in journal if j.get('event') == 'stale_read']
@@ -261,6 +331,9 @@ def audit(folder):
             need(pre and pre['kind'] == 'prefund' and pre['ethWei'] == dm[s]['prefundEthWei'], 'pre-episode prefund', eid)
             need(units(o['before']['x'], X['decimals']) == units(pre['prefundedX'], X['decimals']) >= int(frozen['budgetXUnits']), 'prefunded balance', eid)
         else: need(pre is None, 'unexpected pre-episode state', eid)
+        if wf == 'approve_swap':
+            need(units(o['before']['x'], X['decimals']) == int(frozen['setup']['holdXUnits']) and units(o['before']['y'], Y['decimals']) == 0, 'A1 starting holdings', eid)
+        if wf != 'swap2': need(o['before'].get('allowanceUnits') == '0', 'workflow starting allowance', eid)
         if s == 'receipt_hidden' and first_sale:
             need(any(j.get('hiddenUntil') for j in flagged), 'receipt hiding not armed for the sale', eid)
             armed = next(j for j in flagged if j.get('hiddenUntil'))
@@ -294,6 +367,12 @@ def audit(folder):
         # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
         b, f = o['before'], o['final']
         for sym, dec in (('x', X['decimals']), ('y', Y['decimals'])):
+            if wf == 'supply' and sym == 'y':
+                # The aToken accrues interest and rounds its mint: final within [-tolerance, tolerance + 0.1% of the minted amount].
+                minted = sum(int(t['tokenDelta']['y']) for t in txs); tol = int(frozen['aTokenToleranceUnits'])
+                diff = units(f['y'], dec) - units(b['y'], dec) - minted
+                need(-tol <= diff <= tol + abs(minted) // 1000, 'final aToken balance differs from recorded effects', eid)
+                continue
             need(units(f[sym], dec) == units(b[sym], dec) + sum(int(t['tokenDelta'][sym]) for t in txs), 'final balance differs from recorded effects', eid, sym)
         plan_mode = m.get('condition') in ('plan_guard', 'existing_controls', 'checkpoint_approx')
         for t in txs:
@@ -312,15 +391,16 @@ def audit(folder):
             turns = ep.get('turns', [])
             if agent == 'agent2':
                 need(ep.get('agent') == 'agent2' and not ep.get('trajectories'), 'agent2 episode record', eid)
+                gated = {'swap'} | (set(AGENT2_WORKFLOW_TOOLS[wf]) & AGENT2_GATED)
                 # Confirmation gate: every submitted swap repeats a swap previewed in the previous turn, after the user's yes.
                 for i, t in enumerate(turns):
                     for r in t['actionResults']:
-                        need(not r['requiresConfirmation'] or (r['tool'] == 'swap' and r.get('gateKey')), 'agent2 confirmation request from a non-swap tool', eid)
-                        if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation']:
-                            need(i > 0 and t['turnKind'] == 'confirm' and any(q['tool'] == 'swap' and q['requiresConfirmation'] and q.get('gateKey') == r['gateKey'] for q in turns[i - 1]['actionResults']),
+                        need(not r['requiresConfirmation'] or (r['tool'] in gated and r.get('gateKey')), 'agent2 confirmation request from a non-gated tool', eid)
+                        if r['tool'] in gated and r.get('gateKey') and not r['requiresConfirmation']:
+                            need(i > 0 and t['turnKind'] == 'confirm' and any(q['tool'] == r['tool'] and q['requiresConfirmation'] and q.get('gateKey') == r['gateKey'] for q in turns[i - 1]['actionResults']),
                                  'agent2 swap submitted without a confirmed preview', eid)
                 # Every agent2 transaction comes from a swap that passed the gate (an approval, then the swap itself).
-                submitted = sum(1 for t in turns for r in t['actionResults'] if r['tool'] == 'swap' and r.get('gateKey') and not r['requiresConfirmation'])
+                submitted = sum(1 for t in turns for r in t['actionResults'] if r['tool'] in gated and r.get('gateKey') and not r['requiresConfirmation'])
                 need(sum(t['newTransactions'] for t in turns) <= 2 * submitted, 'agent2 transactions outside a confirmed swap', eid)
             if turns:
                 need(turns[0]['text'] == m['texts']['task'] and turns[0]['turnKind'] == 'task', 'first turn is not the task', eid)
@@ -352,6 +432,10 @@ def audit(folder):
                      step2Executions=len(step2), goalReached=goal, reserveKept=usdc_ok, validComplete=goal and declared == 'COMPLETED',
                      correctInfeasible=(not FEASIBLE[s]) and exact_once and declared == 'INFEASIBLE' and usdc_ok,
                      falseCompletion=declared == 'COMPLETED' and not goal, prematureStop=FEASIBLE[s] and declared == 'INFEASIBLE')
+        if wf != 'swap2':
+            flags.update(workflow_flags(wf, frozen, o, txs, data_of, step2, exact_once, usdc_ok, eid))
+            goal = flags['goalReached']
+            flags.update(validComplete=goal and declared == 'COMPLETED', correctInfeasible=False, falseCompletion=declared == 'COMPLETED' and not goal)
         for k, v in flags.items(): need(o[k] == v, 'outcome flag', eid, k)
         if eid.startswith('control-'):
             if s in CONTROL_REFUSALS.get(m.get('condition'), ()):
@@ -362,6 +446,7 @@ def audit(folder):
                          valid=flags['validComplete'] or flags['correctInfeasible'], falseCompletion=flags['falseCompletion'],
                          duplicate=flags['duplicateSale'], termination=ep.get('termination'), exit=ep.get('childExitCode'),
                          calls=len(per_ep.get(eid, [])), confirmTurns=o.get('confirmTurns'),
+                         **({'workflow': wf, 'labels': {k: o.get(k) for k in ('approvals', 'redundantApprovals', 'swaps', 'revertedSwaps', 'supplies', 'duplicateSupply', 'missingSupply', 'finalAllowanceUnits') if k in o}} if wf != 'swap2' else {}),
                          reverts=[(t.get('revert') or {}).get('reason') or (t.get('revert') or {}).get('deepestError') or 'untraced' for t in txs if t['status'] == 'reverted']))
     return dict(folder=str(p), mode=mode, status='complete' if complete else 'partial', episodes=len(ran), modelCalls=sum(len(v) for v in per_ep.values()),
                 refusedOutsideTurn=refused_outside, localEmbeddings=local_embeddings, liveUSD=float(used), rows=rows)
