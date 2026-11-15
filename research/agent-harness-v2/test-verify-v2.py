@@ -80,6 +80,7 @@ if 'arm' in man:
     def prompt_presence(p):
         req = p / 'llm' / 'calls' / f'{first_call}-request.json'
         if man['arm'] == 'prompt_only':
+            req = next(f for f in sorted((p / 'llm' / 'calls').glob('*-request.json')) if v.ARM_PROMPT in f.read_text())
             req.write_text(req.read_text().replace(v.ARM_PROMPT, 'Be careful.'))
         else:
             edit_json(req, lambda d: d['body'].update(system=v.ARM_PROMPT))

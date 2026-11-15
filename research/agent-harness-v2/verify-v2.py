@@ -46,6 +46,9 @@ EVIDENCE_ABLATIONS = ['none', 'no_nonce_pin', 'no_grading', 'no_refusal_decode']
 ARM_TAGS = {'none': 'none', 'prompt_only': 'po', 'nonce_only': 'no', 'verify_binary': 'vb', 'full': 'ev', 'pace_style': 'ps'}
 ARM_PROMPT = ('Before repeating any transaction, check on chain whether the earlier attempt already took effect (balances, transaction status). '
               'Do not send the same trade again unless you have confirmed that the earlier attempt did not land. If you cannot tell, say so and wait.')
+# The character bio (episode-child-v2.ts) marks requests that carry ElizaOS's canonical character system prompt;
+# helper evaluators (fact memory, task success, relationships) carry neither the bio nor character.system.
+CHARACTER_BIO = 'A helpful assistant with an Ethereum wallet.'
 WALLET_MODES = ('nonce_only', 'verify_binary', 'pace_style')
 MODE_LINE = re.compile(r'\[evidence\] EVM_EVIDENCE_MODE=(\w+)')
 class AuditError(AssertionError): pass
@@ -172,7 +175,7 @@ def audit(folder):
     exp_files = set(); used = Decimal(0); per_ep = {}
     episode_ids = set(planned_eps)
     refused_outside = 0; blinding_refusals = []; local_embeddings = 0
-    prompted = {}  # episode -> [request carries the prompt_only text]
+    prompted = {}  # episode -> [(request carries the character system prompt, request carries the prompt_only text)]
     labels = m['forbiddenBase']
     if any(s in CHAIN_FAULTS + COMPOUND_FAULTS for s in scenarios):
         need(set(CHAIN_FAULTS + ['chain_reorg', 'stale_read', 'dropped_send']) <= set(labels), 'chain fault blinding labels missing')
@@ -194,7 +197,7 @@ def audit(folder):
             need(e['path'] == '/openai/v1/chat/completions' and [t['function']['name'] for t in body.get('tools', [])] == AGENT2_TOOLS, 'agent2 request path or tool list', e['call'])
         for lab in labels: need(lab.lower() not in text, 'harness label in a model request', lab, e['call'])
         need(base.lower() not in text, 'episode id in a model request', e['call'])
-        prompted.setdefault(base, []).append(ARM_PROMPT.lower() in text)
+        prompted.setdefault(base, []).append((CHARACTER_BIO.lower() in text, ARM_PROMPT.lower() in text))
         cohort = next(x for x in m['models'] if base.startswith(x['key'] + '-'))
         need(body.get('model') == cohort['model'] and e['provider'] == cohort['provider'], 'request model or provider differs from cohort', e['call'])
         if cohort['model'].startswith('gpt-6'):
@@ -220,10 +223,12 @@ def audit(folder):
             else: used += Decimal(str(e.get('reservationUSD', 0)))
     need(calls_files == exp_files, 'unexplained or missing call records', sorted(calls_files ^ exp_files)[:10])
     need(not blinding_refusals, 'blinding gate refused model requests (harness labels reached a payload)', blinding_refusals[:5])
-    # prompt_only: the fixed text reaches the model in every chat request of the arm's episodes, and in no other arm.
+    # prompt_only: the fixed text is in every request that carries the character system prompt (each episode with
+    # model calls has at least one), and in no request of any other arm.
     if arm == 'prompt_only':
-        need(all(all(v) for v in prompted.values()) and set(prompted) >= {e for e in planned_eps if e in per_ep}, 'prompt_only text missing from a model request')
-    else: need(not any(any(v) for v in prompted.values()), 'prompt_only text in a model request of another arm')
+        need(all(any(b for b, _ in v) and all(t for b, t in v if b) and not any(t and not b for b, t in v) for v in prompted.values()),
+             'prompt_only text missing from a model request')
+    else: need(not any(t for v in prompted.values() for _, t in v), 'prompt_only text in a model request of another arm')
     if mode == 'live':
         led = marker['ledger']
         need(abs(Decimal(str(led['newUSD'])) - used) < Decimal('1e-9'), 'ledger total')
