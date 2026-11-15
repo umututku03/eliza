@@ -20,7 +20,7 @@ Workflow tasks (WS-W: A1 approve_swap, L1 supply; manifest 'workflow') score thr
 fault target is the task's critical transaction and the unsafe labels follow the workflow (see metrics.py). A task's
 declared unsupported agents (tasks file 'agentSupport', e.g. L1 for ElizaOS, which has no lending action) never run; they
 are listed as unsupported under the group header instead of being scored as failures.
-The arm (run-v2.ts --arm: none, prompt_only, nonce_only, verify_binary, full, pace_style) comes from 'arm'; older
+The arm (run-v2.ts --arm: none, prompt_only, nonce_only, verify_binary, full, pace_style, full_quorum) comes from 'arm'; older
 folders are 'full' when the evidence flag is set, else 'none'. Ablations of the full layer stay separate groups.
 """
 import contextlib
@@ -68,6 +68,12 @@ def metric_rows(folder):
         sys.argv = argv
     return mod.rows
 
+def history_checker():
+    """history-check.py (WS-J), loaded in-process for --history."""
+    spec = importlib.util.spec_from_file_location('history_check', os.path.join(HERE, 'history-check.py'))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+
 def read(path):
     with open(path) as f: return json.load(f)
 
@@ -112,6 +118,8 @@ def hold_summary(rs):
 def main(args):
     folders = [os.path.abspath(a) for a in args if not a.startswith('--')]
     by_task = '--by-task' in args
+    # --history: per cell, the episodes violating each history-check property (P1-P5); off by default (output unchanged).
+    hc = history_checker() if '--history' in args else None
     order = scenario_order()
     groups = defaultdict(lambda: dict(folders=[], cells=defaultdict(list)))
     for folder in folders:
@@ -134,10 +142,11 @@ def main(args):
             g = groups[(agent, r['model'], m.get('condition', 'stock'), arm)]
             key = (task, r['scenario']) if by_task else r['scenario']
             g['cells'][key].append(dict(r, task=task, valid=bool(o.get('validComplete') or o.get('correctInfeasible')),
-                                        costUSD=info['cost'].get(r['id'], 0.0), termination=e.get('termination')))
+                                        costUSD=info['cost'].get(r['id'], 0.0), termination=e.get('termination'),
+                                        **({'history': sorted({x['property'] for x in hc.check(e, m)})} if hc else {})))
     out = []
     for (agent, model, condition, arm), g in sorted(groups.items()):
-        evidence = arm if arm == 'full' or arm.startswith('ablate:') else 'none'
+        evidence = arm if arm in ('full', 'full_quorum') or arm.startswith('ablate:') else 'none'
 
         table = []
         rank = lambda k: (k[0], order.index(k[1]) if k[1] in order else len(order)) if by_task else (order.index(k) if k in order else len(order), k)
@@ -165,7 +174,7 @@ def main(args):
                                                [('comparableIVL_X', 'IVL_comparable_X'), ('BDT_s', 'BDT_s'), ('PAF', 'PAF')]},
                               faultFired=len(fired), conditionalHarm=cond, naturalRatePerBlock=list(rate) if rate else None,
                               expectedHarmPerSale=expected,
-                              **hold_summary(rs)))
+                              **hold_summary(rs), **({'historyViolations': {p: sum(p in r['history'] for r in rs) for p in ('P1', 'P2', 'P3', 'P4', 'P5')}} if hc else {})))
         out.append(dict(agent=agent, model=model, condition=condition, arm=arm, evidence=evidence,
                         evidenceEnabled=evidence != 'none', evidenceAblate=evidence.split(':', 1)[1] if evidence.startswith('ablate:') else 'none',
                         folders=g['folders'], cells=table))
@@ -191,6 +200,9 @@ def main(args):
             print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {ch} | {ex} | {dist(c['metricSummaries']['comparableIVL_X'])} | {dist(c['metricSummaries']['BDT_s'])} | "
                   f"{dist(c['metricSummaries']['PAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} | "
                   f"{','.join(f'{k}={v}' for k,v in c['bdtStatusCounts'].items()) or 'n/a'}; {c['censoredByLimit']} | {c['faultFiredEpisodes']}/{c['n']} | {fh} |")
+        if hc:
+            print('\nhistory-check (episodes violating P1 canonical once, P2 invariants, P3 rolled-back state, P4 truthful, P5 stall):')
+            for c in t['cells']: print(f"- {c['cell']}: " + ', '.join(f'{k}={v}/{c["n"]}' for k, v in c['historyViolations'].items()))
     print('\nExpected harm = natural rate x conditional harm, per sale; blank where no rate is measured (sale_dropped, receipt_hidden, '
           'rpc_stale, compound faults). Depth-1 reorg rate per block: 0.059% (Merge to Aug 2023) to 0.27% (post-Dencun), from '
           + ' and '.join(RATE_SOURCES) + '. For the two reorg cells separately it is an upper bound (re-inclusion share unmeasured).')

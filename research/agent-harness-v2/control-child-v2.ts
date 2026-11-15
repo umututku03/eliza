@@ -12,6 +12,11 @@ import {
 } from "viem";
 import { mainnet } from "viem/chains";
 
+// The reference is conventional reconciliation in every off-chain treatment arm.
+// On-chain plan/checkpoint conditions still apply via the spec's wallet configuration.
+// Otherwise a conservative treatment failure aborts its own reference before it can be measured.
+const REFERENCE_POLICY = "stock_reconciliation";
+for (const name of ["EVM_EVIDENCE_MODE", "EVM_EVIDENCE_LAYER", "EVM_EVIDENCE_ABLATE", "EVM_EVIDENCE_READ_URLS", "EVM_EVIDENCE_DECISION_LOG"]) delete process.env[name];
 const spec = JSON.parse(readFileSync(process.argv[2], "utf8"));
 // Workflow tasks (WS-W: A1 approve_swap, L1 supply) use a framework-free control: ElizaOS cannot supply to Aave, and one
 // control for both agents keeps the oracle reference identical. It signs with the agent key through the fault proxy
@@ -128,7 +133,7 @@ async function workflowControl() {
   } catch (e) {
     error = (e as Error).message;
   }
-  writeFileSync(process.argv[3], JSON.stringify({ steps, declared, error, refusal: null }, (_, v) => (typeof v === "bigint" ? v.toString() : v), 2));
+  writeFileSync(process.argv[3], JSON.stringify({ steps, declared, error, refusal: null, referencePolicy: REFERENCE_POLICY }, (_, v) => (typeof v === "bigint" ? v.toString() : v), 2));
 }
 Object.assign(process.env, {
   ELIZA_BENCH_DISABLE_DOTENV: "1",
@@ -416,6 +421,19 @@ try {
       swap = { success: true };
     } else swap = await stepTwo();
   }
+  // Random follow-up faults are only receipt hiding/stale reads, never drops or reorgs. After a failed
+  // tool result, wait out the predeclared window, then check the goal BEFORE any retry. A mined swap
+  // needs a truthful completion report; an approval-only attempt may still require the swap itself.
+  if (spec.reconcileFollowup && swap && swap.success !== true) {
+    await Bun.sleep(spec.reconcileSeconds * 1000);
+    if ((await balance(pub, Y.address as Address, spec.wallet)) >= goal) {
+      steps.push({ followup_reconciled: "goal visible after fault window", afterSeconds: elapsed() });
+      swap = { success: true };
+    } else {
+      steps.push({ followup_reconciled: "goal absent after fault window; retry step 2", afterSeconds: elapsed() });
+      swap = await stepTwo();
+    }
+  }
   await observeReinclusion();
   if (swap) {
     if (swap?.success !== true) {
@@ -429,7 +447,7 @@ try {
 }
 writeFileSync(
   process.argv[3],
-  JSON.stringify({ steps, declared, error, refusal }, null, 2),
+  JSON.stringify({ steps, declared, error, refusal, referencePolicy: REFERENCE_POLICY }, null, 2),
 );
 await runtime.stop?.().catch(() => {});
 process.exit(0);

@@ -18,8 +18,8 @@ import { SwapAction } from "../actions/swap";
 import {
   CHECK_BUDGET_MS,
   checkOnce,
-  DECISION_LOG_PREFIX,
   classifySendError,
+  DECISION_LOG_PREFIX,
   decodeRefusalSentence,
   describeCall,
   type EvidenceDeps,
@@ -30,6 +30,7 @@ import {
   intentKey,
   isUnresolved,
   latestIntent,
+  quorumClient,
   resetEvidenceLedgers,
   sendWithEvidence,
 } from "../evidence";
@@ -179,13 +180,17 @@ class FakeChain {
         } catch {}
         if (i === 0) await this.deps().sleep(timeout);
       }
-      throw Object.assign(new Error(`Timed out while waiting for transaction with hash "${hash}" to be confirmed.`), {
-        name: "WaitForTransactionReceiptTimeoutError",
-      });
+      throw Object.assign(
+        new Error(`Timed out while waiting for transaction with hash "${hash}" to be confirmed.`),
+        {
+          name: "WaitForTransactionReceiptTimeoutError",
+        }
+      );
     },
     /** eth_call at the head (pace_style). */
     call: vi.fn(async (_: any) => {
-      if (this.simulateFail) throw Object.assign(new Error("execution reverted"), { details: this.simulateFail });
+      if (this.simulateFail)
+        throw Object.assign(new Error("execution reverted"), { details: this.simulateFail });
       return { data: "0x" };
     }),
     readContract: async (a: any) => {
@@ -385,7 +390,7 @@ describe("decision table (one test per row)", () => {
     expect(ev(e).decision).toBe("orphaned");
     expect(c.t).toBeLessThan(CHECK_BUDGET_MS); // stops early
     expect(e.message).toContain(
-      "Your swap was confirmed in block 101, but that block is no longer part of the chain (reorg). The swap is not on chain now. Repeating the same swap is safe (same nonce)."
+      "Your swap was observed in block 101, but that block is no longer part of the chain (reorg). The swap is not on chain now. Repeating the same swap is safe (same nonce)."
     );
   });
 
@@ -687,21 +692,29 @@ async function outcomeOf(p: Promise<{ hash: Hex; decision: string }>) {
     return { ok: false as const, hash: null, decision: null, error: e as Error };
   }
 }
-function useMode(mode: string) {
+function setEvidenceMode(mode: string) {
   delete process.env.EVM_EVIDENCE_LAYER;
   process.env.EVM_EVIDENCE_MODE = mode;
 }
 const PACE_POLICY = {
   router: ROUTER,
   rules: [
-    { tokenIn: "0x0000000000000000000000000000000000000000", tokenOut: USDC, maxAmountIn: SALE_WEI.toString(), keepAtLeastIn: null, minAmountOut: null },
+    {
+      tokenIn: "0x0000000000000000000000000000000000000000",
+      tokenOut: USDC,
+      maxAmountIn: SALE_WEI.toString(),
+      keepAtLeastIn: null,
+      minAmountOut: null,
+    },
     { tokenIn: USDC, tokenOut: DAI, maxAmountIn: null, keepAtLeastIn: "50", minAmountOut: null },
   ],
 };
 
 describe("mode switch", () => {
   it("unset is off; the legacy flag is full; unknown or conflicting values are refused", async () => {
-    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled } = await import("../evidence");
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled } = await import(
+      "../evidence"
+    );
     delete process.env.EVM_EVIDENCE_LAYER;
     expect(evidenceMode()).toBe("off");
     expect(evidenceSendsEnabled()).toBe(false);
@@ -709,22 +722,22 @@ describe("mode switch", () => {
     expect(evidenceMode()).toBe("full");
     process.env.EVM_EVIDENCE_MODE = "nonce_only";
     expect(() => evidenceMode()).toThrow(/cannot be combined/);
-    useMode("verify_binary");
+    setEvidenceMode("verify_binary");
     expect(evidenceLayerEnabled()).toBe(false);
     expect(evidenceSendsEnabled()).toBe(true);
-    useMode("bogus");
+    setEvidenceMode("bogus");
     expect(() => evidenceMode()).toThrow(/Unknown EVM_EVIDENCE_MODE/);
   });
 
   it("refuses an ablation outside the full layer", async () => {
-    useMode("nonce_only");
+    setEvidenceMode("nonce_only");
     process.env.EVM_EVIDENCE_ABLATE = "no_grading";
     await expect(send(new FakeChain())).rejects.toThrow(/full layer only/);
   });
 });
 
 describe("nonce_only baseline", () => {
-  beforeEach(() => useMode("nonce_only"));
+  beforeEach(() => setEvidenceMode("nonce_only"));
 
   it("first send pins the pending nonce; success is stock's (receipt after the stock wait)", async () => {
     const c = new FakeChain();
@@ -732,7 +745,12 @@ describe("nonce_only baseline", () => {
     expect(r.decision).toBe("confirmed");
     expect(c.wallet.sendTransaction.mock.calls[0][0].nonce).toBe(7);
     expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
-    expect(r.record!.baseline).toMatchObject({ mode: "nonce_only", reported: "success", consumed: true, nonceGap: null });
+    expect(r.record!.baseline).toMatchObject({
+      mode: "nonce_only",
+      reported: "success",
+      consumed: true,
+      nonceGap: null,
+    });
   });
 
   it('lost acknowledgement (receipt hidden): stock timeout, then the same-nonce re-send gets "nonce too low" -> success, no duplicate', async () => {
@@ -741,7 +759,9 @@ describe("nonce_only baseline", () => {
     const first = await outcomeOf(send(c));
     expect(first.ok).toBe(false);
     expect(first.error).not.toBeInstanceOf(EvidenceError);
-    expect(first.error!.message).toMatch(/^Timed out while waiting for transaction with hash "0x[0-9a-f]+" to be confirmed\.$/);
+    expect(first.error!.message).toMatch(
+      /^Timed out while waiting for transaction with hash "0x[0-9a-f]+" to be confirmed\.$/
+    );
     const again = await outcomeOf(send(c, saleIntent(9_999n), saleData(9_999n)));
     expect(again.ok).toBe(true);
     const r = evidenceLedger(1, SENDER)[0];
@@ -793,7 +813,9 @@ describe("nonce_only baseline", () => {
     expect(step2.error!.message).toMatch(/^Timed out while waiting/);
     const r = evidenceLedger(1, SENDER)[1];
     expect(r.baseline!.nonceGap).toEqual({ nonce: 8, pendingCount: 7, reserved: [7] });
-    expect(warn.mock.calls.some((a) => /nonce gap: swap sent with nonce 8/.test(String(a[0])))).toBe(true);
+    expect(
+      warn.mock.calls.some((a) => /nonce gap: swap sent with nonce 8/.test(String(a[0])))
+    ).toBe(true);
     warn.mockRestore();
   });
 
@@ -816,13 +838,19 @@ describe("nonce_only baseline", () => {
 });
 
 describe("verify_binary baseline", () => {
-  beforeEach(() => useMode("verify_binary"));
+  beforeEach(() => setEvidenceMode("verify_binary"));
 
   it("sends exactly the stock request (no pinned nonce) and waits as stock does", async () => {
     const c = new FakeChain();
     const r = await send(c);
     expect(r.decision).toBe("confirmed");
-    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({
+      account: ACCOUNT,
+      chain: mainnet,
+      to: ROUTER,
+      value: SALE_WEI,
+      data: saleData(),
+    });
     expect(c.wallet.prepareTransactionRequest).not.toHaveBeenCalled();
     expect(c.waits).toEqual([{ hash: r.hash, timeout: 60_000 }]);
   });
@@ -834,7 +862,9 @@ describe("verify_binary baseline", () => {
     const again = await outcomeOf(send(c));
     expect(again.ok).toBe(true);
     expect(c.sent).toHaveLength(1);
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks.map((x) => [x.result, x.reason])).toEqual([["complete", "balance effect visible"]]);
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks.map((x) => [x.result, x.reason])).toEqual([
+      ["complete", "balance effect visible"],
+    ]);
   });
 
   it("complete by receipt (status 1)", async () => {
@@ -856,7 +886,10 @@ describe("verify_binary baseline", () => {
     expect(c.sent.map((a) => a.nonce)).toEqual([undefined, undefined]);
     expect("nonce" in c.wallet.sendTransaction.mock.calls[1][0]).toBe(false);
     expect(c.sales()).toBe(1);
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "no receipt and no balance effect" });
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({
+      result: "incomplete",
+      reason: "no receipt and no balance effect",
+    });
   });
 
   it("an inconclusive read counts as incomplete", async () => {
@@ -869,7 +902,10 @@ describe("verify_binary baseline", () => {
     };
     expect((await outcomeOf(send(c))).ok).toBe(true);
     c.pub.readContract = read;
-    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({ result: "incomplete", reason: "inconclusive: the balance read failed" });
+    expect(evidenceLedger(1, SENDER)[0].baseline!.checks[0]).toMatchObject({
+      result: "incomplete",
+      reason: "inconclusive: the balance read failed",
+    });
     expect(c.sales()).toBe(2); // the landed sale is repeated: the binary design's false incomplete
   });
 
@@ -894,7 +930,7 @@ describe("verify_binary baseline", () => {
 
 describe("pace_style baseline", () => {
   beforeEach(() => {
-    useMode("pace_style");
+    setEvidenceMode("pace_style");
     process.env.EVM_PACE_POLICY = JSON.stringify(PACE_POLICY);
   });
 
@@ -903,15 +939,28 @@ describe("pace_style baseline", () => {
     const r = await send(c);
     expect(r.decision).toBe("confirmed");
     expect(r.record).toBeNull();
-    expect(c.pub.call).toHaveBeenCalledWith({ account: ACCOUNT, to: ROUTER, data: saleData(), value: SALE_WEI });
-    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({ account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() });
+    expect(c.pub.call).toHaveBeenCalledWith({
+      account: ACCOUNT,
+      to: ROUTER,
+      data: saleData(),
+      value: SALE_WEI,
+    });
+    expect(c.wallet.sendTransaction.mock.calls[0][0]).toEqual({
+      account: ACCOUNT,
+      chain: mainnet,
+      to: ROUTER,
+      value: SALE_WEI,
+      data: saleData(),
+    });
     expect(evidenceLedger(1, SENDER)).toHaveLength(0); // stateless
   });
 
   it("a simulation failure is a refusal (nothing is sent)", async () => {
     const c = new FakeChain();
     c.simulateFail = "UniswapV2Router: EXPIRED";
-    await expect(send(c)).rejects.toThrow(/^Refused by the pre-signing check: the simulation at the head failed \(UniswapV2Router: EXPIRED\)\.$/);
+    await expect(send(c)).rejects.toThrow(
+      /^Refused by the pre-signing check: the simulation at the head failed \(UniswapV2Router: EXPIRED\)\.$/
+    );
     expect(c.sent).toHaveLength(0);
   });
 
@@ -935,9 +984,17 @@ describe("pace_style baseline", () => {
       });
     await expect(refuse(saleData(), SALE_WEI, DAI)).rejects.toThrow(/is not the declared router/);
     await expect(refuse(saleData(), 2n * SALE_WEI)).rejects.toThrow(/exceeds the declared maximum/);
-    const toDai = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [1n, [WETH, DAI], SENDER, 2200n] });
+    const toDai = encodeFunctionData({
+      abi: ROUTER_ABI,
+      functionName: "swapExactETHForTokens",
+      args: [1n, [WETH, DAI], SENDER, 2200n],
+    });
     await expect(refuse(toDai, SALE_WEI)).rejects.toThrow(/is not declared/);
-    const noMin = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [0n, [WETH, USDC], SENDER, 2200n] });
+    const noMin = encodeFunctionData({
+      abi: ROUTER_ABI,
+      functionName: "swapExactETHForTokens",
+      args: [0n, [WETH, USDC], SENDER, 2200n],
+    });
     await expect(refuse(noMin, SALE_WEI)).rejects.toThrow(/sets no minimum output/);
     c.usdc = 60n; // the step spends 60_000_000 base units while 50 must stay
     await expect(refuse(step2Data, 0n)).rejects.toThrow(/would leave less than the declared/);
@@ -1071,7 +1128,7 @@ describe("flag unset: send sites call viem exactly as before", () => {
 describe("baselines that send as stock: swap.ts hands viem the stock arguments", () => {
   for (const mode of ["verify_binary", "pace_style"]) {
     it(`${mode}: sendTransaction and waitForTransactionReceipt arguments equal the flag-unset snapshot`, async () => {
-      useMode(mode);
+      setEvidenceMode(mode);
       process.env.EVM_PACE_POLICY = JSON.stringify(PACE_POLICY);
       const wallet = {
         account: ACCOUNT,
@@ -1082,7 +1139,11 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
       };
       const pub = {
         readContract: vi.fn(async (a: any) =>
-          a.functionName === "WETH" ? WETH : a.functionName === "balanceOf" ? 0n : [SALE_WEI, 237_636_476n]
+          a.functionName === "WETH"
+            ? WETH
+            : a.functionName === "balanceOf"
+              ? 0n
+              : [SALE_WEI, 237_636_476n]
         ),
         getBlock: vi.fn(async () => ({ timestamp: 1_000n })),
         waitForTransactionReceipt: vi.fn(async () => ({ status: "success" })),
@@ -1090,7 +1151,10 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
         call: vi.fn(async () => ({ data: "0x" })),
       };
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const action = new SwapAction(fakeProvider(wallet, pub), { uniswapV2Router: ROUTER, exclusive: true });
+      const action = new SwapAction(fakeProvider(wallet, pub), {
+        uniswapV2Router: ROUTER,
+        exclusive: true,
+      });
       await action.swap({
         chain: "mainnet",
         fromToken: "0x0000000000000000000000000000000000000000",
@@ -1101,10 +1165,24 @@ describe("baselines that send as stock: swap.ts hands viem the stock arguments",
       expect(warn).toHaveBeenCalledWith(`[evidence] EVM_EVIDENCE_MODE=${mode}`);
       warn.mockRestore();
       const minOut = (237_636_476n * 9_700n) / 10_000n;
-      const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "swapExactETHForTokens", args: [minOut, [WETH, USDC], SENDER, 2_200n] });
-      expect(wallet.sendTransaction.mock.calls).toEqual([[{ account: ACCOUNT, to: ROUTER, value: SALE_WEI, data, chain: mainnet }]]);
-      expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual(["account", "to", "value", "data", "chain"]);
-      expect(pub.waitForTransactionReceipt.mock.calls).toEqual([[{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }]]);
+      const data = encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: "swapExactETHForTokens",
+        args: [minOut, [WETH, USDC], SENDER, 2_200n],
+      });
+      expect(wallet.sendTransaction.mock.calls).toEqual([
+        [{ account: ACCOUNT, to: ROUTER, value: SALE_WEI, data, chain: mainnet }],
+      ]);
+      expect(Object.keys(wallet.sendTransaction.mock.calls[0][0] as object)).toEqual([
+        "account",
+        "to",
+        "value",
+        "data",
+        "chain",
+      ]);
+      expect(pub.waitForTransactionReceipt.mock.calls).toEqual([
+        [{ hash: `0x${"ab".repeat(32)}`, timeout: 60_000 }],
+      ]);
       expect(wallet.prepareTransactionRequest).not.toHaveBeenCalled();
       expect(pub.getTransactionCount).not.toHaveBeenCalled();
       expect(pub.call).toHaveBeenCalledTimes(mode === "pace_style" ? 1 : 0);
@@ -1234,7 +1312,8 @@ describe("refusals the agent can act on", () => {
 });
 
 describe("decision log (EVM_EVIDENCE_DECISION_LOG=1): logging only", () => {
-  const json = (v: unknown) => JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x));
+  const json = (v: unknown) =>
+    JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x));
   /** Every full-layer site that returns a decision: send (confirmed, wait, wait_and_recheck, stale head),
    *  a guard refusal, tx_status checks, and an unacknowledged send. Returns everything the agent and viem see. */
   async function scenarios(): Promise<string> {
@@ -1244,7 +1323,11 @@ describe("decision log (EVM_EVIDENCE_DECISION_LOG=1): logging only", () => {
         const r = await p;
         out.push({ decision: r.decision, hash: r.hash, record: evidenceSnapshot(r.record) });
       } catch (e) {
-        out.push({ message: (e as Error).message, code: (e as EvidenceError).code, evidence: (e as EvidenceError).data?.evidence });
+        out.push({
+          message: (e as Error).message,
+          code: (e as EvidenceError).code,
+          evidence: (e as EvidenceError).data?.evidence,
+        });
       }
     };
     resetEvidenceLedgers();
@@ -1312,13 +1395,595 @@ describe("decision log (EVM_EVIDENCE_DECISION_LOG=1): logging only", () => {
       ["send_unacknowledged", "wait", "not_seen"],
     ]);
     const wait = lines[1];
-    expect(wait).toMatchObject({ v: 1, label: "swap", chainId: 1, sender: SENDER, pinnedNonce: 7, observations: expect.any(Number) });
+    expect(wait).toMatchObject({
+      v: 1,
+      label: "swap",
+      chainId: 1,
+      sender: SENDER,
+      pinnedNonce: 7,
+      observations: expect.any(Number),
+    });
     expect(wait.key).toBe(intentKey(saleIntent()));
     expect(wait.hashes).toHaveLength(1);
-    expect(wait.lastObservation).toMatchObject({ head: 101, receiptBlock: 101, receiptStatus: "success", canonical: true, confirmations: 1 });
+    expect(wait.lastObservation).toMatchObject({
+      head: 101,
+      receiptBlock: 101,
+      receiptStatus: "success",
+      canonical: true,
+      confirmations: 1,
+    });
     expect(typeof wait.atMs).toBe("number");
     expect(lines[8].hashes).toEqual([]);
     expect(lines[8].lastObservation).toBeNull();
-    for (const l of lines) for (const k of ["request", "account", "message", "snapshot"]) expect(l).not.toHaveProperty(k);
+    for (const l of lines)
+      for (const k of ["request", "account", "message", "snapshot"])
+        expect(l).not.toHaveProperty(k);
+  });
+});
+
+// ---- byte-identity of the full layer (WS-Q) ------------------------------------------------------------------
+/** Every call the layer makes on the read client and the wallet, in order, JSON-safe. */
+function traced<T extends Record<string, any>>(obj: T, log: unknown[], prefix: string): T {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj))
+    out[k] =
+      typeof v === "function"
+        ? async (...args: any[]) => {
+            const {
+              account: _a,
+              chain: _c,
+              abi: _abi,
+              ...rest
+            } = (args[0] ?? {}) as Record<string, unknown>;
+            log.push(
+              `${prefix}.${k} ${JSON.stringify(rest, (_, x) => (typeof x === "bigint" ? `${x}n` : x))}`
+            );
+            return v(...args);
+          }
+        : v;
+  return out as T;
+}
+type NaiveFault = "none" | "receipt_hidden" | "sale_dropped" | "rpc_stale" | "sale_reorged";
+/** The naive-agent run of the guarantee tests (repeat the sale once after a non-success), through `pubFor(c)`. */
+async function naiveTrace(fault: NaiveFault, pubFor: (c: FakeChain) => unknown = (c) => c.pub) {
+  resetEvidenceLedgers();
+  const c = new FakeChain();
+  c.tickEvery(30_000);
+  if (fault === "receipt_hidden") c.hideNext = true;
+  if (fault === "sale_dropped") c.dropNext = true;
+  if (fault === "sale_reorged") {
+    const tick = c.onTick!;
+    let reorged = false;
+    c.onTick = (t) => {
+      if (t >= 20_000 && !reorged) {
+        reorged = true;
+        c.reorg(101);
+      }
+      tick(t);
+    };
+  }
+  const log: unknown[] = [];
+  const pub = traced(pubFor(c) as Record<string, any>, log, "pub");
+  const wallet = traced(c.wallet as Record<string, any>, log, "wallet");
+  const results: unknown[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (fault === "rpc_stale" && attempt === 0) {
+      const submit = c.submit.bind(c);
+      c.submit = (a: any) => {
+        const lag = c.head;
+        const h = submit(a);
+        c.lagBlock = lag;
+        c.lagNonce = 7;
+        c.lagUsdc = 0n;
+        c.submit = submit;
+        return h;
+      };
+    }
+    try {
+      const r = await sendWithEvidence({
+        walletClient: wallet as never,
+        publicClient: pub as never,
+        request: {
+          account: ACCOUNT,
+          chain: mainnet,
+          to: ROUTER,
+          value: SALE_WEI,
+          data: saleData(),
+        },
+        intent: saleIntent(),
+        deps: c.deps(),
+      });
+      results.push({ ok: r.decision, hash: r.hash });
+      break;
+    } catch (e) {
+      results.push({ error: (e as Error).message, code: (e as EvidenceError).code });
+      c.lagBlock = null;
+    }
+  }
+  // One JSON line per record (observations included), so the snapshot stays compact.
+  const ledger = evidenceLedger(1, SENDER).map((r) =>
+    JSON.stringify(r, (k, x) =>
+      k === "account" || k === "chain" ? undefined : typeof x === "bigint" ? `${x}n` : x
+    )
+  );
+  return { calls: log, results, ledger, sales: c.sales(), t: c.t };
+}
+
+describe("full layer: byte-identical traces (snapshot taken before full_quorum existed)", () => {
+  for (const fault of [
+    "none",
+    "receipt_hidden",
+    "sale_dropped",
+    "rpc_stale",
+    "sale_reorged",
+  ] as NaiveFault[]) {
+    it(`${fault}: read/write calls, results and ledger`, async () => {
+      expect(await naiveTrace(fault)).toMatchSnapshot();
+    });
+  }
+});
+
+// ---- full_quorum (WS-Q): quorum reads inside the evidence layer ---------------------------------------------
+/** What one read endpoint shows of the fake chain: honest, frozen at a block (stale), lying, on another fork, or down. */
+interface EndpointFaults {
+  /** Frozen view: head, nonce and USDC balance as of `block`; later receipts and transactions unknown. */
+  stale?: { block: number; nonce: number; usdc: bigint } | null;
+  /** Claims a success receipt (and a mined transaction) in the current head block for these hashes. */
+  lieAbout?: Set<Hex>;
+  /** Reports different block hashes from `fromBlock` on (another fork). */
+  fork?: { fromBlock: number };
+  down?: boolean;
+}
+function endpoint(c: FakeChain, f: EndpointFaults = {}) {
+  const lag = () => f.stale?.block ?? null;
+  const hide = (block: number | null) => block !== null && lag() !== null && block > lag()!;
+  const hashAt = (n: number) =>
+    f.fork && n >= f.fork.fromBlock ? c.hashFor(`fork${n}`) : (c.blockHashes.get(n) ?? null);
+  const up = () => {
+    if (f.down) throw new Error("fetch failed: connection refused");
+  };
+  return {
+    getBlockNumber: async () => (up(), BigInt(lag() ?? c.head)),
+    getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
+      up();
+      const n = lag() !== null && Number(blockNumber) > lag()! ? lag()! : Number(blockNumber);
+      return { hash: hashAt(n), number: BigInt(n) };
+    },
+    getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      up();
+      if (f.lieAbout?.has(hash))
+        return {
+          status: "success" as const,
+          blockNumber: BigInt(c.head),
+          blockHash: hashAt(c.head)!,
+        };
+      const tx = c.txs.get(hash);
+      if (!tx || tx.block === null || c.hidden.has(hash) || hide(tx.block))
+        throw c.notFound("TransactionReceiptNotFoundError");
+      return { status: tx.status, blockNumber: BigInt(tx.block), blockHash: hashAt(tx.block)! };
+    },
+    getTransaction: async ({ hash }: { hash: Hex }) => {
+      up();
+      if (f.lieAbout?.has(hash)) return { blockNumber: BigInt(c.head), blockHash: hashAt(c.head) };
+      const tx = c.txs.get(hash);
+      if (!tx || hide(tx.block)) throw c.notFound("TransactionNotFoundError");
+      return {
+        blockNumber: tx.block === null ? null : BigInt(tx.block),
+        blockHash: tx.block === null ? null : hashAt(tx.block),
+      };
+    },
+    getTransactionCount: async (_: {
+      address: Address;
+      blockTag?: string;
+      blockNumber?: bigint;
+    }) => (up(), f.stale ? f.stale.nonce : c.accountNonce),
+    getBalance: async () => (up(), 0n),
+    readContract: async (a: any) => {
+      up();
+      if (a.functionName === "balanceOf")
+        return a.address.toLowerCase() === USDC.toLowerCase()
+          ? f.stale
+            ? f.stale.usdc
+            : c.usdc
+          : c.dai;
+      if (a.functionName === "allowance") return 0n;
+      throw new Error(`unexpected read ${a.functionName}`);
+    },
+  };
+}
+const quorumOf = (c: FakeChain, ...faults: EndpointFaults[]) =>
+  quorumClient(
+    faults.map((f, i) => ({ role: `read${i}`, client: endpoint(c, f) as never })),
+    { stallMs: 1_000 }
+  );
+const sendVia = (c: FakeChain, pub: unknown) =>
+  sendWithEvidence({
+    walletClient: c.wallet,
+    publicClient: pub as never,
+    request: { account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() },
+    intent: saleIntent(),
+    deps: c.deps(),
+  });
+/** The naive agent (repeat the sale once after a non-success) through a quorum client. */
+async function naiveQuorum(c: FakeChain, pub: unknown) {
+  const results: { ok?: string; message?: string; evidence?: any }[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      results.push({ ok: (await sendVia(c, pub)).decision });
+      break;
+    } catch (e) {
+      results.push({
+        message: (e as Error).message,
+        evidence: (e as EvidenceError).data?.evidence,
+      });
+    }
+  }
+  return results;
+}
+const lastQuorum = () => {
+  const r = evidenceLedger(1, SENDER)[0];
+  return r.observations[r.observations.length - 1].quorum!;
+};
+
+describe("full_quorum: mode switch and configuration", () => {
+  it("is the full layer (guard, tx_status, refusal decoding) and needs at least two read endpoints", async () => {
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled, evidenceReadClient } =
+      await import("../evidence");
+    setEvidenceMode("full_quorum");
+    expect(evidenceMode()).toBe("full_quorum");
+    expect(evidenceLayerEnabled()).toBe(true);
+    expect(evidenceSendsEnabled()).toBe(true);
+    process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1";
+    expect(() => evidenceReadClient(new FakeChain().pub as never)).toThrow(/at least 2 endpoints/);
+    process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1,http://127.0.0.1:2";
+    process.env.EVM_EVIDENCE_READ_ROLES = "primary,secondary";
+    const q = evidenceReadClient(new FakeChain().pub as never) as any;
+    expect(q.quorumEndpoints.map((e: any) => e.role)).toEqual(["primary", "secondary"]);
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    expect(() => evidenceMode()).toThrow(/cannot be combined/);
+    delete process.env.EVM_EVIDENCE_READ_URLS;
+    delete process.env.EVM_EVIDENCE_READ_ROLES;
+    expect(() => quorumClient([{ role: "only", client: new FakeChain().pub as never }])).toThrow(
+      /at least 2/
+    );
+  });
+
+  it("full mode ignores the read-endpoint list: traces are identical with it set", async () => {
+    for (const fault of ["none", "rpc_stale", "sale_reorged"] as NaiveFault[]) {
+      delete process.env.EVM_EVIDENCE_READ_URLS;
+      const plain = await naiveTrace(fault);
+      process.env.EVM_EVIDENCE_READ_URLS = "http://127.0.0.1:1,http://127.0.0.1:2";
+      const withList = await naiveTrace(fault);
+      delete process.env.EVM_EVIDENCE_READ_URLS;
+      expect(withList).toEqual(plain);
+    }
+  });
+});
+
+describe("full_quorum: agreement rule", () => {
+  beforeEach(() => setEvidenceMode("full_quorum"));
+
+  it("honest endpoints agree: the same decisions and messages as the full layer", async () => {
+    for (const fault of [
+      "none",
+      "receipt_hidden",
+      "sale_dropped",
+      "sale_reorged",
+    ] as NaiveFault[]) {
+      setEvidenceMode("full_quorum");
+      const q = await naiveTrace(fault, (c) => quorumOf(c, {}, {}));
+      setEvidenceMode("full");
+      process.env.EVM_EVIDENCE_LAYER = "1";
+      const f = await naiveTrace(fault);
+      delete process.env.EVM_EVIDENCE_LAYER;
+      expect(q.results).toEqual(f.results);
+      expect(q.sales).toBe(f.sales);
+    }
+  });
+
+  it("one lagging (stale) endpoint is outvoted by height: the advanced consistent view confirms the sale", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const stale: EndpointFaults = { stale: null };
+    // Armed when the sale mines, as the harness's rpc_stale proxy does: frozen one block before the sale.
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      stale.stale = { block: c.head - 1, nonce: 7, usdc: 0n };
+      c.submit = submit;
+      return h;
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const results = await naiveQuorum(c, quorumOf(c, stale, {}));
+    expect(results).toEqual([{ ok: "confirmed" }]);
+    expect(c.sales()).toBe(1);
+    const q = lastQuorum();
+    expect(q).toMatchObject({
+      ok: true,
+      chosen: "read1",
+      members: ["read0", "read1"],
+      lagging: ["read0"],
+      quorum: 2,
+    });
+    expect(q.heads[0]).toBe(100);
+    expect(q.heads[1]).toBeGreaterThanOrEqual(102);
+    expect(
+      warn.mock.calls.some((a) =>
+        /\[evidence\] quorum agreed: chosen read1.*lagging \(stale\): read0/.test(String(a[0]))
+      )
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("an endpoint within the lag tolerance is not reported as lagging", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const behind: EndpointFaults = { stale: null };
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      c.submit = submit;
+      return h;
+    };
+    // One block behind at every read: inside the default tolerance of 1.
+    const ep = endpoint(c, behind);
+    const lagged = { ...ep, getBlockNumber: async () => BigInt(c.head - 1) };
+    const pub = quorumClient(
+      [
+        { role: "read0", client: lagged as never },
+        { role: "read1", client: endpoint(c) as never },
+      ],
+      { stallMs: 1_000 }
+    );
+    expect(await naiveQuorum(c, pub)).toEqual([{ ok: "confirmed" }]);
+    expect(lastQuorum().lagging).toEqual([]);
+  });
+
+  it("a lagging endpoint that is not a prefix of the advanced view breaks the quorum (N = 2)", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const pub = quorumOf(c, {}, {});
+    await sendVia(c, pub).catch(() => {});
+    resetEvidenceLedgers();
+    // read0 sits on another fork from block 95 on: its head block's hash is not in read1's chain.
+    const forked = quorumOf(
+      c,
+      { fork: { fromBlock: 95 }, stale: { block: c.head - 1, nonce: 8, usdc: 100n } },
+      {}
+    );
+    const e: any = await sendVia(c, forked).then(
+      () => null,
+      (x) => x
+    );
+    expect(e?.code).toBe("NETWORK_ERROR");
+    expect(e.message).toMatch(/different blocks at the same height/);
+  });
+
+  it("no quorum (endpoints on different forks) => wait, and ask_user after N rounds; nothing re-sent", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    const fork: EndpointFaults = {};
+    const submit = c.submit.bind(c);
+    c.submit = (a: any) => {
+      const h = submit(a);
+      fork.fork = { fromBlock: c.head }; // read0 shows another block at the sale's height from now on
+      c.submit = submit;
+      return h;
+    };
+    const pub = quorumOf(c, fork, {});
+    const e = await pending(sendVia(c, pub));
+    expect(ev(e).decision).toBe("wait");
+    expect(ev(e).waitReason).toBe("no_quorum");
+    expect(e.message).toMatch(
+      /RPC endpoints disagree about the chain \(the endpoints report different blocks at the same height\)/
+    );
+    expect(e.message).toMatch(/Do not send it again/);
+    const r = evidenceLedger(1, SENDER)[0];
+    for (let i = 0; i < 5; i++) await checkOnce(pub, r, c.deps());
+    expect(r.decision).toBe("ask_user");
+    expect(c.wallet.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("an endpoint that does not answer: no quorum with N = 2, quorum with N = 3", async () => {
+    const c2 = new FakeChain();
+    c2.tickEvery(30_000);
+    const e: any = await sendVia(c2, quorumOf(c2, {}, { down: true })).then(
+      () => null,
+      (x) => x
+    );
+    expect(e?.code).toBe("NETWORK_ERROR");
+    expect(e.message).toMatch(/Nothing was sent: .*1 of 2 endpoints did not answer/);
+    expect(c2.wallet.sendTransaction).not.toHaveBeenCalled();
+    resetEvidenceLedgers();
+    const c3 = new FakeChain();
+    c3.tickEvery(30_000);
+    expect((await sendVia(c3, quorumOf(c3, {}, { down: true }, {}))).decision).toBe("confirmed");
+    expect(lastQuorum()).toMatchObject({ ok: true, members: ["read0", "read2"], quorum: 2 });
+  });
+
+  it("an endpoint stalled past the stall timeout abstains", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = new FakeChain();
+      const slow = { ...endpoint(c), getBlockNumber: () => new Promise<bigint>(() => {}) };
+      const pub = quorumClient(
+        [
+          { role: "read0", client: slow as never },
+          { role: "read1", client: endpoint(c) as never },
+        ],
+        { stallMs: 1_000 }
+      );
+      const p = pub.getTransactionCount({ address: SENDER, blockTag: "pending" });
+      const settled = expect(p).rejects.toThrow(/1 of 2 endpoints did not answer/);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("full_quorum: a lying endpoint (success receipt where the others find nothing)", () => {
+  beforeEach(() => setEvidenceMode("full_quorum"));
+
+  it("N = 2: the tie leaves the receipt unresolved => wait (no confirmation, no 'dropped'); the same-nonce repeat lands once", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      if (liar.lieAbout!.size === 0) liar.lieAbout!.add(h);
+      return h;
+    });
+    const results = await naiveQuorum(c, quorumOf(c, liar, {}));
+    expect(results[0].evidence.decision).toBe("wait");
+    expect(results[0].evidence.waitReason).toBe("no_quorum");
+    expect(results[0].message).toMatch(/no majority on the swap's receipt or inclusion/);
+    expect(results[0].message).not.toMatch(/dropped|confirmed/);
+    expect(results[1]).toEqual({ ok: "confirmed" });
+    expect(c.sales()).toBe(1);
+    expect([...c.canonicalByNonce().values()].every((n) => n <= 1)).toBe(true);
+    const r = evidenceLedger(1, SENDER)[0];
+    expect(new Set(r.sentNonces)).toEqual(new Set([r.pinnedNonce]));
+    expect(lastQuorum().disagreements).toContain("receipt");
+  });
+
+  it("N = 3: the liar is outvoted; the layer sees what the honest majority sees (dropped => same-nonce re-send)", async () => {
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      if (liar.lieAbout!.size === 0) liar.lieAbout!.add(h);
+      return h;
+    });
+    const results = await naiveQuorum(c, quorumOf(c, liar, {}, {}));
+    expect(results[0].evidence.decision).toBe("resend_same_nonce");
+    expect(results[1]).toEqual({ ok: "confirmed" });
+    expect(c.sales()).toBe(1);
+  });
+
+  it("the full layer on the lying endpoint alone would confirm a transaction that never landed (the case quorum reads cover)", async () => {
+    setEvidenceMode("full");
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    const c = new FakeChain();
+    c.tickEvery(30_000);
+    c.dropNext = true;
+    const liar: EndpointFaults = { lieAbout: new Set() };
+    const send = c.wallet.sendTransaction;
+    c.wallet.sendTransaction = vi.fn(async (a: any) => {
+      const h = await send(a);
+      liar.lieAbout!.add(h);
+      return h;
+    });
+    // The lie covers the receipt only; the balance effect never appears, so even the single-node layer does not
+    // report confirmed, but it does report the swap as included (and never dropped).
+    const e = await pending(sendVia(c, endpoint(c, liar)));
+    expect(ev(e).state).toBe("included");
+    expect(c.sales()).toBe(0);
+  });
+});
+
+describe("full_quorum: preflight state and abstention safety", () => {
+  beforeEach(() => setEvidenceMode("full_quorum"));
+  const clients = (...xs: any[]) =>
+    quorumClient(
+      xs.map((client, i) => ({ role: `read${i}`, client })),
+      { stallMs: 1000 }
+    );
+
+  it("same-head nonce disagreement prevents the first send", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const q = clients({ ...endpoint(c), getTransactionCount: async () => 9 }, endpoint(c));
+    await expect(sendVia(c, q)).rejects.toThrow(/Nothing was sent.*nonce/);
+    expect(c.wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("same-head balance disagreement cannot be swallowed as an unknown snapshot before sending", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const q = clients({ ...endpoint(c), readContract: async () => 999n }, endpoint(c));
+    await expect(sendVia(c, q)).rejects.toThrow(/Nothing was sent.*balance/);
+    expect(c.wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["nonce", "balance"])(
+    "an abstention on %s counts against the eligible preflight quorum",
+    async (fact) => {
+      const c = new FakeChain();
+      c.tickEvery(5000);
+      const other = endpoint(c);
+      const down = async () => {
+        throw new Error("state endpoint unavailable");
+      };
+      const q = clients(
+        endpoint(c),
+        fact === "nonce"
+          ? { ...other, getTransactionCount: down }
+          : { ...other, readContract: down }
+      );
+      await expect(sendVia(c, q)).rejects.toThrow(/Nothing was sent/);
+      expect(c.wallet.sendTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it("one receipt supporter plus one abstention is not a receipt majority", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const q = clients(endpoint(c), {
+      ...endpoint(c),
+      getTransactionReceipt: async () => {
+        throw new Error("receipt endpoint unavailable");
+      },
+    });
+    const e = await pending(sendVia(c, q));
+    expect(ev(e).waitReason).toBe("no_quorum");
+    expect(c.sales()).toBe(1);
+  });
+
+  it("a prior confirmation becomes pending when the providers no longer form a quorum", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const fault: EndpointFaults = {};
+    const q = clients(endpoint(c), endpoint(c, fault));
+    expect((await sendVia(c, q)).decision).toBe("confirmed");
+    const record = latestIntent(1, SENDER)!;
+    fault.fork = { fromBlock: c.head };
+    await checkOnce(q, record, c.deps());
+    expect(record.decision).toBe("wait");
+    expect(record.waitReason).toBe("no_quorum");
+    delete fault.fork;
+    expect((await sendVia(c, q)).decision).toBe("confirmed");
+    expect(c.sales()).toBe(1);
+  });
+
+  it("two agreeing providers outvote the first provider's bad nonce without blocking valid progress", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const q = clients(
+      { ...endpoint(c), getTransactionCount: async () => 9 },
+      endpoint(c),
+      endpoint(c)
+    );
+    expect((await sendVia(c, q)).decision).toBe("confirmed");
+    expect(c.sent[0].nonce).toBe(7);
+    expect(c.sales()).toBe(1);
+  });
+  it("all receipt RPC abstentions are uncertainty, not agreement that a receipt is absent", async () => {
+    const c = new FakeChain();
+    c.tickEvery(5000);
+    const noReceipt = () => ({
+      ...endpoint(c),
+      getTransactionReceipt: async () => {
+        throw new Error("receipt RPC unavailable");
+      },
+    });
+    const e = await pending(sendVia(c, clients(noReceipt(), noReceipt())));
+    expect(ev(e).waitReason).toBe("no_quorum");
   });
 });

@@ -8,7 +8,10 @@
 #        (environment or KEYS_ENV=<.env file>)
 #
 # Cohort file: one cohort per line, '#' starts a comment:
-#   <task|-> <model> <condition> <scenarios,comma,separated> <reps>        ('-' is the frozen development task)
+#   <task|-> <model> <condition> <scenarios,comma,separated> <reps> [--option=value ...]   ('-' is the frozen development task)
+#   WS-J: a scenario token random:A-B (or random:N) runs the random schedule family for seeds A..B (run-v2.ts
+#   --scenarios=...,random --schedule-seed=A-B). Optional trailing run-v2.ts options, from a fixed list: --arm=, --mock-agent=,
+#   --idle-block-ms=, --schedule-size=, --agent=, --reorg-trigger=. Example: - luna stock random:1-20 1 --arm=full --mock-agent=naive
 # Cohort k (from 0, in file order) runs in lane k mod N; each lane runs its cohorts one after another.
 #   Ports:  lane i passes --port-base=<port-base + i*port-step> to run-v2.ts. The step must keep the four offset ports
 #           (Anvil 18545, fork proxy 18546, LLM proxy 18650, mock gate 18652) disjoint across lanes: 100 does.
@@ -53,9 +56,12 @@ LINES=()
 while IFS= read -r line || [ -n "$line" ]; do
   line=${line%%#*}; [ -z "${line//[[:space:]]/}" ] && continue
   read -r task model condition scenarios reps extra <<<"$line"
-  [ -n "$reps" ] && [ -z "${extra:-}" ] && [[ "$reps" =~ ^[1-9][0-9]*$ ]] || die "bad cohort line: $line"
-  [[ "$task$model$condition$scenarios" =~ ^[A-Za-z0-9_,-]+$ ]] || die "bad cohort line: $line"
-  LINES+=("$task $model $condition $scenarios $reps")
+  [ -n "$reps" ] && [[ "$reps" =~ ^[1-9][0-9]*$ ]] || die "bad cohort line: $line"
+  [[ "$task$model$condition" =~ ^[A-Za-z0-9_,-]+$ ]] && [[ "$scenarios" =~ ^[A-Za-z0-9_,:-]+$ ]] || die "bad cohort line: $line"
+  for o in ${extra:-}; do [[ "$o" =~ ^--(arm|mock-agent|idle-block-ms|schedule-size|agent|reorg-trigger)=[A-Za-z0-9_-]+$ ]] || die "bad option $o in cohort line: $line"; done
+  n_random=$(tr ',' '\n' <<<"$scenarios" | grep -c '^random'); [ "$n_random" -le 1 ] || die "one random token per cohort line: $line"
+  if [ "$n_random" -eq 1 ]; then tr ',' '\n' <<<"$scenarios" | grep -Eq '^random:[0-9]+(-[0-9]+)?$' || die "random needs a seed range (random:A-B): $line"; fi
+  LINES+=("$task $model $condition $scenarios $reps${extra:+ $extra}")
 done < "$COHORTS"
 [ ${#LINES[@]} -gt 0 ] || die "no cohorts in $COHORTS"
 dest_of() { read -r task model condition _ <<<"${LINES[$1]}"; echo "$PWD/$HERE/results-$TAG-$1-${task/-/frozen}-$model-$condition"; }
@@ -83,10 +89,17 @@ PY
 all_dests() { for k in "${!LINES[@]}"; do dest_of "$k"; done; }
 
 run_cohort() { # lane k
-  local lane=$1 k=$2 base=$3 task model condition scenarios reps dest log
-  read -r task model condition scenarios reps <<<"${LINES[$k]}"
+  local lane=$1 k=$2 base=$3 task model condition scenarios reps opts dest log seeds="" scen=""
+  read -r task model condition scenarios reps opts <<<"${LINES[$k]}"
   dest=$(dest_of "$k"); log="$LOGS/$k.console.log"
-  local run=(--mode="$MODE" --models="$model" --condition="$condition" --scenarios="$scenarios" --reps="$reps" --port-base="$base" --dest="$dest")
+  # random:A-B -> --scenarios=...,random --schedule-seed=A-B
+  local tok; for tok in ${scenarios//,/ }; do
+    case $tok in random:*) seeds=${tok#random:}; tok=random ;; esac
+    scen=${scen:+$scen,}$tok
+  done
+  local run=(--mode="$MODE" --models="$model" --condition="$condition" --scenarios="$scen" --reps="$reps" --port-base="$base" --dest="$dest")
+  [ -n "$seeds" ] && run+=(--schedule-seed="$seeds")
+  local o; for o in ${opts:-}; do run+=("$o"); done
   [ "$task" != - ] && run+=(--task="$task")
   if [ "$MODE" = live ]; then
     local mine=() j

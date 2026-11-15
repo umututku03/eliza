@@ -98,3 +98,16 @@ It is a false hold when the predicate has held continuously since a time S with 
 - The effect is read from receipt logs, not from balances at T.
 - In fault cells the agent's view is faulted by design. A predicate-true hold there measures the fault, not the
   overhead, so the protocol's rate is read on `normal`.
+
+
+## Takeover verification (Codex, 15 November)
+
+The original results-wss-ev-d1 cohort at 6dce2829ce completed. Its independent audit passes and all 18 tamper cases are rejected; raw reports are retained locally. The frozen task files and original seed remain unchanged at this stage. Integration preserves the logging-only behavior while retaining the later correctness fixes to operation identity, nonce reservations and reorg recovery.
+
+The 250 ms interval is a target sampling period, not a guaranteed RPC latency bound. False-hold counts use sampled chain state and receipt effects; they are not exact wall-clock or balance-history proofs. The no-fault rate and fault-induced holds must be distinguished.
+
+Authored-by: Codex (OpenAI).
+
+## Neutral identity amendment executed (15 November)
+
+The subsequent auto-mode authorization covers the proposed free re-freeze. The fork seed and the four task-file agent fields now use the neutral identity. Structural comparison confirms that no other task field changed, including timestamps and monetary constraints. Exact old/new file hashes are appended to PREREGISTRATION §9. Final-source fork mocks are required before integration; no paid check is authorized. Unit-test arbitrary-address constants remain historical fixtures.
