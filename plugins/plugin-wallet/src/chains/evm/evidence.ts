@@ -142,6 +142,7 @@ export interface IntentRecord {
   rounds: number;
   lastSendAtMs: number;
   headSince: { head: number; atMs: number } | null;
+  /** Last positively canonical inclusion from a receipt or transaction lookup. */
   receiptSeen: { hash: Hex; block: number; blockHash: Hex } | null;
   landed: boolean;
   request: StoredRequest;
@@ -246,6 +247,8 @@ export function intentKey(i: EvidenceIntent): string {
 
 // ---- ledger (in memory, one per chain and sender in this process) ----------------------------------------
 const ledgers = new Map<string, IntentRecord[]>();
+// A guard may learn completion without reporting it to the operation caller.
+const reportedOutcomes = new WeakSet<IntentRecord>();
 const sendQueues = new Map<string, Promise<void>>();
 /** Serialize nonce allocation, reservation and dispatch for one sender, not the polling loop. */
 async function serializeSend<T>(intent: EvidenceIntent, run: () => Promise<T>): Promise<T> {
@@ -276,9 +279,9 @@ export function resetEvidenceLedgers(): void {
   announced = null;
 }
 
-/** Unresolved for the guard: sent, pending, included with fewer than K confirmations, orphaned and not re-sent. */
+/** Unresolved reservations include dropped operations until they are retried or explicitly resolved. */
 export function isUnresolved(r: IntentRecord): boolean {
-  if (r.state === "sent" || r.state === "pending" || r.state === "orphaned") return true;
+  if (r.state === "sent" || r.state === "pending" || r.state === "dropped" || r.state === "orphaned") return true;
   // A hidden receipt may still have positive canonical inclusion and balance evidence.
   if (r.state === "included") {
     const o = r.observations[r.observations.length - 1];
@@ -292,7 +295,9 @@ export function findOpenIntent(intent: EvidenceIntent): IntentRecord | undefined
   const mode = evidenceMode();
   if (mode === "pace_style") return undefined; // stateless: no ledger
   // Baselines: an intent stays open until the wallet has reported its outcome (success or a revert).
-  const open = mode === "full" ? (r: IntentRecord) => r.state !== "confirmed" && r.state !== "failed" : (r: IntentRecord) => r.baseline?.reported == null;
+  const open = evidenceLayerEnabled()
+    ? (r: IntentRecord) => r.state !== "failed" && (r.state !== "confirmed" || !reportedOutcomes.has(r))
+    : (r: IntentRecord) => r.baseline?.reported == null;
   return [...evidenceLedger(intent.chainId, intent.sender)].reverse().find((r) => r.key === key && open(r));
 }
 /** The most recent record that is unresolved, else the most recent record. */
@@ -337,16 +342,24 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
     included = Number(receipt.blockNumber);
     const b = await blockOf(included);
     canonical = b ? b.hash === receipt.blockHash && Number(b.number) === included : null;
-    if (receipt.status === "success" && canonical !== false) r.receiptSeen = { hash: best!.hash, block: included, blockHash: receipt.blockHash };
   } else if (tx?.blockNumber !== null && tx?.blockNumber !== undefined) {
     included = Number(tx.blockNumber);
     const b = await blockOf(included);
     canonical = b ? b.hash === tx.blockHash && Number(b.number) === included : null;
   }
   let orphanEvidence = false;
-  if (!receipt && r.receiptSeen) {
+  if (r.receiptSeen) {
     const b = await blockOf(r.receiptSeen.block);
     orphanEvidence = !!b && Number(b.number) === r.receiptSeen.block && b.hash !== r.receiptSeen.blockHash;
+  }
+  const balanceEffectSeen = effectSeen(r, effectNow);
+  if (orphanEvidence) r.landed = false;
+  const blockHash = receipt?.blockHash ?? tx?.blockHash;
+  // Keep the old anchor while an orphaned transaction is still below K on its new branch.
+  if (canonical === true && included !== null && blockHash && best?.hash &&
+      (!receipt || receipt.status === "success") &&
+      (!orphanEvidence || (head - included + 1 >= EVIDENCE_K && balanceEffectSeen))) {
+    r.receiptSeen = { hash: best.hash, block: included, blockHash };
   }
   const o: EvidenceObservation = {
     atMs: deps.now(),
@@ -361,7 +374,7 @@ export async function observe(pub: EvidencePublicClient, r: IntentRecord, deps: 
     orphanEvidence,
     confirmations: included !== null && canonical === true ? Math.max(0, head - included + 1) : 0,
     nonceLatest,
-    balanceEffectSeen: effectSeen(r, effectNow),
+    balanceEffectSeen,
   };
   if (!r.headSince || r.headSince.head !== head) r.headSince = { head, atMs: o.atMs };
   r.observations.push(o);
@@ -375,11 +388,12 @@ export function decide(r: IntentRecord, now: number): { decision: EvidenceDecisi
   const included = (o.receiptStatus === "success" || o.txBlock !== null) && o.canonical !== false;
   const inclState: IntentState = included ? "included" : o.txKnown ? "pending" : "sent";
   if (o.receiptStatus === "reverted") return { decision: "failed", waitReason: null, state: "failed" };
-  if (!o.receiptStatus && r.receiptSeen && o.orphanEvidence && !o.txKnown) return { decision: "orphaned", waitReason: null, state: "orphaned" };
+  const canonicalEffect = o.canonical === true && o.confirmations >= EVIDENCE_K && o.balanceEffectSeen;
+  if (o.orphanEvidence && !canonicalEffect) return { decision: "orphaned", waitReason: null, state: "orphaned" };
   if (r.landed) {
     // The node rejected a same-nonce replacement as "nonce too low": the pinned nonce is used. Verify the effect.
     // A lost acknowledgement can leave us with no hash. Do not fabricate a successful receipt identity.
-    if (o.balanceEffectSeen && r.hashes.length > 0) return { decision: "confirmed", waitReason: null, state: "confirmed" };
+    if (canonicalEffect && r.hashes.length > 0 && (o.receiptStatus === "success" || o.txBlock !== null)) return { decision: "confirmed", waitReason: null, state: "confirmed" };
     return { decision: "landed", waitReason: "no_effect", state: inclState === "sent" ? "pending" : inclState };
   }
   if (o.receiptStatus === "success" && o.canonical !== false) {
@@ -410,9 +424,11 @@ export async function checkOnce(pub: EvidencePublicClient, r: IntentRecord, deps
   const wasConfirmed = r.state === "confirmed";
   const d = decide(r, deps.now());
   // A confirmed intent changes only on positive reorg evidence, never on a (possibly stale) missing read.
-  if (wasConfirmed && d.decision !== "orphaned") return r;
-  apply(r, d);
-  if (countRound) closeRound(r);
+  if (!(wasConfirmed && d.decision !== "orphaned")) {
+    apply(r, d);
+    if (countRound) closeRound(r);
+  }
+  if (countRound && (r.state === "confirmed" || r.state === "failed")) reportedOutcomes.add(r);
   return r;
 }
 
@@ -437,7 +453,7 @@ export function evidenceMessage(r: IntentRecord): string {
     case "orphaned":
       return `${what} was confirmed in block ${r.receiptSeen?.block}, but that block is no longer part of the chain (reorg). The ${r.intent.label} is not on chain now. Repeating the same ${r.intent.label} is safe (same nonce).${tail}`;
     case "landed":
-      return `${what} already used its nonce on chain, but its balance change is not visible yet. Do not send it again; check its status with tx_status.${tail}`;
+      return `The reserved nonce has been used, but I cannot confirm ${what.toLowerCase()} from canonical transaction evidence yet. Check its status with tx_status.${tail}`;
     case "ask_user": {
       const facts = [
         o?.receiptStatus ? `receipt ${o.receiptStatus} in block ${o.receiptBlock} (${o.confirmations} confirmation${o.confirmations === 1 ? "" : "s"})` : "no receipt visible",
@@ -637,7 +653,10 @@ export async function sendWithEvidence(o: {
   }
   closeRound(r);
   const hash = (r.observations[r.observations.length - 1]?.hash ?? r.hashes[r.hashes.length - 1]) as Hex;
-  if (r.decision === "confirmed" || r.decision === "failed") return { hash, decision: r.decision, record: r };
+  if (r.decision === "confirmed" || r.decision === "failed") {
+    reportedOutcomes.add(r);
+    return { hash, decision: r.decision, record: r };
+  }
   if (ablation === "no_grading")
     throw new EvidenceError("EVIDENCE_PENDING", hash ? `Timed out while waiting for transaction with hash "${hash}" to be confirmed.` : "Transaction failed: confirmation could not be established.", r);
   throw new EvidenceError("EVIDENCE_PENDING", evidenceMessage(r), r);
