@@ -2,7 +2,7 @@
   "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
   "results": [
     {
-      "folder": "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-ws-agent2/research/agent-harness-v2/results-wsa-agent2-faults-02",
+      "folder": "research/agent-harness-v2/results-wsa-agent2-faults-02",
       "mode": "mock",
       "status": "complete",
       "episodes": 6,
