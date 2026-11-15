@@ -1230,3 +1230,82 @@ describe("refusals the agent can act on", () => {
     expect(wallet.sendTransaction).not.toHaveBeenCalled();
   });
 });
+
+// ---- byte-identity of the full layer (WS-Q) ------------------------------------------------------------------
+/** Every call the layer makes on the read client and the wallet, in order, JSON-safe. */
+function traced<T extends Record<string, any>>(obj: T, log: unknown[], prefix: string): T {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj))
+    out[k] =
+      typeof v === "function"
+        ? async (...args: any[]) => {
+            const { account: _a, chain: _c, abi: _abi, ...rest } = (args[0] ?? {}) as Record<string, unknown>;
+            log.push(`${prefix}.${k} ${JSON.stringify(rest, (_, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+            return v(...args);
+          }
+        : v;
+  return out as T;
+}
+type NaiveFault = "none" | "receipt_hidden" | "sale_dropped" | "rpc_stale" | "sale_reorged";
+/** The naive-agent run of the guarantee tests (repeat the sale once after a non-success), through `pubFor(c)`. */
+async function naiveTrace(fault: NaiveFault, pubFor: (c: FakeChain) => unknown = (c) => c.pub) {
+  resetEvidenceLedgers();
+  const c = new FakeChain();
+  c.tickEvery(30_000);
+  if (fault === "receipt_hidden") c.hideNext = true;
+  if (fault === "sale_dropped") c.dropNext = true;
+  if (fault === "sale_reorged") {
+    const tick = c.onTick!;
+    let reorged = false;
+    c.onTick = (t) => {
+      if (t >= 20_000 && !reorged) {
+        reorged = true;
+        c.reorg(101);
+      }
+      tick(t);
+    };
+  }
+  const log: unknown[] = [];
+  const pub = traced(pubFor(c) as Record<string, any>, log, "pub");
+  const wallet = traced(c.wallet as Record<string, any>, log, "wallet");
+  const results: unknown[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (fault === "rpc_stale" && attempt === 0) {
+      const submit = c.submit.bind(c);
+      c.submit = (a: any) => {
+        const lag = c.head;
+        const h = submit(a);
+        c.lagBlock = lag;
+        c.lagNonce = 7;
+        c.lagUsdc = 0n;
+        c.submit = submit;
+        return h;
+      };
+    }
+    try {
+      const r = await sendWithEvidence({
+        walletClient: wallet as never,
+        publicClient: pub as never,
+        request: { account: ACCOUNT, chain: mainnet, to: ROUTER, value: SALE_WEI, data: saleData() },
+        intent: saleIntent(),
+        deps: c.deps(),
+      });
+      results.push({ ok: r.decision, hash: r.hash });
+      break;
+    } catch (e) {
+      results.push({ error: (e as Error).message, code: (e as EvidenceError).code });
+      c.lagBlock = null;
+    }
+  }
+  // One JSON line per record (observations included), so the snapshot stays compact.
+  const ledger = evidenceLedger(1, SENDER).map((r) => JSON.stringify(r, (k, x) => (k === "account" || k === "chain" ? undefined : typeof x === "bigint" ? `${x}n` : x)));
+  return { calls: log, results, ledger, sales: c.sales(), t: c.t };
+}
+
+describe("full layer: byte-identical traces (snapshot taken before full_quorum existed)", () => {
+  for (const fault of ["none", "receipt_hidden", "sale_dropped", "rpc_stale", "sale_reorged"] as NaiveFault[]) {
+    it(`${fault}: read/write calls, results and ledger`, async () => {
+      expect(await naiveTrace(fault)).toMatchSnapshot();
+    });
+  }
+});
