@@ -1,8 +1,9 @@
 # Agent interface: what an agent must do to be benchmarked
 
-Status: 2026-11-14 (WS-A). This is the contract between `run-v2.ts` (the runner) and an agent under test. Two agents meet it:
+Status: 2026-11-15 (WS-A, WS-M). This is the contract between `run-v2.ts` (the runner) and an agent under test. Three agents meet it:
 - `episode-child-v2.ts`: stock ElizaOS v2, `--agent=elizaos`, the default;
-- `agent2-child.ts`: a plain function-calling loop with no framework, `--agent=agent2`.
+- `agent2-child.ts`: a plain function-calling loop with no framework, `--agent=agent2`;
+- `claudecode-child.ts`: Claude Code run headless with only the MCP wallet server, `--agent=claudecode`.
 
 The runner owns the fork, the fork RPC fault proxy, the LLM egress proxy and all scoring. The agent is one child process per episode.
 
@@ -109,6 +110,43 @@ agent2 is an OpenAI Chat Completions loop with no framework:
 - `--condition=stock` only. agent2 does not redeem delegations, so plan conditions are refused.
 - OpenAI-format models only.
 - Episode ids use the tag `a2`, for example `luna-a2-r1-normal`.
+
+## claudecode (Claude Code with the MCP wallet server)
+
+**Tools.** `mcp-wallet-server.ts` is a stdio MCP server (official SDK, `@modelcontextprotocol/sdk` 1.30.1) that serves agent2's four tools with the same names, descriptions and JSON schemas. Both use `wallet-tools.ts`, so the chain calls, route, 60 s receipt poll, preview text and gate are the same code. Claude Code sees them as `mcp__wallet__get_balances`, `mcp__wallet__quote_swap`, `mcp__wallet__swap` and `mcp__wallet__tx_status`. The model-visible result text is agent2's tool message content. Workflow tasks (A1 `approve_token`, L1 `aave_supply`; `toolsFor` in `wallet-tools.ts`) are agent2-only: the MCP server serves the four swap2 tools, and run-v2 refuses `--agent=claudecode` on a workflow task as unsupported.
+
+**Confirmation gate.** An MCP server never sees user turns, and Claude Code starts a new server process for every `claude -p` run. The harness therefore writes the gate's inputs to a gate file before each user turn (`gateBeginTurn`: the turn number and whether the message is a yes; a message that is not a yes clears the pending previews, as agent2 does). The server loads the pending previews before each tool call and saves them after, and it runs tool calls one at a time. This is agent2's gate step for step, without a control endpoint.
+
+**Turns.** Each user turn is one `claude -p` run, with the message on stdin and `--output-format stream-json --verbose`. The first turn sets `--session-id <uuid>`; later turns pass `--resume <uuid>`. The turn's `actionResults` come from the server's JSONL log (each call's turn, arguments, full result and `gateKey`); `toolCalls`, the session's tool list and permission denials come from the stream.
+
+**Lockdown.**
+- **Flags:** `--bare`, `--tools ""`, `--strict-mcp-config --mcp-config <wallet only>`, `--system-prompt-file` (`claudecode-system-prompt.txt`, the agent2 prompt, wallet address filled in), `--permission-mode dontAsk`, `--allowedTools` set to the four tools, `--disable-slash-commands`.
+- **Environment:** a fresh `CLAUDE_CONFIG_DIR`, `HOME` and working folder per episode with neutral random names, so no episode id appears in a path the CLI may show the model. `ANTHROPIC_BASE_URL=${llmUrl}/anthropic`, a placeholder `ANTHROPIC_API_KEY`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, auto-update, telemetry and error reporting off. All model aliases and the small/fast model are set to the cohort model.
+- **Network:** the CLI and the MCP server it starts run under `sandbox-exec`, with outbound network denied except to localhost. The child refuses to start without `sandbox-exec`, or if `llmUrl` is not local.
+
+**Harness properties to report.** Claude Code prepends two lines of its own to the system prompt: a billing header line and an agent identity line. API retries cannot be turned off; they would show as extra proxy calls. Each request asks for `max_tokens` 128000 with adaptive thinking, so in live mode the proxy's per-call reservation is large. For Haiku that is about $0.064 a call before settlement; set `--cohort-cap-usd` with that in mind.
+
+**Runner limits.** `--condition=stock` only, Anthropic models only, tag `cc` (for example `haiku-cc-r1-normal`). The manifest records `agent`, `claudeVersion`, `systemPromptSha256` and `mcpTools`. The verifier requires:
+- the four tools, exactly, in every request;
+- no other tool call in the request history, the stream or the session tool list;
+- no permission denials;
+- the MCP log matching the stream's tool calls turn by turn;
+- agent2's gate checks.
+
+**Mock mode.** The same scripted plan, with `WALLET_SWAP` mapped to `mcp__wallet__swap`. The egress proxy's existing Anthropic mock (with SSE streaming) answers Claude Code unchanged.
+
+**Live smoke procedure (not yet run; needs an approved budget).** One episode, from a committed tree:
+
+```
+BENCH_ALLOW_LIVE=1 ANVIL_BIN=... bun --conditions=eliza-source --env-file=$FORK_ENV --env-file=$KEYS_ENV \
+  research/agent-harness-v2/run-v2.ts --mode=live --agent=claudecode --models=haiku --scenarios=normal --reps=1 \
+  --port-base=<7000-7400> --cohort-cap-usd=<cap> --cumulative-cap-usd=<prior+cap> --prior-usd=<prior> --dest=<new dir>
+```
+
+The runner always runs the normal control in live mode (it costs no model calls). Afterwards check:
+- `llm/ledger.jsonl`: every call is `/anthropic/v1/messages`, there are no `refused_blinding` entries, and retries are visible as extra calls;
+- each turn's `cli.tools`: exactly the four tools;
+- `verify-v2.py` passes.
 
 ## Mock mode
 

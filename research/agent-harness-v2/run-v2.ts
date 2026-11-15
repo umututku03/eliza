@@ -4,7 +4,7 @@
 //
 //   bun --conditions=eliza-source research/agent-harness-v2/run-v2.ts --mode=mock|live --models=luna,haiku --dest=<dir>
 //        [--condition=stock|existing_controls|plan_guard|checkpoint_approx] [--task=<id> [--tasks=research/benchmark/tasks.json]]
-//        [--reps=2] [--scenarios=a,b] [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N] [--agent=elizaos|agent2]
+//        [--reps=2] [--scenarios=a,b] [--cohort-cap-usd=N --cumulative-cap-usd=N --prior-usd=N] [--agent=elizaos|agent2|claudecode]
 //        [--port-base=N] [--lag-ms=N --reorg-delay-ms=N --hide-ms=N] [--reorg-trigger=delay|next-send]
 //
 // --port-base=N adds N to every fixed port (Anvil, fork proxy, LLM proxy, mock gate), so cohorts can run in
@@ -15,6 +15,8 @@
 //
 // --agent=agent2 runs the framework-free agent (agent2-child.ts, AGENT-INTERFACE.md) instead of ElizaOS: stock
 // condition and OpenAI-format models only; episode ids use the tag "a2". The default (elizaos) is unchanged.
+// --agent=claudecode runs Claude Code headless (claudecode-child.ts) with only the MCP wallet server's four tools
+// (mcp-wallet-server.ts, agent2's tools and gate): stock condition and Anthropic models only; tag "cc".
 //        [--evidence [--evidence-ablate=none|no_nonce_pin|no_grading|no_refusal_decode]] [--mock-agent=scripted|naive]
 //        [--idle-block-ms=N] [--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style]
 //
@@ -130,6 +132,11 @@ if (String(frozen.agentSupport?.[AGENT_KIND_ARG] ?? "").startsWith("unsupported"
   throw new Error(
     `Task ${frozen.id} is unsupported for --agent=${AGENT_KIND_ARG}: ${frozen.agentSupport[AGENT_KIND_ARG]}`,
   );
+// claudecode (MCP wallet server) serves the four swap2 tools only: every workflow task is unsupported for it.
+if (WF && AGENT_KIND_ARG === "claudecode")
+  throw new Error(
+    `Task ${frozen.id} is unsupported for --agent=claudecode: the MCP wallet server has no ${WORKFLOW === "supply" ? "aave_supply" : "approve_token"} tool (swap2 tasks only)`,
+  );
 mkdirSync(join(dest, "episodes"), { recursive: true });
 const X = frozen.x,
   Y = frozen.y;
@@ -223,14 +230,18 @@ const CONDITION = arg("condition") ?? "stock";
 if (!(CONDITIONS as readonly string[]).includes(CONDITION))
   throw new Error(`Unknown --condition=${CONDITION}`);
 const AGENT_KIND = arg("agent") ?? "elizaos";
-if (!["elizaos", "agent2"].includes(AGENT_KIND))
+if (!["elizaos", "agent2", "claudecode"].includes(AGENT_KIND))
   throw new Error(`Unknown --agent=${AGENT_KIND}`);
 if (AGENT_KIND === "agent2" && CONDITION !== "stock")
   throw new Error("--agent=agent2 supports --condition=stock only");
 if (AGENT_KIND === "agent2" && models.some((m) => MODELS[m].provider !== "openai"))
   throw new Error("--agent=agent2 needs OpenAI-format models");
+if (AGENT_KIND === "claudecode" && CONDITION !== "stock")
+  throw new Error("--agent=claudecode supports --condition=stock only");
+if (AGENT_KIND === "claudecode" && models.some((m) => MODELS[m].provider !== "anthropic"))
+  throw new Error("--agent=claudecode needs Anthropic models");
 const EPISODE_CHILD =
-  AGENT_KIND === "agent2" ? "agent2-child.ts" : "episode-child-v2.ts";
+  AGENT_KIND === "agent2" ? "agent2-child.ts" : AGENT_KIND === "claudecode" ? "claudecode-child.ts" : "episode-child-v2.ts";
 const PLAN = CONDITION !== "stock"; // a delegator account holds the funds; the agent redeems delegations
 // Chain-evidence layer (plugin-wallet chains/evm/evidence.ts): --evidence sets EVM_EVIDENCE_LAYER=1 in the
 // episode and control children; --evidence-ablate=<x> (implies --evidence) sets EVM_EVIDENCE_ABLATE.
@@ -266,14 +277,14 @@ if (!["scripted", "naive"].includes(MOCK_AGENT) || (MOCK_AGENT !== "scripted" &&
 // through the fault proxy after N ms without a new block, while a child runs. N exceeds the reorg delay.
 // Every arm but none defaults to 30000; pass --idle-block-ms explicitly when comparing arms (recorded in the manifest).
 const IDLE_BLOCK_MS = Number(arg("idle-block-ms") ?? (ARM !== "none" ? 30000 : 0));
-if (AGENT_KIND === "agent2" && EVIDENCE) throw new Error("--evidence is implemented only for ElizaOS wallet sends");
+if (AGENT_KIND !== "elizaos" && EVIDENCE) throw new Error("--evidence is implemented only for ElizaOS wallet sends");
 if (WF && (CONDITION !== "stock" || ARM !== "none" || MOCK_AGENT !== "scripted"))
   throw new Error(`Workflow task ${frozen.id} runs stock, --arm=none, with the scripted mock agent only`);
 if (WF && RUN_SCENARIOS.some((s) => !WORKFLOW_SCENARIOS.includes(s)))
   throw new Error(`Workflow task ${frozen.id} supports scenarios ${WORKFLOW_SCENARIOS.join(",")} only`);
-if (AGENT_KIND === "agent2" && ARM !== "none")
-  throw new Error("Protected comparisons (--arm) run on ElizaOS only; agent2 runs --arm=none");
-const ID_TAG = AGENT_KIND === "agent2" ? "a2" : {
+if (AGENT_KIND !== "elizaos" && ARM !== "none")
+  throw new Error(`Protected comparisons (--arm) run on ElizaOS only; ${AGENT_KIND} runs --arm=none`);
+const ID_TAG = AGENT_KIND === "agent2" ? "a2" : AGENT_KIND === "claudecode" ? "cc" : {
   stock: "v2",
   existing_controls: "ec",
   plan_guard: "pg",
@@ -403,8 +414,17 @@ const files = [
   "protocol.md",
   "plan-setup.ts",
   "../benchmark/plans.ts",
-  ...(AGENT_KIND === "agent2" ? ["agent2-child.ts"] : []),
+  ...(AGENT_KIND === "agent2" ? ["agent2-child.ts", "wallet-tools.ts"] : []),
+  ...(AGENT_KIND === "claudecode"
+    ? ["claudecode-child.ts", "mcp-wallet-server.ts", "wallet-tools.ts", "claudecode-system-prompt.txt"]
+    : []),
 ];
+// Claude Code: the CLI found on PATH (as the child finds it) and its version, recorded in the manifest.
+const CLAUDE_BIN = AGENT_KIND === "claudecode" ? Bun.which("claude") : null;
+if (AGENT_KIND === "claudecode" && !CLAUDE_BIN) throw new Error("--agent=claudecode needs the claude binary on PATH");
+const CLAUDE_VERSION = CLAUDE_BIN
+  ? Bun.spawnSync([CLAUDE_BIN, "--version"]).stdout.toString().trim()
+  : null;
 // Harness labels that must never reach a model request (checked by the egress proxy before forwarding).
 export const FORBIDDEN_BASE = [
   "receipt_hidden",
@@ -530,6 +550,25 @@ const manifest = {
           "task text names token contracts",
           "scripted user approves every confirmation request and sends nothing else",
           "network guard: localhost only",
+        ],
+      }
+    : {}),
+  ...(AGENT_KIND === "claudecode"
+    ? {
+        agent: "claudecode",
+        claudeVersion: CLAUDE_VERSION,
+        systemPromptSha256: sha(join(HERE, "claudecode-system-prompt.txt")),
+        mcpTools: ["mcp__wallet__get_balances", "mcp__wallet__quote_swap", "mcp__wallet__swap", "mcp__wallet__tx_status"],
+        deviations: [
+          "claudecode: Claude Code CLI headless (claudecode-child.ts), one `claude -p` run per user turn, later turns resume the session",
+          "claudecode lockdown: --bare, --tools \"\", --strict-mcp-config with only the wallet MCP server, --system-prompt-file (claudecode-system-prompt.txt), --permission-mode dontAsk with --allowedTools = the four mcp__wallet__* tools, --disable-slash-commands, isolated config/home/working folders",
+          "claudecode tools: mcp-wallet-server.ts serves agent2's get_balances, quote_swap, swap, tx_status (wallet-tools.ts, shared code)",
+          "claudecode swap confirmation: agent2's gate; the harness records each user message's turn and yes/no in a gate file the MCP server reads",
+          "claudecode prompt: Claude Code prepends its own lines (billing header, agent identity line) to the fixed system prompt",
+          "mock plan WALLET_SWAP calls mapped to mcp__wallet__swap with the same arguments",
+          "task text names token contracts",
+          "scripted user approves every confirmation request and sends nothing else",
+          "network guard: localhost only (child fetch guard; sandbox-exec for the CLI and the MCP server)",
         ],
       }
     : {}),

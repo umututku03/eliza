@@ -34,7 +34,9 @@ CONTROL_REFUSALS = {'checkpoint_approx': {'pre_sale_shortfall', 'price_worse'}, 
 TAGS = {'plan_guard': 'pg', 'existing_controls': 'ec', 'checkpoint_approx': 'ca'}
 # Agent types (run-v2.ts --agent). agent2 (agent2-child.ts, AGENT-INTERFACE.md): stock only, OpenAI format, tag a2,
 # and exactly these tools in every request.
-AGENTS = ('elizaos', 'agent2')
+# claudecode (claudecode-child.ts): Claude Code headless with only the MCP wallet server (agent2's tools and gate):
+# stock only, Anthropic models, tag cc; every request offers exactly the four mcp__wallet__ tools and no built-in tool.
+AGENTS = ('elizaos', 'agent2', 'claudecode')
 AGENT2_TOOLS = ['get_balances', 'quote_swap', 'swap', 'tx_status']
 # Workflow tasks (WS-W, research/benchmark/tasks-workflows.json, run-v2.ts WORKFLOWS). swap2 is every tasks.json task and
 # the frozen D1. In approve_swap (A1) and supply (L1) the faults target the task's critical transaction (A1: approve(router)
@@ -54,6 +56,8 @@ def critical_kind(wf, frozen, sender, frm, to, data):
     if wf == 'supply' and sel == '0x617ba037' and len(w) >= 4 and to.lower() == frozen['aave']['pool'].lower() \
        and '0x' + w[0][24:] == frozen['x']['address'].lower() and '0x' + w[2][24:] == frozen['agent'].lower(): return 'supply'
     return None
+CC_TOOLS = ['mcp__wallet__' + t for t in AGENT2_TOOLS]
+CC_FILES = ['claudecode-child.ts', 'mcp-wallet-server.ts', 'wallet-tools.ts', 'claudecode-system-prompt.txt']
 MODEL_ORDER = ['luna', 'haiku', 'mini41', 'sol', 'sonnet', 'opus']
 FEASIBLE = {'normal': True, 'receipt_hidden': True, 'price_change_feasible': True, 'price_change_infeasible': False,
             'pre_sale_shortfall': True, 'prefunded': True, 'price_worse': True, 'sale_dropped': True, 'rpc_stale': True, 'sale_reorged': True,
@@ -183,7 +187,13 @@ def audit(folder):
     if agent == 'agent2':
         need(not evidence, 'agent2 evidence layer is not implemented')
         need(m.get('condition') == 'stock' and all(x['provider'] == 'openai' for x in m['models']), 'agent2 runs stock with OpenAI-format models only')
-        need('agent2-child.ts' in m['files'], 'agent2 child not hashed in the manifest')
+        need('agent2-child.ts' in m['files'] and 'wallet-tools.ts' in m['files'], 'agent2 child or its wallet tools not hashed in the manifest')
+    if agent == 'claudecode':
+        need(not evidence, 'claudecode evidence layer is not implemented')
+        need(m.get('condition') == 'stock' and all(x['provider'] == 'anthropic' for x in m['models']), 'claudecode runs stock with Anthropic models only')
+        need(wf == 'swap2', 'claudecode runs swap2 tasks only (the MCP wallet server has no workflow tools)', wf)
+        need(all(f in m['files'] for f in CC_FILES), 'claudecode files not hashed in the manifest')
+        need(m.get('systemPromptSha256') == m['files']['claudecode-system-prompt.txt'] and m.get('mcpTools') == CC_TOOLS and m.get('claudeVersion'), 'claudecode manifest: prompt hash, MCP tool list or CLI version')
     # Arm: recorded by run-v2.ts --arm (older folders: the evidence flag alone, with the legacy -ev tag or none).
     arm = m.get('arm', 'full' if evidence else 'none')
     need(arm in ARM_TAGS and evidence == (arm == 'full'), 'arm label', arm)
@@ -201,7 +211,7 @@ def audit(folder):
                         else {'EVM_EVIDENCE_MODE': arm} if arm in WALLET_MODES else {})
         need(env == expected_env, 'arm environment differs from the arm', arm)
         need(m.get('armPrompt') == (ARM_PROMPT if arm == 'prompt_only' else None), 'prompt_only text recorded for the wrong arm or changed')
-    tag = ('a2' if agent == 'agent2' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '') + (
+    tag = ('a2' if agent == 'agent2' else 'cc' if agent == 'claudecode' else TAGS.get(m.get('condition'), 'v2')) + (f"-{m['taskId']}" if m.get('taskId') else '') + (
         f"-{ARM_TAGS[arm]}" if 'arm' in m else ('-ev' if evidence else ''))
     scenarios = [s for s in SCENARIOS if s in m.get('scenarios', SCENARIOS)]
     need(scenarios == list(m.get('scenarios', SCENARIOS)), 'scenario subset not in predeclared order')
@@ -265,6 +275,10 @@ def audit(folder):
         body = req['body']; text = json.dumps(body).lower()
         if agent == 'agent2':
             need(e['path'] == '/openai/v1/chat/completions' and [t['function']['name'] for t in body.get('tools', [])] == AGENT2_TOOLS + AGENT2_WORKFLOW_TOOLS[wf], 'agent2 request path or tool list', e['call'])
+        if agent == 'claudecode':
+            need(e['path'] == '/anthropic/v1/messages' and [t.get('name') for t in body.get('tools', [])] == CC_TOOLS, 'claudecode request path or tool list', e['call'])
+            used_tools = {c.get('name') for msg in body.get('messages', []) if isinstance(msg.get('content'), list) for c in msg['content'] if isinstance(c, dict) and c.get('type') == 'tool_use'}
+            need(used_tools <= set(CC_TOOLS), 'claudecode request history has a non-wallet tool call', e['call'], sorted(used_tools - set(CC_TOOLS)))
         for lab in labels: need(lab.lower() not in text, 'harness label in a model request', lab, e['call'])
         need(base.lower() not in text, 'episode id in a model request', e['call'])
         prompted.setdefault(base, []).append((CHARACTER_BIO.lower() in text, ARM_PROMPT.lower() in text))
@@ -472,8 +486,19 @@ def audit(folder):
         declared = o['declared']
         if not eid.startswith('control-'):
             turns = ep.get('turns', [])
-            if agent == 'agent2':
-                need(ep.get('agent') == 'agent2' and not ep.get('trajectories'), 'agent2 episode record', eid)
+            if agent == 'claudecode':
+                need(ep.get('agent') == 'claudecode' and not ep.get('trajectories') and ep.get('tools') == CC_TOOLS
+                     and ep.get('systemPromptSha256') == m['systemPromptSha256'] and ep.get('claudeVersion') == m['claudeVersion'], 'claudecode episode record', eid)
+                for i, t in enumerate(turns):
+                    cli = t.get('cli') or {}
+                    need(cli.get('tools') is None or cli['tools'] == CC_TOOLS, 'claudecode session offered tools other than the four wallet tools', eid, i)
+                    need(all(c['name'] in CC_TOOLS for c in t['toolCalls']), 'claudecode built-in or unknown tool call', eid, i)
+                    need(not cli.get('permissionDenials'), 'claudecode permission denial', eid, i)
+                    # Every tool call reached the MCP server in this turn, and the server served nothing else.
+                    need(sorted('mcp__wallet__' + r['tool'] for r in t['actionResults']) == sorted(c['name'] for c in t['toolCalls'])
+                         and all(r.get('mcpTurn') == t['turn'] for r in t['actionResults']), 'claudecode tool calls and MCP server log differ', eid, i)
+            if agent in ('agent2', 'claudecode'):
+                need(agent == 'claudecode' or (ep.get('agent') == 'agent2' and not ep.get('trajectories')), 'agent2 episode record', eid)
                 gated = {'swap'} | (set(AGENT2_WORKFLOW_TOOLS[wf]) & AGENT2_GATED)
                 # Confirmation gate: every submitted swap repeats a swap previewed in the previous turn, after the user's yes.
                 for i, t in enumerate(turns):
