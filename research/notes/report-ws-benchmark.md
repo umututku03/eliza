@@ -59,3 +59,28 @@ In the first launch, the H2 lane on base 500 hit port 19045, which another works
 - **Compound scenarios:** no fault time or BDT is defined for them in `metrics.py` yet.
 - **Mixed-task IVL:** the scorecard median pools tasks with different X; use `--by-task`.
 - **Must fix before live runs:** in `rpc_stale` and `sale_reorged`, a live agent that never sells fails the audit instead of being scored.
+
+
+## Independent analysis recovery (Codex, 14 November 2026)
+
+On isolated branch `research/scorecard-recovery-1114`, fixes `57409afc8a` and
+`9080fe3e1f` correct two analysis bugs without changing running cohort source.
+Mixed evidence/no-layer scorecards previously raised TypeError because boolean
+and string arm keys were sorted together. Ablations were also pooled into the
+full-layer group. String arm labels and explicit metadata now retain five
+separate groups. JSON, Markdown and --by-task all passed; real input audits
+passed. Synthetic copies test grouping only, not ablation performance.
+
+The metrics Markdown median previously selected the upper middle value for
+even samples. It now uses statistics.median; even, odd and empty cases passed.
+The actual pilot per-episode JSON output is byte-for-byte unchanged. No raw
+result or historical report was overwritten.
+
+Detailed local artifacts: `test-results/scorecard-recovery-1114/`. A separate
+main-study readiness memo and planning-only budget are in
+`test-results/main-study-readiness-1114/`. They identify missing baseline/fault
+implementations, held-out exposure wording, clock/confirmation comparability,
+gas and expected-loss caveats, and bounds on offline counterfactual replay.
+No draft/preregistration was rewritten and no new spend was approved or used.
+
+Authored-by: Codex (OpenAI).
