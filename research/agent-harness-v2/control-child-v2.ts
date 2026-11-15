@@ -3,6 +3,7 @@
 // confirmed the way a user does (a first call, then "yes" with the same parameters).
 // Usage (repo root): bun --conditions=eliza-source research/agent-harness-v2/control-child-v2.ts <spec.json> <out.json>
 import { readFileSync, writeFileSync } from "node:fs";
+import { reconcileControlSale } from "./reconcile-control";
 import {
   type Address,
   createPublicClient,
@@ -281,33 +282,20 @@ try {
       throw e;
     }
   };
-  const reconcile = async () => {
-    // Wait through the allowed lag window before treating missing evidence as a dropped send.
-    for (let i = 0; i <= spec.reconcileSeconds; i++) {
-      if (await visible()) {
-        steps.push({ reconciled: "proceeds visible", afterSeconds: elapsed() });
-        return;
-      }
-      if (i < spec.reconcileSeconds) await Bun.sleep(1000);
-    }
-    if (
-      !resent &&
-      (await missing()) &&
-      (await pub.getTransactionCount({
-        address: spec.sender,
-        blockTag: "latest",
-      })) === beforeNonce
-    ) {
+  const reconcile = () => reconcileControlSale({
+    seconds: spec.reconcileSeconds,
+    visible,
+    mayResend: () => !resent,
+    missing,
+    nonceUnchanged: async () => (await pub.getTransactionCount({ address: spec.sender, blockTag: "latest" })) === beforeNonce,
+    resend: async () => {
       resent = true;
       steps.push({ resent_after_drop: true, afterSeconds: elapsed() });
       await sell();
-      if (await visible()) {
-        steps.push({ reconciled: "proceeds visible", afterSeconds: elapsed() });
-        return;
-      }
-    }
-    throw new Error("Sale did not reconcile");
-  };
+    },
+    sleep: (ms) => Bun.sleep(ms),
+    reconciled: () => { steps.push({ reconciled: "proceeds visible", afterSeconds: elapsed() }); },
+  });
   await sell();
   await reconcile();
   // Block of the confirmed sale as first seen (sale_reorged_reincluded: a later block means it was re-included).

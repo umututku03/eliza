@@ -467,6 +467,7 @@ const files = [
   "run-v2.ts",
   "episode-child-v2.ts",
   "control-child-v2.ts",
+  "reconcile-control.ts",
   "llm-egress-proxy.ts",
   "fork-rpc-proxy.ts",
   "fork-oracle.ts",
