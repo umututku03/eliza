@@ -573,4 +573,39 @@ EventuallyResolved == \A i \in Intents : <>Resolved(i)
 \* confirmed has exactly one canonical execution.
 EventuallyCorrect == <>[](\A i \in Intents : done[i] => Executions(i) = 1)
 
+
+-----------------------------------------------------------------------------
+(* The fairness of LiveSpec written as []<>(~En \/ <<A>>_vars), with En an explicit state predicate equal to *)
+(* ENABLED <<A>>_vars (checked by the invariant EnabledMatches in MC_full_enabled_check.cfg). TLC evaluates     *)
+(* ENABLED of these actions very slowly (about 10 states/s); explicit predicates avoid that. Full policy only. *)
+EnMineTx    == NonceOf(chain) \in Nonces /\ pool[NonceOf(chain)] # 0 /\ nextBlk <= MaxBlocks
+EnMineEmpty == nextBlk <= MaxBlocks /\ (PriorityMining => ~(NonceOf(chain) \in Nonces /\ pool[NonceOf(chain)] # 0))
+EnViewSync  == view # chain
+EnUnhide    == hidden # {}
+EnPoll      == pc.k = "poll"
+EnTime      == Policy = "full" /\ pc.k = "idle" /\
+               \E k \in DOMAIN ledger : ~ledger[k].sendOld \/ (ledger[k].hsHead # -1 /\ ~ledger[k].hsOld) \/ ledger[k].hsFresh
+EnReq(i)    == Policy = "full" /\ pc.k = "idle" /\ AgentMay(i) /\
+               LET g == GuardFold(ledger, 1, i, view) IN
+               IF g.refused THEN g.L # ledger
+               ELSE LET oi == FindOpenFull(g.L, i) IN
+                    IF oi = 0 THEN Len(g.L) < MaxRecs /\ Outcomes(PendingCount(view), FALSE, {}) # {}
+                    ELSE Outcomes(g.L[oi].pinned, TRUE, g.L[oi].hashes) # {}
+\* []<>(~En) \/ []<><<A>>_vars  is  []<>(~En \/ <<A>>_vars), i.e. WF_vars(A) when En = ENABLED <<A>>_vars
+FairnessFull ==
+  /\ ([]<>(~EnMineTx) \/ []<><<MineTx>>_vars)
+  /\ ([]<>(~EnMineEmpty) \/ []<><<MineEmpty>>_vars)
+  /\ ([]<>(~EnViewSync) \/ []<><<ViewSync>>_vars)
+  /\ ([]<>(~EnUnhide) \/ []<><<Unhide>>_vars)
+  /\ ([]<>(~EnPoll) \/ []<><<Poll>>_vars)
+  /\ ([]<>(~EnTime) \/ []<><<TimePasses>>_vars)
+  /\ \A i \in Intents : ([]<>(~EnReq(i)) \/ []<><<FullRequest(i)>>_vars)
+LiveSpecFull == Spec /\ FairnessFull
+
+EnabledMatches ==
+  /\ EnMineTx = ENABLED <<MineTx>>_vars /\ EnMineEmpty = ENABLED <<MineEmpty>>_vars
+  /\ EnViewSync = ENABLED <<ViewSync>>_vars /\ EnUnhide = ENABLED <<Unhide>>_vars
+  /\ EnPoll = ENABLED <<Poll>>_vars /\ EnTime = ENABLED <<TimePasses>>_vars
+  /\ \A i \in Intents : EnReq(i) = ENABLED <<FullRequest(i)>>_vars
+
 =============================================================================

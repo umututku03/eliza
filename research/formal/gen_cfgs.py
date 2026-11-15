@@ -79,8 +79,12 @@ def main():
     for p in POLICIES:
         for s, (o, d) in {**SCENARIOS, **SEQUENTIAL}.items():
             names.append(write(p, s, o, d, "Spec", SAFETY))
-        for s, (o, d) in LIVE.items():
-            names.append(write(p, s, dict(LIVE_BASE, **o), d, "LiveSpec", LIVENESS))
+        if p == "full":  # liveness on the full layer only (the baselines' liveness gaps show in safety traces)
+            for s, (o, d) in LIVE.items():
+                names.append(write(p, s, dict(LIVE_BASE, **o), d, "LiveSpecFull", LIVENESS))
+    # Validates the explicit enabledness predicates of FairnessFull against ENABLED (small model, slow check).
+    names.append(write("full", "enabled_check", dict(LIVE_BASE, MaxHides=1, MaxDrops=1, MaxReorgs=1, MaxBlocks=5, MaxReq=3, MaxTx=3),
+                       "EnabledMatches on a small model", "Spec", "INVARIANTS EnabledMatches"))
     print("\n".join(names))
 
 
