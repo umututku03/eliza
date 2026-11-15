@@ -23,8 +23,8 @@ import {
   parseAbi,
   parseAbiParameters,
 } from "viem";
-import { NATIVE_TOKEN_ADDRESS } from "./constants";
-import { EVMError, type EVMErrorCode } from "./types";
+import { NATIVE_TOKEN_ADDRESS, TX_CONFIRMATION_TIMEOUT_MS } from "./constants";
+import { EVMError, EVMErrorCode } from "./types";
 
 /** Fixed constants of the decision table. */
 export const EVIDENCE_K = 2; // confirmations (head - receiptBlock + 1)
@@ -35,8 +35,30 @@ export const MAX_UNRESOLVED_ROUNDS = 6; // N: check rounds (a send's check loop 
 export type EvidenceAblation = "none" | "no_nonce_pin" | "no_grading" | "no_refusal_decode";
 export const EVIDENCE_ABLATIONS: readonly EvidenceAblation[] = ["none", "no_nonce_pin", "no_grading", "no_refusal_decode"];
 
+/**
+ * `EVM_EVIDENCE_MODE` selects the send policy (research baselines; unset means the stock path):
+ * - `full`: this layer (also selected by the legacy `EVM_EVIDENCE_LAYER=1`);
+ * - `nonce_only`: intent ledger and same-nonce re-send only (a wallet's speed-up), stock wording, no guard;
+ * - `verify_binary`: one binary check (receipt or balance effect) before re-sending an intent, fresh nonce;
+ * - `pace_style`: a stateless pre-signing check (policy and an eth_call simulation) of every call, stock send.
+ */
+export type EvidenceMode = "off" | "full" | "nonce_only" | "verify_binary" | "pace_style";
+export const EVIDENCE_MODES: readonly Exclude<EvidenceMode, "off">[] = ["full", "nonce_only", "verify_binary", "pace_style"];
+export function evidenceMode(): EvidenceMode {
+  const raw = process.env.EVM_EVIDENCE_MODE;
+  const layer = process.env.EVM_EVIDENCE_LAYER === "1";
+  if (raw === undefined || raw === "") return layer ? "full" : "off";
+  if (!(EVIDENCE_MODES as readonly string[]).includes(raw)) throw new Error(`Unknown EVM_EVIDENCE_MODE=${raw}`);
+  if (layer && raw !== "full") throw new Error(`EVM_EVIDENCE_LAYER=1 is the full layer; it cannot be combined with EVM_EVIDENCE_MODE=${raw}`);
+  return raw as EvidenceMode;
+}
+/** The full layer (graded evidence, guard, tx_status, typed errors, refusal decoding). */
 export function evidenceLayerEnabled(): boolean {
-  return process.env.EVM_EVIDENCE_LAYER === "1";
+  return evidenceMode() === "full";
+}
+/** Any mode: the send sites route through sendWithEvidence. */
+export function evidenceSendsEnabled(): boolean {
+  return evidenceMode() !== "off";
 }
 export function evidenceAblation(): EvidenceAblation {
   const raw = process.env.EVM_EVIDENCE_ABLATE ?? "none";
@@ -123,6 +145,21 @@ export interface IntentRecord {
   receiptSeen: { hash: Hex; block: number; blockHash: Hex } | null;
   landed: boolean;
   request: StoredRequest;
+  /** Baseline modes (nonce_only, verify_binary) only; the full layer never sets it. */
+  baseline?: BaselineInfo;
+}
+
+/** What a baseline mode records about an intent (no graded decision is derived from it). */
+export interface BaselineInfo {
+  mode: "nonce_only" | "verify_binary";
+  /** The last outcome the wallet reported for this intent, in stock wording; null after an error or no report. */
+  reported: "success" | "failed" | null;
+  /** nonce_only: the wallet observed the pinned nonce used (receipt, "nonce too low", or the account nonce past it). */
+  consumed: boolean;
+  /** nonce_only: this intent took a nonce above the node's pending count, behind nonces reserved for others. */
+  nonceGap: { nonce: number; pendingCount: number; reserved: number[] } | null;
+  /** verify_binary: each check before a re-send. */
+  checks: { atMs: number; result: "complete" | "incomplete"; reason: string; hash: Hex | null }[];
 }
 
 // ---- clients (structural, so tests can pass plain mocks) -------------------------------------------------
@@ -134,6 +171,10 @@ export interface EvidencePublicClient {
   getBlockNumber(args?: { cacheTime?: number }): Promise<bigint>;
   getBalance(args: { address: Address }): Promise<bigint>;
   readContract(args: any): Promise<unknown>;
+  /** Stock confirmation wait (baseline modes keep the stock wording of its result). */
+  waitForTransactionReceipt?(args: { hash: Hex; timeout: number }): Promise<{ status: "success" | "reverted" }>;
+  /** eth_call at the head (pace_style simulation). */
+  call?(args: { account: any; to: Address; data?: Hex; value?: bigint }): Promise<unknown>;
 }
 export interface EvidenceWalletClient {
   sendTransaction(args: any): Promise<Hex>;
@@ -232,6 +273,7 @@ export function evidenceLedger(chainId: number, sender: string): IntentRecord[] 
 export function resetEvidenceLedgers(): void {
   ledgers.clear();
   sendQueues.clear();
+  announced = null;
 }
 
 /** Unresolved for the guard: sent, pending, included with fewer than K confirmations, orphaned and not re-sent. */
@@ -247,7 +289,11 @@ export function isUnresolved(r: IntentRecord): boolean {
 /** A record a repeated request for the same intent re-sends (with the pinned nonce) instead of starting anew. */
 export function findOpenIntent(intent: EvidenceIntent): IntentRecord | undefined {
   const key = intentKey(intent);
-  return [...evidenceLedger(intent.chainId, intent.sender)].reverse().find((r) => r.key === key && r.state !== "confirmed" && r.state !== "failed");
+  const mode = evidenceMode();
+  if (mode === "pace_style") return undefined; // stateless: no ledger
+  // Baselines: an intent stays open until the wallet has reported its outcome (success or a revert).
+  const open = mode === "full" ? (r: IntentRecord) => r.state !== "confirmed" && r.state !== "failed" : (r: IntentRecord) => r.baseline?.reported == null;
+  return [...evidenceLedger(intent.chainId, intent.sender)].reverse().find((r) => r.key === key && open(r));
 }
 /** The most recent record that is unresolved, else the most recent record. */
 export function latestIntent(chainId: number, sender: string): IntentRecord | undefined {
@@ -467,7 +513,8 @@ async function guard(pub: EvidencePublicClient, intent: EvidenceIntent, deps: Ev
 export interface SendWithEvidenceResult {
   hash: Hex;
   decision: "confirmed" | "failed";
-  record: IntentRecord;
+  /** Null under pace_style, which keeps no state. */
+  record: IntentRecord | null;
 }
 
 /**
@@ -481,8 +528,21 @@ export async function sendWithEvidence(o: {
   request: { account: any; chain?: any; to: Address; value?: bigint; data?: Hex };
   intent: EvidenceIntent;
   deps?: EvidenceDeps;
+  /** pace_style: the call the policy is checked against (a plan redemption's inner call); defaults to `request`. */
+  effectiveCall?: { to: Address; value: bigint; data: Hex };
+  /** pace_style: the account whose balances the policy reads (the plan account); defaults to the sender. */
+  holder?: Address;
 }): Promise<SendWithEvidenceResult> {
   const deps = o.deps ?? realDeps;
+  const mode = evidenceMode();
+  if (mode !== "full") {
+    if (evidenceAblation() !== "none") throw new Error(`EVM_EVIDENCE_ABLATE applies to the full layer only (mode ${mode})`);
+    announceMode(mode);
+    if (mode === "nonce_only") return sendNonceOnly(o, deps);
+    if (mode === "verify_binary") return sendVerifyBinary(o, deps);
+    if (mode === "pace_style") return sendPaceStyle(o);
+    throw new Error(`sendWithEvidence called with EVM_EVIDENCE_MODE unset`);
+  }
   const ablation = evidenceAblation();
   const pub = o.publicClient;
   const r = await serializeSend(o.intent, async () => {
@@ -581,6 +641,284 @@ export async function sendWithEvidence(o: {
   if (ablation === "no_grading")
     throw new EvidenceError("EVIDENCE_PENDING", hash ? `Timed out while waiting for transaction with hash "${hash}" to be confirmed.` : "Transaction failed: confirmation could not be established.", r);
   throw new EvidenceError("EVIDENCE_PENDING", evidenceMessage(r), r);
+}
+
+// ---- baselines (EVM_EVIDENCE_MODE=nonce_only | verify_binary | pace_style) ---------------------------------
+// Each keeps the stock confirmation wait (waitForTransactionReceipt, TX_CONFIRMATION_TIMEOUT_MS) and passes its
+// result and errors through unchanged, so the agent reads stock wording; only the stated difference is added.
+type SendArgs = Parameters<typeof sendWithEvidence>[0];
+
+/** Written once per process, to stderr, so a run's logs show which send policy the wallet actually used. */
+let announced: EvidenceMode | null = null;
+function announceMode(mode: EvidenceMode) {
+  if (announced === mode) return;
+  announced = mode;
+  console.warn(`[evidence] EVM_EVIDENCE_MODE=${mode}`);
+}
+
+async function stockWait(pub: EvidencePublicClient, hash: Hex) {
+  if (!pub.waitForTransactionReceipt) throw new Error("waitForTransactionReceipt is not available on this client");
+  return pub.waitForTransactionReceipt({ hash, timeout: TX_CONFIRMATION_TIMEOUT_MS });
+}
+
+function baselineRecord(o: SendArgs, mode: BaselineInfo["mode"], pinnedNonce: number, request: StoredRequest, before: bigint | null, deps: EvidenceDeps): IntentRecord {
+  return {
+    key: intentKey(o.intent),
+    intent: o.intent,
+    pinnedNonce,
+    hashes: [],
+    sentNonces: [],
+    snapshot: { effectBefore: before === null ? null : before.toString() },
+    state: "sent",
+    decision: "wait",
+    waitReason: "not_seen",
+    observations: [],
+    rounds: 0,
+    lastSendAtMs: deps.now(),
+    headSince: null,
+    receiptSeen: null,
+    landed: false,
+    request,
+    baseline: { mode, reported: null, consumed: false, nonceGap: null, checks: [] },
+  };
+}
+
+/** The wallet reports the outcome (stock wording at the call site); the intent is then closed. */
+function settle(r: IntentRecord, hash: Hex, status: "success" | "reverted"): SendWithEvidenceResult {
+  const b = r.baseline!;
+  b.reported = status === "success" ? "success" : "failed";
+  b.consumed = true;
+  r.state = status === "success" ? "confirmed" : "failed";
+  r.decision = status === "success" ? "confirmed" : "failed";
+  r.waitReason = null;
+  return { hash, decision: r.decision, record: r };
+}
+
+/**
+ * nonce_only: what a wallet's speed-up or cancel gives. The intent ledger and the same-nonce re-send are those of
+ * the full layer (same intent key; the pinned nonce read once; a re-send reuses the stored calldata with fees
+ * +12.5%). "nonce too low" on a re-send means an earlier attempt landed and is reported as success. There is no
+ * grading, no guard and no refusal decoding: results and errors keep stock's wording.
+ * Reservation: a pinned nonce stays reserved for its intent until the wallet observes it consumed (a receipt,
+ * "nonce too low", or the account's latest nonce past it). A different intent meanwhile takes the next free nonce
+ * (the node's pending count, skipping reserved nonces); a resulting gap is recorded on the record and logged.
+ */
+async function sendNonceOnly(o: SendArgs, deps: EvidenceDeps): Promise<SendWithEvidenceResult> {
+  const pub = o.publicClient;
+  const sender = o.intent.sender;
+  const step = await serializeSend(o.intent, async (): Promise<{ r: IntentRecord; wait?: Hex; landed?: Hex }> => {
+    const open = findOpenIntent(o.intent);
+    if (open) {
+      const req = open.request;
+      const bumped: StoredRequest = { ...req, maxFeePerGas: bump(req.maxFeePerGas), maxPriorityFeePerGas: bump(req.maxPriorityFeePerGas), gasPrice: bump(req.gasPrice) };
+      try {
+        const hash = await o.walletClient.sendTransaction({
+          account: req.account,
+          chain: req.chain,
+          to: req.to,
+          value: req.value,
+          data: req.data,
+          nonce: open.pinnedNonce,
+          gas: req.gas,
+          ...fees(bumped),
+        });
+        open.hashes.push(hash);
+        open.sentNonces.push(open.pinnedNonce);
+        open.request = bumped;
+        open.lastSendAtMs = deps.now();
+        return { r: open, wait: hash };
+      } catch (error) {
+        const c = classifySendError(error);
+        const last = open.hashes[open.hashes.length - 1];
+        open.request = bumped;
+        if (c === "landed") {
+          open.landed = true;
+          open.baseline!.consumed = true;
+          // Success needs a hash to report; with none known (a lost acknowledgement) the stock error stands.
+          if (last) return { r: open, landed: last };
+        }
+        if (c === "pending" && last) return { r: open, wait: last }; // the earlier attempt is still in the pool
+        throw error;
+      }
+    }
+    const ledger = evidenceLedger(o.intent.chainId, sender);
+    const pendingCount = Number(await pub.getTransactionCount({ address: sender, blockTag: "pending" }));
+    const unconsumed = ledger.filter((r) => !r.baseline?.consumed);
+    if (unconsumed.length) {
+      const latest = Number(await pub.getTransactionCount({ address: sender, blockTag: "latest" }));
+      for (const r of unconsumed) if (latest > r.pinnedNonce) r.baseline!.consumed = true;
+    }
+    const reserved = ledger.filter((r) => !r.baseline?.consumed).map((r) => r.pinnedNonce);
+    let nonce = pendingCount;
+    while (reserved.includes(nonce)) nonce++;
+    const base = { account: o.request.account, chain: o.request.chain, to: o.request.to, value: o.request.value ?? 0n, data: o.request.data ?? "0x" };
+    const prepared = await o.walletClient.prepareTransactionRequest({ ...base, nonce });
+    const request: StoredRequest = {
+      ...base,
+      data: base.data as Hex,
+      gas: prepared.gas,
+      maxFeePerGas: prepared.maxFeePerGas,
+      maxPriorityFeePerGas: prepared.maxPriorityFeePerGas,
+      gasPrice: prepared.maxFeePerGas === undefined ? prepared.gasPrice : undefined,
+      type: prepared.type,
+    };
+    const r = baselineRecord(o, "nonce_only", nonce, request, null, deps);
+    if (nonce > pendingCount) {
+      const gap = reserved.filter((n) => n >= pendingCount && n < nonce).sort((a, b) => a - b);
+      r.baseline!.nonceGap = { nonce, pendingCount, reserved: gap };
+      console.warn(`[evidence] nonce gap: ${o.intent.label} sent with nonce ${nonce} while the node's pending count is ${pendingCount}; nonce(s) ${gap.join(", ")} stay reserved for unresolved intents`);
+    }
+    // Reserve before dispatch, as the full layer does: an RPC error does not establish that broadcast failed.
+    ledger.push(r);
+    const hash = await o.walletClient.sendTransaction({ ...base, nonce, gas: request.gas, ...fees(request) });
+    r.hashes.push(hash);
+    r.sentNonces.push(nonce);
+    return { r, wait: hash };
+  });
+  if (step.landed) return settle(step.r, step.landed, "success");
+  const receipt = await stockWait(pub, step.wait!);
+  return settle(step.r, step.wait!, receipt.status);
+}
+
+/**
+ * verify_binary (Verified Tool Calls-style verify-before-retry): before re-sending an intent the wallet has not
+ * reported, one binary check: "complete" if a receipt with status 1 exists for an earlier hash, or the intent's
+ * balance effect is visible against the pre-send snapshot (read through the wallet's RPC); "incomplete" otherwise,
+ * including an inconclusive read. Complete: report success, do not send. Incomplete: send again exactly as stock
+ * does, with no nonce, so the node picks a fresh one. The confirmation threshold is one receipt (stock's wait).
+ */
+async function sendVerifyBinary(o: SendArgs, deps: EvidenceDeps): Promise<SendWithEvidenceResult> {
+  const pub = o.publicClient;
+  const step = await serializeSend(o.intent, async (): Promise<{ r: IntentRecord; wait?: Hex; done?: Hex }> => {
+    let r = findOpenIntent(o.intent);
+    if (r) {
+      const check = await binaryCheck(pub, r, deps);
+      r.baseline!.checks.push(check);
+      if (check.result === "complete") {
+        if (check.hash) return { r, done: check.hash };
+        throw new EVMError(EVMErrorCode.INVALID_PARAMS, `The earlier ${r.intent.label} already took effect, so it was not sent again.`);
+      }
+    } else {
+      const before = await readEffect(pub, o.intent.effect).catch(() => null);
+      const req = o.request;
+      r = baselineRecord(o, "verify_binary", -1, { account: req.account, chain: req.chain, to: req.to, value: req.value ?? 0n, data: (req.data ?? "0x") as Hex, gas: undefined }, before, deps);
+      evidenceLedger(o.intent.chainId, o.intent.sender).push(r);
+    }
+    const hash = await o.walletClient.sendTransaction(o.request);
+    r.hashes.push(hash);
+    r.lastSendAtMs = deps.now();
+    return { r, wait: hash };
+  });
+  if (step.done) return settle(step.r, step.done, "success");
+  const receipt = await stockWait(pub, step.wait!);
+  return settle(step.r, step.wait!, receipt.status);
+}
+
+/** The binary check of verify_binary. Read-only; any failed read counts as no evidence. */
+export async function binaryCheck(pub: EvidencePublicClient, r: IntentRecord, deps: EvidenceDeps = realDeps): Promise<BaselineInfo["checks"][number]> {
+  const atMs = deps.now();
+  for (const hash of [...r.hashes].reverse()) {
+    const receipt = await pub.getTransactionReceipt({ hash }).catch(() => null);
+    if (receipt?.status === "success") return { atMs, result: "complete", reason: "receipt with status 1", hash };
+  }
+  let now: bigint | null;
+  try {
+    now = await readEffect(pub, r.intent.effect);
+  } catch {
+    return { atMs, result: "incomplete", reason: "inconclusive: the balance read failed", hash: null };
+  }
+  if (effectSeen(r, now)) return { atMs, result: "complete", reason: "balance effect visible", hash: r.hashes[r.hashes.length - 1] ?? null };
+  if (r.intent.effect && r.intent.effect.kind !== "allowance" && r.snapshot.effectBefore === null)
+    return { atMs, result: "incomplete", reason: "inconclusive: no pre-send snapshot", hash: null };
+  return { atMs, result: "incomplete", reason: "no receipt and no balance effect", hash: null };
+}
+
+/**
+ * pace_style's declared policy (`EVM_PACE_POLICY`, JSON): the router, and per token pair (native ETH is the zero
+ * address) an optional maximum input, an optional input-token reserve the holder must keep after the call, and an
+ * optional minimum output. Raw base units, decimal strings.
+ */
+export interface PacePolicy {
+  router: Address;
+  rules: { tokenIn: string; tokenOut: string; maxAmountIn: string | null; keepAtLeastIn: string | null; minAmountOut: string | null }[];
+}
+export function pacePolicy(): PacePolicy {
+  const raw = process.env.EVM_PACE_POLICY;
+  if (!raw) throw new Error("EVM_EVIDENCE_MODE=pace_style needs EVM_PACE_POLICY");
+  return JSON.parse(raw) as PacePolicy;
+}
+const lower = (x: string) => x.toLowerCase();
+async function heldBy(pub: EvidencePublicClient, token: string, holder: Address): Promise<bigint> {
+  if (lower(token) === NATIVE_TOKEN_ADDRESS) return pub.getBalance({ address: holder });
+  return (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [holder], authorizationList: undefined })) as bigint;
+}
+const shortError = (e: unknown) => {
+  const x = e as { shortMessage?: string; details?: string; message?: string };
+  return String(x?.details || x?.shortMessage || x?.message || e).split("\n")[0].slice(0, 200);
+};
+
+/**
+ * PACE-style pre-signing check (a reimplementation of the described design, PACE section 4.4: a pure, stateless
+ * function of the call and the head state; PACE's own code is not public). Policy first (target router, token
+ * pair, amount bounds, a declared minimum output), then an eth_call simulation of the transaction at the head.
+ * Returns null to approve, else the refusal reason. Nothing is remembered between calls.
+ */
+export async function paceCheck(
+  pub: EvidencePublicClient,
+  policy: PacePolicy,
+  o: { account: unknown; holder: Address; request: { to: Address; value?: bigint; data?: Hex }; effectiveCall: { to: Address; value: bigint; data: Hex } }
+): Promise<string | null> {
+  const call = o.effectiveCall;
+  let swap: { functionName: string; args: readonly unknown[] } | null = null;
+  try {
+    swap = decodeFunctionData({ abi: ROUTER_ABI, data: call.data });
+  } catch {}
+  const i = describeCall({ chainId: 0, sender: o.holder, holder: o.holder, ...call });
+  if (swap) {
+    if (lower(call.to) !== lower(policy.router)) return `the target ${call.to} is not the declared router`;
+    const rule = policy.rules.find((x) => lower(x.tokenIn) === lower(i.tokenIn) && lower(x.tokenOut) === lower(i.tokenOut));
+    if (!rule) return `the pair ${i.tokenIn} -> ${i.tokenOut} is not declared`;
+    if (rule.maxAmountIn !== null && i.amountIn > BigInt(rule.maxAmountIn))
+      return `the input ${await tokenAmount(pub, i.tokenIn, i.amountIn)} exceeds the declared maximum ${await tokenAmount(pub, i.tokenIn, BigInt(rule.maxAmountIn))}`;
+    if (rule.keepAtLeastIn !== null) {
+      const held = await heldBy(pub, i.tokenIn, o.holder);
+      if (held - i.amountIn < BigInt(rule.keepAtLeastIn))
+        return `spending ${await tokenAmount(pub, i.tokenIn, i.amountIn)} would leave less than the declared ${await tokenAmount(pub, i.tokenIn, BigInt(rule.keepAtLeastIn))}`;
+    }
+    const minOut = (swap.functionName === "swapExactETHForTokens" ? swap.args[0] : swap.args[1]) as bigint;
+    if (minOut <= 0n) return "the call sets no minimum output";
+    if (rule.minAmountOut !== null && minOut < BigInt(rule.minAmountOut))
+      return `the minimum output ${await tokenAmount(pub, i.tokenOut, minOut)} is below the declared ${await tokenAmount(pub, i.tokenOut, BigInt(rule.minAmountOut))}`;
+  } else if (i.label === "token approval") {
+    if (lower(i.tokenOut) !== lower(policy.router)) return `the approval spender ${i.tokenOut} is not the declared router`;
+    const rule = policy.rules.find((x) => lower(x.tokenIn) === lower(i.tokenIn));
+    if (!rule) return `approving ${i.tokenIn} is not declared`;
+    if (rule.maxAmountIn !== null && i.amountIn > BigInt(rule.maxAmountIn)) return "the approval exceeds the declared maximum input";
+    if (rule.keepAtLeastIn !== null && (await heldBy(pub, i.tokenIn, o.holder)) - i.amountIn < BigInt(rule.keepAtLeastIn))
+      return "the approval exceeds what the declared reserve leaves spendable";
+  } else return "the call is not a declared operation";
+  if (!pub.call) return "the simulation is unavailable";
+  try {
+    await pub.call({ account: o.account, to: o.request.to, data: o.request.data, value: o.request.value });
+  } catch (error) {
+    return `the simulation at the head failed (${shortError(error)})`;
+  }
+  return null;
+}
+
+/** pace_style: check, then send and wait exactly as stock does. No nonce pinning, no grading, no state. */
+async function sendPaceStyle(o: SendArgs): Promise<SendWithEvidenceResult> {
+  const pub = o.publicClient;
+  const reason = await paceCheck(pub, pacePolicy(), {
+    account: o.request.account,
+    holder: o.holder ?? o.intent.sender,
+    request: o.request,
+    effectiveCall: o.effectiveCall ?? { to: o.request.to, value: o.request.value ?? 0n, data: (o.request.data ?? "0x") as Hex },
+  });
+  if (reason) throw new EVMError(EVMErrorCode.INVALID_PARAMS, `Refused by the pre-signing check: ${reason}.`);
+  const hash = await o.walletClient.sendTransaction(o.request);
+  const receipt = await stockWait(pub, hash);
+  return { hash, decision: receipt.status === "success" ? "confirmed" : "failed", record: null };
 }
 
 // ---- plan refusals ---------------------------------------------------------------------------------------
