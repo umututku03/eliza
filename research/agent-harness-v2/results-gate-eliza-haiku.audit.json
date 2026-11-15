@@ -2,7 +2,7 @@
   "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
   "results": [
     {
-      "folder": "/Users/utkueumut/Desktop/utku/apps-projects/defi/eliza-evidence/research/agent-harness-v2/results-gate-eliza-haiku",
+      "folder": "research/agent-harness-v2/results-gate-eliza-haiku",
       "mode": "mock",
       "status": "complete",
       "episodes": 8,
