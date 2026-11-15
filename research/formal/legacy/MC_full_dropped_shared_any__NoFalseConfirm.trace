@@ -1,0 +1,13 @@
+Invariant NoFalseConfirm is violated.
+ 1 Initial predicate chain=<<>> view=<<>> pool={} txs={} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[]
+ 2 FullRequest  chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}sent/wait r1]
+ 3 Poll         chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> TRUE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 4 Poll         chain=<<>> view=<<>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 5 MineEmpty    chain=<<1>> view=<<1>> pool={n0:t1} txs={t1=i2@n0} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 6 Drop         chain=<<1>> view=<<1>> pool={} txs={t1=i2@n0} hidden={} pc=[k |-> "idle"] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}pending/wait_and_recheck r1]
+ 7 FullRequest  chain=<<1>> view=<<1>> pool={n0:t2} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "poll", r |-> 2, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}dropped/resend_same_nonce r1; i1:n0{2}sent/wait r1]
+ 8 MineTx       chain=<<1, 2>> view=<<1, 2>> pool={} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "poll", r |-> 2, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}dropped/resend_same_nonce r1; i1:n0{2}sent/wait r1]
+ 9 MineEmpty    chain=<<1, 2, 3>> view=<<1, 2, 3>> pool={} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "poll", r |-> 2, mid |-> FALSE] done=<<FALSE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}dropped/resend_same_nonce r1; i1:n0{2}sent/wait r1]
+10 Poll         chain=<<1, 2, 3>> view=<<1, 2, 3>> pool={} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "idle"] done=<<TRUE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}dropped/resend_same_nonce r1; i1:n0{2}confirmed/confirmed r1 rs=h2,b2]
+11 FullRequest  chain=<<1, 2, 3>> view=<<1, 2, 3>> pool={} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "poll", r |-> 1, mid |-> FALSE] done=<<TRUE, FALSE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}sent/resend_same_nonce r2 landed; i1:n0{2}confirmed/confirmed r1 rs=h2,b2]
+12 Poll         chain=<<1, 2, 3>> view=<<1, 2, 3>> pool={} txs={t1=i2@n0,t2=i1@n0} hidden={} pc=[k |-> "idle"] done=<<TRUE, TRUE>> asked=<<FALSE, FALSE>> ledger=[i2:n0{1}confirmed/confirmed r2 landed; i1:n0{2}confirmed/confirmed r1 rs=h2,b2]
