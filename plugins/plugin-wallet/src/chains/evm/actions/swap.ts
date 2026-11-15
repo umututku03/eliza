@@ -55,6 +55,13 @@ import {
   NATIVE_TOKEN_ADDRESS,
   TX_CONFIRMATION_TIMEOUT_MS,
 } from "../constants";
+import {
+  describeCall,
+  type EvidencePublicClient,
+  type EvidenceWalletClient,
+  evidenceLayerEnabled,
+  sendWithEvidence,
+} from "../evidence";
 import { parseEvmBaseUnits } from "../exact-units";
 import { requireActionSpec } from "../generated/specs/spec-helpers";
 import {
@@ -838,15 +845,37 @@ export class SwapAction {
         chainId: this.walletProvider.getChainConfigs(params.chain).id,
       };
     }
-    const hash = await walletClient.sendTransaction(
-      buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain })
-    );
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash,
-      timeout: TX_CONFIRMATION_TIMEOUT_MS,
-    });
-    if (receipt.status === "reverted") {
-      throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${hash}`);
+    let hash: Hex;
+    if (evidenceLayerEnabled()) {
+      // Chain-evidence layer (EVM_EVIDENCE_LAYER=1): nonce-pinned intent, graded evidence (see evidence.ts).
+      const sent = await sendWithEvidence({
+        walletClient: walletClient as unknown as EvidenceWalletClient,
+        publicClient: publicClient as unknown as EvidencePublicClient,
+        request: buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain }) as never,
+        intent: describeCall({
+          chainId: this.walletProvider.getChainConfigs(params.chain).id,
+          sender: account.address,
+          holder: account.address,
+          to: route.router,
+          value,
+          data,
+        }),
+      });
+      if (sent.decision === "failed") {
+        throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${sent.hash}`);
+      }
+      hash = sent.hash;
+    } else {
+      hash = await walletClient.sendTransaction(
+        buildSendTxParams({ account, to: route.router, value, data, chain: walletClient.chain })
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      });
+      if (receipt.status === "reverted") {
+        throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${hash}`);
+      }
     }
     return {
       hash,
@@ -919,6 +948,32 @@ export class SwapAction {
       functionName: "approve",
       args: [spenderAddress, requiredAmount],
     });
+    if (evidenceLayerEnabled()) {
+      const sent = await sendWithEvidence({
+        walletClient: walletClient as unknown as EvidenceWalletClient,
+        publicClient: publicClient as unknown as EvidencePublicClient,
+        request: buildSendTxParams({
+          account,
+          to: tokenAddress,
+          value: 0n,
+          data: approvalData,
+          chain: walletClient.chain,
+        }) as never,
+        intent: describeCall({
+          chainId: walletClient.chain?.id ?? 0,
+          sender: account.address,
+          holder: account.address,
+          to: tokenAddress,
+          value: 0n,
+          data: approvalData,
+        }),
+      });
+      if (sent.decision === "failed") {
+        throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Token approval failed. Hash: ${sent.hash}`);
+      }
+      logger.info(`Token approval confirmed`);
+      return;
+    }
     const approvalTx = await walletClient.sendTransaction(
       buildSendTxParams({
         account,
