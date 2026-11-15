@@ -258,6 +258,10 @@ def check_random(ep, eid, m, fp, frozen, journal, sends, state):
                 need(ri_sale.get('hash') == rg['saleHash'] and ri_sale.get('status') == '0x1' and isinstance(ri_sale.get('block'), int) and ri_sale['block'] > rg['restoredHead'] and isinstance(others, list), 'sale re-inclusion', eid)
                 back = [ri_sale, *others]
                 need([r['hash'] for r in sorted(back, key=lambda r: rg['droppedHashes'].index(r['hash']) if r['hash'] in rg['droppedHashes'] else -1)] == rg['droppedHashes'] and len(back) == len(rg['droppedHashes']), 're-included orphans differ from the orphaned set', eid)
+                # Same tie as the named-scenario replay: each re-included orphan is canonical in the outcome, in its recorded block.
+                for r in back:
+                    t = next((t for t in ep['outcome']['transactions'] if t['hash'] == r['hash']), None)
+                    need(t is not None and t['status'] != 'not_canonical' and (r['status'] != '0x1' or t['block'] == r['block']), 're-included transaction not canonical in the recorded block', eid, r['hash'])
             else: need('reincluded' not in rg and 'reincludedOthers' not in rg, 'unexpected re-inclusion', eid)
             cursor['critical'] += 1
         elif ev not in (None,) and ev != 'send':
