@@ -39,8 +39,9 @@ fault_ep = next((n for n in eps if any(j.get('event') in ('chain_reorg', 'droppe
 if fault_ep:
     def remove_fault(p):
         def mutate(d):
-            index = next(i for i, j in enumerate(d['forkJournal']) if j.get('event') in ('chain_reorg', 'dropped_send', 'stale_read'))
-            d['forkJournal'].pop(index)
+            # Every event of that kind: one stale_read of many is not independently recorded anywhere (stale_then_price).
+            kind = next(j['event'] for j in d['forkJournal'] if j.get('event') in ('chain_reorg', 'dropped_send', 'stale_read'))
+            d['forkJournal'] = [j for j in d['forkJournal'] if j.get('event') != kind]
         edit_json(p / 'episodes' / f'{fault_ep}.json', mutate)
     cases['fault event removed'] = remove_fault
 # Fault parameters: the journal's fault windows must match the recorded parameters (doubled here).
@@ -51,6 +52,14 @@ if timed_ep:
         fp = d.get('faultParams') or {'lagMs': 200000, 'reorgDelayMs': 20000, 'hideMs': 200000}
         d['faultParams'] = {k: 2 * v for k, v in fp.items()}
     cases['fault parameter edited'] = lambda p: edit_json(p / 'manifest.json', double_params)
+# Compound faults: moving the later component's event (market change or reorg) to the journal start must be rejected.
+compound_ep = next((n for n in eps if json.loads((src / 'episodes' / f'{n}.json').read_text())['scenario'] in ('stale_then_price', 'dropped_then_reorg')
+    and any(j.get('event') in ('scheduled_market_change', 'chain_reorg') for j in json.loads((src / 'episodes' / f'{n}.json').read_text())['forkJournal'])), None)
+if compound_ep:
+    def reorder(d):
+        j = d['forkJournal']; i = next(k for k, e in enumerate(j) if e.get('event') in ('scheduled_market_change', 'chain_reorg'))
+        j.insert(0, j.pop(i))
+    cases['compound events reordered'] = lambda p: edit_json(p / 'episodes' / f'{compound_ep}.json', reorder)
 failures = []
 for name, mutate in cases.items():
     with tempfile.TemporaryDirectory() as t:
