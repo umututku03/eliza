@@ -39,6 +39,8 @@ SCENARIOS = {
 SEQUENTIAL = {
     "nofault_any": (dict(AgentSequential=False), "no fault, interleaving agent"),
     "hidden_any":  (dict(MaxHides=1, AgentSequential=False), "receipt_hidden, interleaving agent"),
+    "dropped_shared_any": (dict(MaxDrops=1, SharedToken=True, AgentSequential=False),
+                           "sale_dropped, same token, interleaving agent"),
 }
 
 # Liveness: fairness (LiveSpec), the agent stops after ask_user, timely inclusion, priority mining.
