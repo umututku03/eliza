@@ -15,13 +15,19 @@ python3 -I gen_cfgs.py               # regenerates every MC_*.cfg from the bound
 python3 -I trace_summary.py <log>    # one line per state of a TLC counterexample
 ```
 
-Tools, installed under `$HOME/tools/tla` (system Java untouched):
-- Eclipse Temurin JDK 21.0.13+9 (aarch64 macOS) from the Adoptium GitHub release; SHA-256
-  `bf036b35b071bfb2f54f2c0af8ee8d88afa95ee6eb3dce02c0f94cfc2524d04a` matched the published `.sha256.txt`.
-- `tla2tools.jar` v1.7.4 (latest non-prerelease) from the tlaplus/tlaplus GitHub release; SHA-1
-  `bee4a54f3ee3d4afc347c3240ec2d9e93b075104` matched the release notes (SHA-256 `936a2620...0e88`).
+Tools live under `$HOME/tools/tla`; the system Java was not changed. The original WS-T installation notes record
+an Adoptium Temurin 21.0.13+9 macOS aarch64 download with SHA-256
+`bf036b35b071bfb2f54f2c0af8ee8d88afa95ee6eb3dce02c0f94cfc2524d04a`, checked against its published checksum.
+The saved completed TLC logs themselves report **Eclipse Adoptium 21.0.13 x86_64**. The locally installed Java binary
+is now arm64; that later installation does not change the architecture recorded for those runs.
 
-Safety runs use 8 to 10 workers. Liveness runs use one worker, as the release notes advise.
+The jar came from the tlaplus/tlaplus **distribution release v1.7.4**. Its checker banner is **TLC2 Version 2.19,
+8 August 2024, revision 5a47802**; these are different version labels for the same local artifact. Its SHA-256 is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`. The original installation report records the
+published SHA-1 comparison (`bee4a54f3ee3d4afc347c3240ec2d9e93b075104`); the continuation audit verified the local
+SHA-256, without repeating that historical download verification.
+
+The saved safety runs use 8 to 10 workers; liveness runs use one worker.
 
 ## Model
 
@@ -91,7 +97,9 @@ The bound is part of the result: the agent re-requests at most `MaxReq` = 5 time
 `N` = 3 counted rounds unless the decision is terminal. Chains are limited to `MaxBlocks` blocks.
 `FairnessFull` writes each WF as `[]<>~En ∨ []<><<A>>_vars` with an explicit enabledness predicate. TLC's
 `ENABLED` ran at about 10 states/s. `EnabledMatches` checks that each predicate equals `ENABLED` on
-`MC_full_enabled_check.cfg`.
+`MC_full_enabled_check.cfg`. That check covers its 818 reachable states (one intent, bounded drops and lost
+acknowledgements, no hiding, lag or reorg), not every state in the larger liveness configurations or an unbounded
+equivalence proof. The predicates remain an explicit modeling assumption outside the checked instance.
 
 ## Bounds
 
@@ -108,7 +116,7 @@ Liveness configs:
 - faults as in safety, one per run, reorg depth 1;
 - the agent stops after `ask_user`.
 
-## Results (TLC 1.7.4, Apple M-series, 8–10 workers)
+## Results (TLC2 2.19, distribution v1.7.4, 8–10 safety workers)
 
 Policy × scenario. A = AtMostOnce, F = NoFalseConfirm, O = NoActOnOrphan. The last column gives the full
 policy's distinct states and time; every other cell checked all three invariants. Minimal (BFS) counterexamples are in
@@ -176,8 +184,10 @@ Model checking found these on the earlier wallet. They are kept as evidence.
   Fixed: `dropped` is unresolved, and landed requires canonical inclusion of the intent's own tx.
 
 `plugins/plugin-wallet/src/chains/evm/__tests__/evidence-formal.test.ts` reproduces C1 and C2 with property-only
-assertions. Both are `it.fails`: they fail on fc7ce03a5b's `evidence.ts` at the property assertion, and they pass
-against eb42064d82's `evidence.ts`. After the merge, turn them into plain `it`.
+assertions. They were originally expected-failure reproductions on fc7ce03a5b; the integrated tests are now ordinary
+`it` assertions, including C1–C9 recovery cases and a legitimate-repeat negative case, parameterized over `full` and
+`full_quorum`. The tests must pass on the hardened implementation. Their quorum coverage is an implementation test,
+not part of this single-view formal model.
 
 ## Limitations
 - The bounds are small: two intents, three nonces, five to seven blocks, one fault per run. Compound faults are
@@ -196,3 +206,19 @@ against eb42064d82's `evidence.ts`. After the merge, turn them into plain `it`.
 ## Provenance
 
 Codex imported an earlier snapshot of this model on 15 November (see `legacy/`) and hardened the wallet against its counterexamples; `evidence-formal.test.ts` holds the resulting regression tests (C1–C9). The top-level model here was then reconciled with the hardened `evidence.ts` (eb42064d82) and re-checked.
+
+### Continuation audit, 15 November 2026
+
+The audit compared the coordinator and original WS-T model/configuration bytes and checked the saved completion logs:
+all 14 full-policy safety configurations, all 12 liveness property checks across six configurations, and the 818-state
+enabledness check agree with the results above. The model SHA-256 is
+`49e5070a7145f1a53c4eeedc8179be904042060c2d4aaffec5d98859eda04763`. Raw logs remain in the original local
+`eliza-ws-tla/research/formal/logs/` directory; they are not newly generated by this audit.
+
+The historical `run.sh` did not record model/configuration hashes at launch. The continuation's local
+`test-results/claude-resume-1115/formal-evidence-inventory.json` hashes the files available **at audit time**, including
+those raw logs. It records current agreement and preserves evidence for subsequent review; it cannot establish a
+retrospective cryptographic binding between a historical execution and its inputs. The model maps to wallet source
+at eb42064d82; later wallet changes require a fresh mapping review before these counts are quoted for another source.
+
+Authored-by: Codex (OpenAI).

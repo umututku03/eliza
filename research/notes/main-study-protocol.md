@@ -4,8 +4,9 @@ Status: written for the user's approval. **No paid call is authorised by this fi
 lines below are filled and committed. After the first paid call, changes are dated addenda only; results already obtained are kept.
 
 - **Frozen source commit:** <to fill at freeze>
-  (candidate: the integrated hardened-wallet head `eb42064d82`. It includes wallet hardening `d5b0719ef5` and `74a76f672a`
-  and the quorum-majority fix `03459568ce`.)
+  (reviewed historical integration: `eb42064d82`, including wallet hardening `d5b0719ef5`, `74a76f672a` and quorum fix
+  `03459568ce`. The final source is pending reference-reconciliation fixes, the seed-10 approval-dependency regression
+  and a fresh confirmation gate; this historical commit is not a freeze selection.)
 - **Final confirmation gate:** <results-gate3 audit refs, to fill>
 
 Sources:
@@ -16,13 +17,16 @@ Sources:
 - The advisor decisions, the fault-realism notes, the sweep-sizing notes and the novelty screen (14 Nov).
 
 ## 0. Approvals needed (each separate)
-**Budget revision (15 Nov, user):** there is no paid budget for the main study. The main study runs on **open-weight models
-at $0 model cost** (§6, "Model substitution"). Every paid tier below is optional and runs only if separately funded.
+**Budget revision (15 Nov, user):** there is no paid budget for the main study. The plan uses **open-weight models with no
+provider charge**, subject to gate G5 (§6, "Model substitution"). Local inference and remote inference that consumes
+billed credits have different accounting: existing Anyscale credits do not themselves authorize paid calls. Any billed
+remote inference, including credit-funded usage, needs the user's applicable paid-call approval. Every paid tier below
+is optional and runs only if separately funded.
 
 | # | What | Amount |
 |---|---|---|
 | A1 | Freeze this protocol, including the changes from the draft listed in §11 | — |
-| A2 | **Main study on open-weight models**: blocks A, B, C (agent2 only), D–G (§6), with models M1 and M2 fixed by gate G5 | **$0** model cost (local hardware or the user's Anyscale credits) |
+| A2 | **Main study on open-weight models**: blocks A, B, C (agent2 only), D–G (§6), with models M1 and M2 fixed by gate G5 | Planned **$0 provider charge**, verified at G5; billed credit use needs separate authorization |
 | A3 | Optional, paid: the luna/haiku comparison (the units as priced in §6) | ceiling $90 if funded |
 | A4 | Optional, paid (needs the professor's reimbursement): Sonnet + Sol (§7) | estimate ≈ $90, cap $100. Sol's promotional price ends **30 Nov** |
 | A5 | Optional, paid: Opus; Claude Code (U6), which needs an Anthropic model | Opus cap $120; U6 cap $8 |
@@ -64,10 +68,14 @@ Framing: this is a measurement study. The evidence layer and the quorum arm are 
 | receipt_hidden | 60 s | `--hide-ms=60000` | Bounded stress test (no measured rate); 60 s equals the wallet timeout |
 | rpc_stale | 60 s lag | `--lag-ms=60000` | Between typical seconds-scale lag and incident-grade (33 min) |
 | sale_dropped | never mined | — | Realistic (Flashbots Protect expires after 25 blocks) |
-| sale_reorged_reincluded | depth 1, next send, 12 s floor | `--reorg-delay-ms=12000 --reorg-trigger=next-send` | **The realistic common reorg** |
-| sale_reorged (no re-inclusion) | depth 1, next send, 12 s floor | same | **Worst case; labelled harsh** |
+| sale_reorged_reincluded | snapshot reorg with reinclusion, next send, 12 s floor | `--reorg-delay-ms=12000 --reorg-trigger=next-send` | Reinclusion variant; realized depth is recorded |
+| sale_reorged (no re-inclusion) | snapshot reorg without reinclusion, next send, 12 s floor | same | **Worst case; labelled harsh** |
 | normal | — | — | Paired no-fault baseline in every cohort |
 
+- **Reorg depth:** the snapshot emulation reverts the critical-transaction block through the current head, then restores
+  the height. The journal records `depth = h - saleBlock + 1`; intervening approval or idle blocks can make this greater
+  than one. The 12 s floor is a trigger delay, not a guarantee of a depth-one event. Report realized depth separately;
+  no change to the emulation or timing flags is made here.
 - **Idle blocks:** `--idle-block-ms=30000` in **every** arm and agent, including none. This is a stress-test clock, not the
   12 s slot. Block timestamps and wall-clock times are both recorded.
 - **Workflows** (A1, L1) support only normal plus the four core faults; there is no reinclusion variant.
@@ -85,8 +93,10 @@ unchanged.
   - `--quorum-proxies=3`: three fork-RPC proxies in front of one Anvil.
   - Proxy 0 is the wallet's RPC and the **only faulted** proxy (`quorum.faultScope = "proxy0"`). Proxies 1–2 are clean.
   - A strict majority (2 of 3) therefore exists when one provider is stale or hides receipts.
-  - Fallback: if the K = 3 fork acceptance fails at G1, use K = 2 and record that before the freeze. With K = 2, an
-    abstaining stale endpoint gives `no_quorum` waits rather than resolution.
+  - Fallback: if three-provider fork acceptance fails at G1, use two read providers and record that before the freeze.
+    With two read providers, an abstaining endpoint can give `no_quorum` waits rather than resolution.
+  - Provider count is distinct from the unchanged confirmation threshold **K = 2**. The three-provider setup uses a
+    2-of-3 read majority; it does not require three chain confirmations.
 - **Stated limitation:** the advanced-prefix rule does not tolerate a provider that lies with a higher head.
 
 **Appendix, not run in this sweep:** pace_style and the full-layer ablations (no_nonce_pin, no_grading, no_refusal_decode).
@@ -104,7 +114,10 @@ Running them would need an addendum and a separate approval.
   - `legacy/` keeps the pre-hardening counterexamples; `evidence-formal.test.ts` holds the regression tests (C1–C9).
 - **Effect on the freeze:** none. The freeze and the sweep do not depend on it.
 - **Claims:** "no violation within the bounds", never "proved"; quorum mode, reverts and approvals are not modelled.
-  Re-run the TLC configurations on the frozen source commit before quoting the numbers.
+  The checked implementation mapping is `eb42064d82` (including `03459568ce`); the later seed-10 approval-dependency
+  recovery patch is outside that approval-free abstraction and is checked through its recorded regression and fork gate.
+  Review the model-to-code mapping against the final source, and rerun relevant model checks if the abstraction changes.
+  Do not relabel historical TLC totals as verification of the later source or a not-yet-selected frozen commit.
 
 ## 6. Cohorts (cheap tier)
 **Launcher:** `bench.sh --mode=live --port-step=100`, one invocation ("unit") per row below, each with its own `--tag`
@@ -115,11 +128,14 @@ Running them would need an addendum and a separate approval.
 **Cost per episode:** the measured ledger figures are luna $0.058 and haiku $0.075–0.091. The egress proxy bills input at
 the full rate, so caps are conservative.
 
-**Model substitution (budget revision, 15 Nov):** in every unit, `luna` is replaced by open-weight model **M1** and
-`haiku` by open-weight model **M2**. Both are fixed by gate G5 before the freeze and named here by addendum. Their price
-entries are $0, so the USD columns below apply only to the optional paid comparison (A3). Caps are then enforced as
-token ceilings per cohort. **U6 (Claude Code) needs an Anthropic model, so it moves to the optional paid tier (A5).**
-Block C keeps agent2 (U5). Wall-clock time depends on M1/M2 throughput and is measured in G5.
+**Model substitution (budget revision, 15 Nov):** in every main-study unit, `luna` is replaced by open-weight model **M1**
+and `haiku` by open-weight model **M2**. Both are fixed by gate G5 before the freeze and named here by addendum; this
+correction selects neither model. The USD columns below describe the optional paid comparison (A3). A $0 ledger price
+is valid only for a verified endpoint with no provider charge; it does not make billed credit consumption free.
+G5 must establish and verify the explicit token ceilings per cohort before an open-model launch. The historical USD
+caps below are unchanged and do not substitute for those token ceilings.
+**U6 (Claude Code) needs an Anthropic model, so it moves to the optional paid tier (A5).** Block C keeps agent2 (U5).
+Wall-clock time depends on M1/M2 throughput and is measured in G5.
 
 **Common options:** every line carries
 `FP = --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-delay-ms=12000 --reorg-trigger=next-send`.
@@ -141,7 +157,10 @@ The committed cohort files spell FP out.
 | U8 | E. Parameter sweep (dev) | `-` luna stock receipt_hidden,rpc_stale 3 `--arm={none,full}`, hide/lag ∈ {12000, 60000, 200000} | 6 × 6 | 36 | 2.1 | 2.5 | 1 | 6600 (after U9) |
 | U9 | **F. Seeded random schedules (dev)** | `-` luna stock random:1001-1020 1 `--arm={none,full} --idle-block-ms=30000` | 2 × 20 | 40 | 2.3 | 3 | 1 | 6600 |
 | U10 | G. full_quorum (appendix) | {H1,H2,H3} {luna,haiku} stock normal,receipt_hidden,rpc_stale 3 `--arm=full_quorum --quorum-proxies=3` FP | 6 × 9 | 54 | 3.6–4.1 | 4.5 | 1 | 6000 (after U5) |
-| | **Cheap total** | | **46 cohorts** | **998** | **≈ 62–71** | **89 (ceiling $90)** | | |
+| | **Listed comparison including optional U6** | | **46 cohorts** | **998** | **≈ 62–71** | **89 (ceiling $90)** | | |
+
+The open-weight main study **excludes U6** and contains **43 cohorts / 944 episodes**. The table's 46-cohort /
+998-episode total includes U6's optional 3 cohorts / 54 episodes. No task, repetition count or paid unit cap changes.
 
 Block notes:
 - **A, B:** B uses H1 so it has same-task comparators in A (see §11).
@@ -150,7 +169,8 @@ Block notes:
   together and runs both receipt_hidden and rpc_stale.
 - **F:**
   - Schedule size and timings are drawn from each seed by `generateSchedule` (1–3 chain-native faults).
-  - Seeds 1001–1020 must lie outside every seed range used in mock QA; G1 checks this.
+  - Seeds 1001–1020 are reserved for this study block and must lie outside every seed range used in mock QA. G1 uses
+    development QA seeds 1–20 and checks the separation; it must not run the reserved study seeds as mock episodes.
   - The block is development-only and is never headline. The claim is narrowed to "seeded random combinations of
     chain-native faults against real LLM agents, with full-history checks, including acting on rolled-back state". The
     method is credited to Jepsen, Elle and Knossos.
@@ -171,7 +191,9 @@ Block notes:
   - U5, then U10, on 6000–6200 (U10 uses 6000 only);
   - U6 on 6300–6500;
   - U7 on 6600–6700.
-- **Timing:** about 10 min per episode, so about 998 episodes take about 21 h of lane time over 1–2 days.
+- **Timing:** the earlier planning estimate assumed about 10 min per episode and about 21 h over 1–2 days for all
+  998 listed episodes, including optional U6. The open-weight main study has 944 episodes; its throughput and wall-clock
+  estimate remain to be measured at G5. The phase-2 U6 lanes are conditional on its separate paid approval.
 
 ## 7. Optional flagship tier (approval A4/A5; only if funded; after the smoke tests)
 | Unit | Model | Grid | Episodes | Est. USD | Cap USD | Lanes | Port base |
@@ -218,7 +240,7 @@ Block notes:
 
 **False-hold rate, as implemented (read on `normal`, full arm):**
 - **Instrumentation:** `EVM_EVIDENCE_DECISION_LOG=1` logs each decision the wallet returns. Chain truth is polled from the
-  direct Anvil every 250 ms, never through the fault proxy.
+  direct Anvil on a target 250 ms polling interval, never through the fault proxy.
 - **Predicate (`metrics.py`):** at decision time T, walk back from the last recorded head at or before T. The predicate holds
   if a canonical block B satisfies all of:
   - B contains one of the intent's transactions, matched by hash, or by sender and pinned nonce;
@@ -233,8 +255,10 @@ Block notes:
   - episodes with at least one false hold / normal full-arm episodes (30 in block A);
   - each with a Wilson interval.
 - **Caveats:**
-  - Sampling can only undercount, and only near the 5 s boundary.
-  - The effect is read from receipt logs, not balance history.
+  - The 250 ms interval is a sampling target, not a guaranteed RPC-delay or observation-latency bound. Coverage and
+    timing gaps must remain visible; neither one-sided counting error nor error limited to the 5 s boundary is assumed.
+  - The predicate uses sampled heads and receipt effects, not a continuous balance-history oracle. Receipt transfers or
+    approvals do not establish the net balance or allowance at every later decision time.
   - Predicate-true holds in fault cells measure the fault and are reported separately, not as overhead.
   - `full_quorum` is not instrumented, so its false-hold rate is "not measured".
 
@@ -276,19 +300,26 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
 - No retries, replacements or prompt changes.
 - Raw runs are archived with SHA-256 hashes; only audits and summaries are committed.
 
-**Gates before the freeze (all free):**
-- **G1:** results-gate3 passes on the frozen source. It is a mock gate covering every arm (including a fresh-fork
-  full_quorum acceptance at K = 3), random seeds 1001–1020, history-check agreement, the false-hold audit and the tamper
-  suite. Its refs fill the placeholder at the top.
+**Gates before the freeze (mock/offline work is free; billed inference remains approval-gated):**
+- **G1:** a fresh confirmation gate passes on the final source candidate, after reference-reconciliation and recovery
+  fixes. It covers every arm (including fresh-fork `full_quorum` acceptance with **three read providers**, 2-of-3 read
+  majority and unchanged confirmation K = 2), development QA random seeds **1–20**, history-check agreement, the
+  false-hold audit and the tamper suite. Historical gate3 audits do not certify a later source. Only passing final-source
+  refs fill the placeholder at the top; study seeds 1001–1020 remain reserved.
 - **G2:** bench.sh now forwards `--hide-ms`, `--lag-ms`, `--reorg-delay-ms`, `--quorum-proxies` and `--evidence-ablate`
-  (fixed 15 Nov). A mock cohort must show 60 s / 60 s / 12 s and K = 3 in the manifest.
+  (fixed 15 Nov). A mock cohort must show 60 s / 60 s / 12 s and **three read providers** in the manifest, with the
+  evidence confirmation threshold remaining K = 2.
 - **G3:** the smoke tests (approval A3). They resize U6 if needed.
 - **G4:** the shuffled cohort files and their hashes are committed, and the ledger is re-read for `--prior-usd`.
-- **G5 (open-model feasibility, free):** the harness supports an OpenAI-compatible open-model endpoint through the egress
-  proxy (blinding, token caps and ledger unchanged; price $0). M1 and M2 are chosen as the strongest open models that
-  (i) complete the D1 mock-plan tool sequence, and (ii) complete one live D1 `normal` episode on ElizaOS and agent2 with
-  valid tool calls. Model name, weights revision, quantisation, serving stack and sampling settings are recorded in the
-  manifest. D1 is development data, so this exposes nothing held out.
+- **G5 (open-model feasibility and accounting):** the harness must support an OpenAI-compatible open-model endpoint
+  through the egress proxy, preserving blinding and ledger records and enforcing explicit token ceilings. Confirm its
+  provider accounting before any inference: local/no-charge execution can use a $0 ledger price; billed remote or
+  credit-consuming execution needs the user's applicable paid-call approval and accurate cost accounting. Existing
+  credits are not a spending approval. M1 and M2 are chosen as the strongest open models that (i) complete the D1
+  mock-plan tool sequence, and (ii) complete one live D1 `normal` episode on ElizaOS and agent2 with valid tool calls.
+  No model is selected by this correction. Model name, weights revision, quantisation, endpoint/serving stack, sampling
+  settings, accounting and token ceilings are recorded before launch. D1 is development data, so this exposes nothing
+  held out.
 
 ## 11. Changes from the 15 Nov draft
 1. **`full_quorum` added as an appendix arm (block G),** not a sixth main arm, keeping the main table at 5 arms per the
@@ -304,3 +335,15 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
 8. **Caps are per unit,** because bench.sh lane caps are disjoint; the sum is $89.
 9. **Budget revision (15 Nov):** no paid budget. The main study runs on open-weight models M1/M2 at $0 (gate G5); luna/haiku,
    flagships, Opus and Claude Code (U6) become optional paid tiers. The TLA+ status (§5) and the bench.sh fix (G2) are updated.
+
+### Dated draft consistency correction — 15 November 2026 (Codex)
+
+This remains **NOT YET FROZEN**. The source and final-gate placeholders remain unfilled; no spending or study launch is
+approved here. The correction separates QA seeds 1–20 from reserved study seeds 1001–1020, describes the existing
+snapshot reorg's recorded depth, distinguishes three read providers from confirmation K = 2, corrects sampled false-hold
+limitations, and states both cohort totals (944/43 without optional U6; 998/46 with it). It also distinguishes verified
+no-charge local/remote inference from billed credit consumption. Historical formal counts keep their `eb42064d82` mapping;
+the new approval-dependency recovery patch needs its recorded regression and fork gate. Models, tasks, repetitions,
+hypotheses, fault timing flags and paid budgets are unchanged. A final reference-fix/source gate is still pending.
+
+Authored-by: Codex (OpenAI).
