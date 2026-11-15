@@ -234,6 +234,9 @@ Outcomes(n, bumped, own) ==
           ELSE IF pool[n] \in own THEN acc
           ELSE acc \cup {"underpriced"}
 
+\* The record's own transactions at nonce n, acknowledged or not (a lost acknowledgement leaves no hash, but the
+\* stored request's fees, bumped on every re-send, still out-bid it).
+Own(i, n, H) == H \cup {t \in 1..Len(txs) : txs[t].intent = i /\ txs[t].nonce = n}
 NewTx == Len(txs) + 1
 ApplySend(i, n, res) ==
   IF res \in {"ack", "lost"}
@@ -282,7 +285,7 @@ FullResend(i, L, oi, extra) ==
   LET r == L[oi]
       n == r.pinned
       reopen == r.state \in {"orphaned", "dropped"}
-  IN \E res \in Outcomes(n, TRUE, r.hashes) :
+  IN \E res \in Outcomes(n, TRUE, Own(i, n, r.hashes)) :
        /\ ApplySend(i, n, res)
        /\ IF res = "lost"
           THEN /\ ledger' = L /\ pc' = pc        \* classifySendError = "error": rethrown, no round
@@ -366,7 +369,7 @@ NORequest(i) ==
          extra == OtherBelievedOrphan(i, V)
      IN IF oi # 0
         THEN LET r == L[oi] IN
-             \E res \in Outcomes(r.pinned, TRUE, r.hashes) :
+             \E res \in Outcomes(r.pinned, TRUE, Own(i, r.pinned, r.hashes)) :
                /\ ApplySend(i, r.pinned, res)
                /\ CASE res = "ack" ->
                          /\ ledger' = [L EXCEPT ![oi].hashes = @ \cup {NewTx}]
@@ -604,7 +607,7 @@ EnReq(i)    == Policy = "full" /\ pc.k = "idle" /\ AgentMay(i) /\
                IF g.refused THEN g.L # ledger
                ELSE LET oi == FindOpenFull(g.L, i) IN
                     IF oi = 0 THEN Len(g.L) < MaxRecs /\ Outcomes(PendingCount(view), FALSE, {}) # {}
-                    ELSE Outcomes(g.L[oi].pinned, TRUE, g.L[oi].hashes) # {}
+                    ELSE Outcomes(g.L[oi].pinned, TRUE, Own(i, g.L[oi].pinned, g.L[oi].hashes)) # {}
 \* []<>(~En) \/ []<><<A>>_vars  is  []<>(~En \/ <<A>>_vars), i.e. WF_vars(A) when En = ENABLED <<A>>_vars
 FairnessFull ==
   /\ ([]<>(~EnMineTx) \/ []<><<MineTx>>_vars)

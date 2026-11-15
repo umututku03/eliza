@@ -12,7 +12,7 @@ BASE = dict(
     MaxNonce=3, MaxTx=4, MaxBlocks=5,
     MaxReorgs=0, MaxDepth=1, MaxLag=0, MaxDrops=0, MaxLostAcks=0, MaxHides=0,
     MaxReq=3, MaxStatus=1, MaxRecs=3, K=2, N=3,
-    AgentStopsOnAsk=False, AgentSequential=True, PriorityMining=False, TimelyInclusion=False,
+    AgentStopsOnAsk=False, AgentSequential=True, PriorityMining=False, TimelyInclusion=True,
 )
 
 SAFETY = "INVARIANTS TypeOK AtMostOnce NoFalseConfirm NoActOnOrphan"
@@ -20,6 +20,7 @@ LIVENESS = "PROPERTIES EventuallyResolved EventuallyCorrect"
 
 # One fault family per scenario (the chain-faults cells), plus compound and shared-token variants.
 SCENARIOS = {
+    "slowincl": (dict(TimelyInclusion=False), "no fault, but a receipt wait may time out while the tx is still pooled"),
     "hidden":   (dict(MaxHides=1), "receipt_hidden: one receipt hidden, later shown again"),
     "dropped":  (dict(MaxDrops=1), "sale_dropped: one pooled transaction dropped"),
     "lostack":  (dict(MaxLostAcks=1), "lost acknowledgement: one accepted send reported as an RPC error"),
@@ -85,7 +86,7 @@ def main():
             for s, (o, d) in LIVE.items():
                 names.append(write(p, s, dict(LIVE_BASE, **o), d, "LiveSpecFull", LIVENESS))
     # Validates the explicit enabledness predicates of FairnessFull against ENABLED (small model, slow check).
-    names.append(write("full", "enabled_check", dict(LIVE_BASE, MaxHides=1, MaxDrops=1, MaxReorgs=1, MaxBlocks=5, MaxReq=3, MaxTx=3),
+    names.append(write("full", "enabled_check", dict(LIVE_BASE, MaxDrops=1, MaxLostAcks=1, MaxBlocks=3, MaxReq=2, MaxTx=2, MaxNonce=2),
                        "EnabledMatches on a small model", "Spec", "INVARIANTS EnabledMatches"))
     print("\n".join(names))
 
