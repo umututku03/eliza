@@ -64,6 +64,14 @@ def med(xs):
     xs = [x for x in xs if x is not None]
     return round(statistics.median(xs), 6) if xs else None
 
+def distribution(xs, total):
+    """Descriptive quartiles: inclusive linear interpolation; undefined is never imputed as zero."""
+    xs = [x for x in xs if x is not None]
+    q1, _, q3 = statistics.quantiles(xs, n=4, method='inclusive') if len(xs) >= 2 else (None, None, None)
+    rounded = lambda x: round(x, 6) if x is not None else None
+    return dict(nDefined=len(xs), nTotal=total, median=med(xs), q1=rounded(q1), q3=rounded(q3),
+                iqr=rounded(q3 - q1) if q1 is not None else None)
+
 def main(args):
     folders = [os.path.abspath(a) for a in args if not a.startswith('--')]
     by_task = '--by-task' in args
@@ -85,7 +93,7 @@ def main(args):
             g = groups[(agent, r['model'], m.get('condition', 'stock'), evidence)]
             key = (task, r['scenario']) if by_task else r['scenario']
             g['cells'][key].append(dict(r, task=task, valid=bool(o.get('validComplete') or o.get('correctInfeasible')),
-                                        costUSD=info['cost'].get(r['id'], 0.0)))
+                                        costUSD=info['cost'].get(r['id'], 0.0), termination=e.get('termination')))
     out = []
     for (agent, model, condition, evidence), g in sorted(groups.items()):
         table = []
@@ -102,23 +110,28 @@ def main(args):
                               unsafeEpisodes=sum(1 for r in rs if r['unsafe']), unsafe=dict(unsafe),
                               medianComparableIVL_X=med([r['IVL_comparable_X'] for r in rs]), medianBDT_s=med([r['BDT_s'] for r in rs]),
                               medianPAF=med([r['PAF'] for r in rs]), completed=sum(r['valid'] for r in rs),
-                              completionRate=round(sum(r['valid'] for r in rs) / n, 3), costUSD=round(sum(r['costUSD'] for r in rs), 8)))
+                              completionRate=round(sum(r['valid'] for r in rs) / n, 3), costUSD=round(sum(r['costUSD'] for r in rs), 8),
+                              bdtStatusCounts={s: st.count(s) for s in sorted(set(st))},
+                              censoredByLimit=sum(r['BDT_status'] == 'censored' and r['termination'] in ('max_turns', 'max_user_turns', 'budget_exhausted') for r in rs),
+                              metricSummaries={name: distribution([r[field] for r in rs], n) for name, field in
+                                               [('comparableIVL_X', 'IVL_comparable_X'), ('BDT_s', 'BDT_s'), ('PAF', 'PAF')]}))
         out.append(dict(agent=agent, model=model, condition=condition, evidence=evidence,
                         evidenceEnabled=evidence != 'none', evidenceAblate=evidence.split(':', 1)[1] if evidence.startswith('ablate:') else 'none',
                         folders=g['folders'], cells=table))
     if '--json' in args:
         print(json.dumps(out, indent=2)); return
     fmt = lambda v: 'n/a' if v is None else str(v)
+    dist = lambda d: f"{fmt(d['median'])} [{fmt(d['q1'])}, {fmt(d['q3'])}]; {d['nDefined']}/{d['nTotal']}"
     for t in out:
         print(f"\n### agent={t['agent']} model={t['model']} condition={t['condition']} evidence={t['evidence']}\n")
         print('folders: ' + '; '.join(f"{f['folder']} ({f['mode']}, {f['task']}, {f['marker'] or 'no marker'}, newUSD {f['newUSD']})" for f in t['folders']) + '\n')
-        print('| cell | tasks | n | correct decision | unsafe | median comparable IVL (X) | median BDT (s) | median PAF | completion | cost (USD) |')
+        print('| cell | tasks | n | correct decision | unsafe | comparable IVL (X): median [Q1,Q3]; n | BDT (s): median [Q1,Q3]; n | PAF: median [Q1,Q3]; n | completion | cost (USD) |')
         print('|---|---|---|---|---|---|---|---|---|---|')
         for c in t['cells']:
             dec = f"{c['correctDecisions']}/{c['decisionsScored']} ({c['correctDecisionRate']})" if c['decisionsScored'] else 'n/a'
             uns = f"{c['unsafeEpisodes']}/{c['n']}" + (' (' + ', '.join(f'{k} {v}' for k, v in sorted(c['unsafe'].items())) + ')' if c['unsafe'] else '')
-            print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {fmt(c['medianComparableIVL_X'])} | {fmt(c['medianBDT_s'])} | "
-                  f"{fmt(c['medianPAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} |")
+            print(f"| {c['cell']} | {','.join(c['tasks'])} | {c['n']} | {dec} | {uns} | {dist(c['metricSummaries']['comparableIVL_X'])} | {dist(c['metricSummaries']['BDT_s'])} | "
+                  f"{dist(c['metricSummaries']['PAF'])} | {c['completed']}/{c['n']} ({c['completionRate']}) | {c['costUSD']} |")
 
 if __name__ == '__main__':
     main(sys.argv[1:])
