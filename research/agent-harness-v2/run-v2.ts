@@ -378,6 +378,15 @@ if (mode === "live" && manifest.elizaSourceDirty)
 // ---- infrastructure ------------------------------------------------------------------------------------
 // Anvil prints its fork endpoint (which embeds the provider key), so its raw log stays outside the results
 // and only a redacted copy is saved at the end.
+// Every port this run binds must be free: a busy port would silently attach this run to another cohort's fork or
+// LLM proxy (seen when a parallel run held the same --port-base).
+for (const port of [ANVIL_RUN_PORT, FORK_PROXY_PORT, LLM_PORT, MOCK_GATE_PORT]) {
+  try {
+    Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } }).stop(true);
+  } catch {
+    throw new Error(`Port ${port} is in use; pick another --port-base.`);
+  }
+}
 const rawAnvilLog = join(tmpdir(), `agent-harness-v2-anvil-${process.pid}.log`);
 process.env.ANVIL_LOG = rawAnvilLog;
 const anvil = await startAnvil(frozen.block, ANVIL_RUN_PORT);
@@ -431,6 +440,8 @@ for (let i = 0; i < 100; i++) {
     await Bun.sleep(100);
   }
 }
+if (llmProc.exitCode !== null)
+  throw new Error(`LLM egress proxy exited (${llmProc.exitCode}); is port ${LLM_PORT} in use?`);
 const childEnv: Record<string, string> = {
   PATH: process.env.PATH ?? "",
   HOME: process.env.HOME ?? "",
