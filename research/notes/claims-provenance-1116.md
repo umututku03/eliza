@@ -76,10 +76,11 @@ luna-v2-ev-r1-random-s20: ok
 label agreement (P1, P2, P4): all agree
 ```
 
-## Retries with changed parameters (live pilots pilot1114, small-pilot1115, fvn-pilot1116; archived raw folders)
+## Retries with changed parameters (live pilots: pilot1114 [agent2-luna, eliza-haiku, eliza-luna], small-pilot1115, fvn-pilot1116; archived raw folders)
 ```
-live episodes with transactions: 58
-leg ETH->USDC: episodes with >=2 sends 18, with a changed input amount 0
+live episodes with transactions: 86
+leg ETH->USDC: episodes with >=2 sends 21, with a changed input amount 0
 leg USDC->DAI: episodes with >=2 sends 2, with a changed input amount 0
 Note: compares the input amount only (the intent key also excludes slippage and deadline); the task fixes the sale amount.
 ```
+Corrected 16 Nov: an earlier count (58 episodes) omitted pilot1114 because of a wrong archive path.
