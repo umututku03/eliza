@@ -22,7 +22,7 @@ a $2.00 cap on 15 Nov.
 
 - **Predictions:** the plan predicted some duplicates for none under rpc_stale and 0 for full with the goal reached. Both held.
 - **Normal runs:** each arm missed the goal once, through the agent's own step-2 choice. In the none arm this was an undersized buy (`goal_miss_after_trade`). There were no duplicates in either arm.
-- **Evidence attribution, full arm, rpc_stale:** consistent in 5/5. The layer reported pending/wait instead of a stale success.
+- **What the layer returned (full arm, rpc_stale; from the `[evidence-decision]` stderr lines):** every decision in all 5 episodes was `confirmed`, at both `send` and `check` sites. The layer kept polling inside the send call until fresh reads showed the sale with K = 2 confirmations, then reported success. The agent never received the stale "failed" or "pending" answer the baseline saw. Evidence attribution was consistent in 5/5. Latency and RPC overhead were not measured in this pilot.
 
 ## How to read this
 - The sample is small: 3/5 against 0/5 is a demonstration, not a significance result. Fisher's exact test, one-sided, gives p ≈ 0.08.
