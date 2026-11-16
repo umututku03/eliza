@@ -14,7 +14,7 @@
  */
 import type { IAgentRuntime } from "@elizaos/core";
 import { type Address, encodeFunctionData, encodePacked, type Hex, isAddress, isHex, parseAbi } from "viem";
-import { NATIVE_TOKEN_ADDRESS, TX_CONFIRMATION_TIMEOUT_MS } from "./constants";
+import { NATIVE_TOKEN_ADDRESS } from "./constants";
 import {
   decodeRefusalSentence,
   describeCall,
@@ -24,6 +24,7 @@ import {
   evidenceLayerEnabled,
   evidenceSendsEnabled,
   findOpenIntent,
+  receiptTimeoutMs,
   sendWithEvidence,
 } from "./evidence";
 import type { WalletProvider } from "./providers/wallet";
@@ -164,7 +165,7 @@ export async function executeThroughPlan(
     }
     if (intent) return redeemWithEvidence(data);
     const hash = await walletClient.sendTransaction({ account, chain: walletClient.chain, to: plan.delegationManager, data, value: 0n });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: TX_CONFIRMATION_TIMEOUT_MS });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: receiptTimeoutMs() });
     if (receipt.status !== "success") {
       throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Plan redemption for ${what} failed on-chain. Hash: ${hash}`);
     }

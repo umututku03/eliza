@@ -7,9 +7,9 @@ Status: 2026-11-15, written by Claude. It answers Codex's readiness gates in `ma
 - **agent2** stays in the study as a no-defence agent, for framework dependence. No agent2 evidence adapter is built (Codex's gate: "or restrict protected comparisons to ElizaOS").
 
 ## One switch for all arms
-- **Harness flag:** `--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style`, recorded as `manifest.arm`. Episode IDs get an arm tag: `-none`, `-po`, `-no`, `-vb`, `-ev`, `-ps`.
+- **Harness flag:** `--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style|full_quorum|patient`, recorded as `manifest.arm`. Episode IDs get an arm tag: `-none`, `-po`, `-no`, `-vb`, `-ev`, `-ps`, `-fq`, `-pt`.
 - **Compatibility:** the existing `--evidence` maps to `--arm=full`, and `--evidence-ablate` stays for ablations under `full` only.
-- **Wallet side:** `EVM_EVIDENCE_MODE` = `full | nonce_only | verify_binary | pace_style`. When unset, the stock path is byte-identical (keep the existing call-argument snapshot tests).
+- **Wallet side:** `EVM_EVIDENCE_MODE` = `full | nonce_only | verify_binary | pace_style | full_quorum | patient`. When unset, the stock path is byte-identical (keep the existing call-argument snapshot tests).
 - **Equal across arms:** idle blocks, fault parameters, task text, tools and models. The arm is the only difference.
 
 ## Arm definitions (fixed now)
@@ -47,6 +47,29 @@ The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
 - **What:** `full` with its evidence reads (head, receipts, transaction lookups, nonce, balance effect) taken from K >= 2 read endpoints and compared. This is quorum reads as in ethers FallbackProvider / eRPC consensus, applied inside the evidence layer (Helios goes further and verifies headers). `EVM_EVIDENCE_MODE=full_quorum`, `EVM_EVIDENCE_READ_URLS`, `--arm=full_quorum` (tag `-fq`).
 - **Agreement rule:** see the "quorum reads" comment in `evidence.ts`, which is normative. In short, the quorum is a strict majority of K. The largest pairwise-consistent (prefix) set of endpoints is taken, and its most advanced member is used. Claims about block B are decided among the members whose head reaches B, by supporters against deniers. With no quorum, or with a tie, the layer waits (`no_quorum`) and asks the user after N rounds.
 - **Harness:** K fork-RPC proxies in front of one Anvil. Proxy 0 is the wallet's RPC and the only faulted proxy, so it models "one bad provider". The other proxies are clean read endpoints.
+
+### `patient` (added 16 Nov 2026; "would simply waiting longer do what the evidence layer does?")
+- **What:** the stock wallet with **only** the receipt-wait timeout extended: `waitForTransactionReceipt` waits
+  `PATIENT_RECEIPT_TIMEOUT_MS` = **300 s** instead of the stock `TX_CONFIRMATION_TIMEOUT_MS` = **60 s**
+  (`plugins/plugin-wallet/src/chains/evm/constants.ts`). 300 s is five stock timeouts and five times the 60 s
+  hide/lag fault windows; whether that helps depends on the stock client keeping polling (see "Expected").
+- **Switch:** `EVM_EVIDENCE_MODE=patient`, `--arm=patient`, tag `-pt`. The stock send sites (`swap.ts`, `plan-guard.ts`)
+  read their timeout from `receiptTimeoutMs()`; patient never enters `sendWithEvidence`.
+- **Unchanged from stock:** no intent ledger, no nonce pinning, no fee bump, no grading, no guard, no refusal decoding;
+  stock success and error wording (a timeout still reads "Timed out while waiting for transaction ... to be confirmed").
+- **Recording:** the wallet writes the mode line `[evidence] EVM_EVIDENCE_MODE=patient` once (stderr); the manifest records
+  `armEnv = {EVM_EVIDENCE_MODE: patient}` and `armReceiptTimeoutMs = 300000` (null for every other arm). The verifier
+  checks arm, tag, environment, mode line and timeout; the generic "arm label changed" tamper case covers it, and
+  "patient receipt timeout changed" is a patient-specific case.
+- **Expected (not tuned):** it should match `full` where the fault ends inside 300 s and the stock wait keeps polling
+  (rpc_stale: confirmed in the 16 Nov mock gate). It does **not** help under receipt_hidden: viem 2.56.9's
+  `waitForTransactionReceipt` does not keep polling there: once `getTransaction` returns the mined transaction, a missing
+  receipt triggers its replacement check, which fetches that block, finds the same sender/nonce (the transaction itself),
+  asks for its receipt again and rejects on the second "not found" ("Transaction receipt ... could not be found"). The
+  timeout is never reached (mock gate: rejected within seconds, then a duplicate, as in none). It
+  cannot help when the sale never lands (sale_dropped: one 300 s wait, then a stock
+  failure, and any re-send is a new stock transaction) or is rolled back after its receipt (reorg cells). It costs latency: each such
+  wallet call blocks up to 300 s.
 
 ### `pace_style` (appendix arm; implement after the four above pass)
 - **What:** a stateless per-intent check before signing: simulate the swap with `eth_call` at the head, then check the declared policy (target router, token pair, amount at most the user's stated constraint, minimum output). Approve or refuse each call independently, with **no state across calls**. This follows PACE §4.4, "pure, stateless function".

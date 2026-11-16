@@ -29,7 +29,7 @@ import {
   parseAbi,
   parseAbiParameters,
 } from "viem";
-import { NATIVE_TOKEN_ADDRESS, TX_CONFIRMATION_TIMEOUT_MS } from "./constants";
+import { NATIVE_TOKEN_ADDRESS, PATIENT_RECEIPT_TIMEOUT_MS, TX_CONFIRMATION_TIMEOUT_MS } from "./constants";
 import { EVMError, EVMErrorCode } from "./types";
 
 /** Fixed constants of the decision table. */
@@ -48,10 +48,13 @@ export const EVIDENCE_ABLATIONS: readonly EvidenceAblation[] = ["none", "no_nonc
  * - `verify_binary`: one binary check (receipt or balance effect) before re-sending an intent, fresh nonce;
  * - `pace_style`: a stateless pre-signing check (policy and an eth_call simulation) of every call, stock send;
  * - `full_quorum`: the full layer with its evidence reads taken from N >= 2 read endpoints (`EVM_EVIDENCE_READ_URLS`)
- *   and compared, as ethers' FallbackProvider (quorum) and eRPC's consensus mode do; see "quorum reads" below.
+ *   and compared, as ethers' FallbackProvider (quorum) and eRPC's consensus mode do; see "quorum reads" below;
+ * - `patient`: the stock path (no intent ledger, no nonce pinning, no grading, stock wording) with only the receipt
+ *   wait extended from TX_CONFIRMATION_TIMEOUT_MS to PATIENT_RECEIPT_TIMEOUT_MS ("would waiting longer do it?").
+ *   It never routes through sendWithEvidence; the stock send sites read their timeout from receiptTimeoutMs().
  */
-export type EvidenceMode = "off" | "full" | "nonce_only" | "verify_binary" | "pace_style" | "full_quorum";
-export const EVIDENCE_MODES: readonly Exclude<EvidenceMode, "off">[] = ["full", "nonce_only", "verify_binary", "pace_style", "full_quorum"];
+export type EvidenceMode = "off" | "full" | "nonce_only" | "verify_binary" | "pace_style" | "full_quorum" | "patient";
+export const EVIDENCE_MODES: readonly Exclude<EvidenceMode, "off">[] = ["full", "nonce_only", "verify_binary", "pace_style", "full_quorum", "patient"];
 /** The full layer's decisions, guard, tx_status and refusal decoding (full, and full_quorum, which only changes reads). */
 const isFullLayer = (mode: EvidenceMode) => mode === "full" || mode === "full_quorum";
 export function evidenceMode(): EvidenceMode {
@@ -66,9 +69,19 @@ export function evidenceMode(): EvidenceMode {
 export function evidenceLayerEnabled(): boolean {
   return isFullLayer(evidenceMode());
 }
-/** Any mode: the send sites route through sendWithEvidence. */
+/** Any mode but patient (a stock-path timeout only): the send sites route through sendWithEvidence. */
 export function evidenceSendsEnabled(): boolean {
-  return evidenceMode() !== "off";
+  const mode = evidenceMode();
+  return mode !== "off" && mode !== "patient";
+}
+/**
+ * The stock send sites' receipt-wait timeout: TX_CONFIRMATION_TIMEOUT_MS, or PATIENT_RECEIPT_TIMEOUT_MS under
+ * EVM_EVIDENCE_MODE=patient (which also writes the mode line once, so a run's logs show the policy that ran).
+ */
+export function receiptTimeoutMs(): number {
+  if (evidenceMode() !== "patient") return TX_CONFIRMATION_TIMEOUT_MS;
+  announceMode("patient");
+  return PATIENT_RECEIPT_TIMEOUT_MS;
 }
 export function evidenceAblation(): EvidenceAblation {
   const raw = process.env.EVM_EVIDENCE_ABLATE ?? "none";
@@ -1104,6 +1117,7 @@ export async function sendWithEvidence(o: {
   const mode = evidenceMode();
   if (!isFullLayer(mode)) {
     if (evidenceAblation() !== "none") throw new Error(`EVM_EVIDENCE_ABLATE applies to the full layer only (mode ${mode})`);
+    if (mode === "patient") throw new Error("sendWithEvidence called with EVM_EVIDENCE_MODE=patient (a stock-path mode)");
     announceMode(mode);
     if (mode === "nonce_only") return sendNonceOnly(o, deps);
     if (mode === "verify_binary") return sendVerifyBinary(o, deps);
