@@ -53,13 +53,13 @@ import {
   KYBERSWAP_CHAIN_MAP,
   KYBERSWAP_NATIVE_SENTINEL,
   NATIVE_TOKEN_ADDRESS,
-  TX_CONFIRMATION_TIMEOUT_MS,
 } from "../constants";
 import {
   describeCall,
   type EvidencePublicClient,
   type EvidenceWalletClient,
   evidenceSendsEnabled,
+  receiptTimeoutMs,
   sendWithEvidence,
 } from "../evidence";
 import { parseEvmBaseUnits } from "../exact-units";
@@ -600,7 +600,7 @@ export class SwapAction {
     );
     const receipt = await publicClient.waitForTransactionReceipt({
       hash,
-      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      timeout: receiptTimeoutMs(),
     });
     if (receipt.status === "reverted") {
       throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Transaction reverted. Hash: ${hash}`);
@@ -647,7 +647,7 @@ export class SwapAction {
     );
     const receipt = await publicClient.waitForTransactionReceipt({
       hash,
-      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      timeout: receiptTimeoutMs(),
     });
     if (receipt.status === "reverted") {
       throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Bebop swap reverted. Hash: ${hash}`);
@@ -721,7 +721,7 @@ export class SwapAction {
     );
     const receipt = await publicClient.waitForTransactionReceipt({
       hash,
-      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      timeout: receiptTimeoutMs(),
     });
     if (receipt.status === "reverted") {
       throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `KyberSwap swap reverted. Hash: ${hash}`);
@@ -871,7 +871,7 @@ export class SwapAction {
       );
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        timeout: TX_CONFIRMATION_TIMEOUT_MS,
+        timeout: receiptTimeoutMs(),
       });
       if (receipt.status === "reverted") {
         throw new EVMError(EVMErrorCode.CONTRACT_REVERT, `Uniswap V2 swap reverted. Hash: ${hash}`);
@@ -986,7 +986,7 @@ export class SwapAction {
     logger.info(`Waiting for approval confirmation...`);
     const approvalReceipt = await publicClient.waitForTransactionReceipt({
       hash: approvalTx,
-      timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      timeout: receiptTimeoutMs(),
     });
     if (approvalReceipt.status === "reverted") {
       throw new EVMError(

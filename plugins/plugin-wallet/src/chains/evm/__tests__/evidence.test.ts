@@ -1125,6 +1125,89 @@ describe("flag unset: send sites call viem exactly as before", () => {
   });
 });
 
+// ---- patient (EVM_EVIDENCE_MODE=patient): the stock path with only the receipt-wait timeout extended ------------
+describe("patient: the stock send path, only the receipt-wait timeout differs", () => {
+  /** Every call made on the wallet and public clients, in order, by one stock-path swap and one plan redemption. */
+  async function stockTrace(mode: string | null) {
+    delete process.env.EVM_EVIDENCE_LAYER;
+    if (mode === null) delete process.env.EVM_EVIDENCE_MODE;
+    else process.env.EVM_EVIDENCE_MODE = mode;
+    const log: unknown[] = [];
+    const rec = (who: string, f: (...a: any[]) => any) =>
+      vi.fn(async (...a: any[]) => {
+        log.push([who, ...a]);
+        return f(...a);
+      });
+    const wallet = {
+      account: ACCOUNT,
+      chain: mainnet,
+      getAddresses: rec("wallet.getAddresses", () => [SENDER]),
+      sendTransaction: rec("wallet.sendTransaction", () => `0x${"ab".repeat(32)}`),
+      prepareTransactionRequest: rec("wallet.prepareTransactionRequest", () => ({})),
+    };
+    const pub = {
+      readContract: rec("pub.readContract", (a: any) => (a.functionName === "WETH" ? WETH : [SALE_WEI, 237_636_476n])),
+      getBlock: rec("pub.getBlock", () => ({ timestamp: 1_000n })),
+      waitForTransactionReceipt: rec("pub.waitForTransactionReceipt", () => ({ status: "success" })),
+      getTransactionCount: rec("pub.getTransactionCount", () => 7n),
+      call: rec("pub.call", () => ({})),
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await new SwapAction(fakeProvider(wallet, pub), { uniswapV2Router: ROUTER, exclusive: true }).swap({
+      chain: "mainnet",
+      fromToken: "0x0000000000000000000000000000000000000000",
+      toToken: USDC,
+      amount: "0.1",
+      slippageBps: 300,
+    } as any);
+    const plan: PlanGuardConfig = { account: SENDER, delegationManager: DM, steps: [], approvals: [] };
+    await executeThroughPlan(fakeProvider(wallet, pub), "mainnet" as never, plan, [permissionContext([])], { to: ROUTER, value: SALE_WEI, data: saleData() }, "swap");
+    const warned = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith("[evidence]"));
+    warn.mockRestore();
+    return { log, warned, wallet, pub };
+  }
+
+  it("unset: 60 s waits and no mode line; patient: identical calls except timeout 300 s, and the mode line", async () => {
+    const { PATIENT_RECEIPT_TIMEOUT_MS, TX_CONFIRMATION_TIMEOUT_MS } = await import("../constants");
+    expect(TX_CONFIRMATION_TIMEOUT_MS).toBe(60_000);
+    expect(PATIENT_RECEIPT_TIMEOUT_MS).toBe(300_000);
+    const stock = await stockTrace(null);
+    const patient = await stockTrace("patient");
+    expect(stock.warned).toEqual([]);
+    expect(patient.warned).toEqual(["[evidence] EVM_EVIDENCE_MODE=patient"]);
+    const waits = (t: typeof stock) => t.log.filter((c: any) => c[0] === "pub.waitForTransactionReceipt");
+    expect(waits(stock).map((c: any) => c[1].timeout)).toEqual([60_000, 60_000]);
+    expect(waits(patient).map((c: any) => c[1].timeout)).toEqual([300_000, 300_000]);
+    const normalised = JSON.stringify(
+      patient.log,
+      (_k, v) => (typeof v === "bigint" ? `${v}n` : v)
+    ).replaceAll('"timeout":300000', '"timeout":60000');
+    expect(normalised).toBe(JSON.stringify(stock.log, (_k, v) => (typeof v === "bigint" ? `${v}n` : v)));
+    // No ledger, no pinned nonce, no extra reads: the evidence path is never entered.
+    for (const t of [stock, patient]) {
+      expect(t.wallet.prepareTransactionRequest).not.toHaveBeenCalled();
+      expect(t.pub.getTransactionCount).not.toHaveBeenCalled();
+    }
+  });
+
+  it("patient is a stock-path mode: evidence sends stay off and sendWithEvidence refuses it", async () => {
+    const { evidenceMode, evidenceLayerEnabled, evidenceSendsEnabled, receiptTimeoutMs } = await import("../evidence");
+    setEvidenceMode("patient");
+    expect(evidenceMode()).toBe("patient");
+    expect(evidenceSendsEnabled()).toBe(false);
+    expect(evidenceLayerEnabled()).toBe(false);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(receiptTimeoutMs()).toBe(300_000);
+    warn.mockRestore();
+    await expect(send(new FakeChain())).rejects.toThrow(/stock-path mode/);
+    process.env.EVM_EVIDENCE_LAYER = "1";
+    expect(() => evidenceMode()).toThrow(/cannot be combined/);
+    delete process.env.EVM_EVIDENCE_LAYER;
+    delete process.env.EVM_EVIDENCE_MODE;
+    expect(receiptTimeoutMs()).toBe(60_000);
+  });
+});
+
 describe("baselines that send as stock: swap.ts hands viem the stock arguments", () => {
   for (const mode of ["verify_binary", "pace_style"]) {
     it(`${mode}: sendTransaction and waitForTransactionReceipt arguments equal the flag-unset snapshot`, async () => {
