@@ -1,0 +1,3 @@
+# fvn-pilot-1116 continuation: the two pre-registered next-send cohorts, not started after the verifier STOP (cohort 1 audit; fixed). Same lines as cohorts-fvn-pilot-1116.txt lines 3-4.
+- luna stock sale_reorged 5 --arm=full --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=next-send --reorg-delay-ms=12000
+- luna stock sale_reorged 5 --arm=nonce_only --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=next-send --reorg-delay-ms=12000

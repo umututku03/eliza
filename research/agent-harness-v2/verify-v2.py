@@ -732,11 +732,14 @@ def audit(folder):
                                                           {r['hash'] for r in [j.get('reincluded') or {}, *(j.get('reincludedOthers') or [])] if r}}
         # A transaction forwarded after an emulated reorg can wait in the pool behind the nonce its orphan freed.
         post_reorg = {j['hash'] for k, j in enumerate(journal) if j.get('event') == 'send' and j.get('hash') and reorgs and k > journal.index(reorgs[0])}
+        # A transaction sent after a dropped send queues behind the dropped nonce and is never included (fvn-pilot-1116,
+        # nonce_only sale_dropped: an approval sent after the dropped sale). It may stay pooled, with no effects.
+        post_drop = {j['hash'] for k, j in enumerate(journal) if j.get('event') == 'send' and j.get('hash') and dropped and k > journal.index(dropped[0])}
         need(len({t['hash'] for t in txs}) == len(txs), 'duplicate transaction records', eid)
         for t in txs:
             need(t['status'] in ('success', 'reverted', 'not_canonical'), 'transaction status', eid)
             if t['status'] == 'not_canonical':
-                need((t['hash'] in allowed_missing or (t.get('pooled') is True and t['hash'] in post_reorg)) and t['block'] is None and t['revert'] is None and
+                need((t['hash'] in allowed_missing or (t.get('pooled') is True and (t['hash'] in post_reorg or t['hash'] in post_drop))) and t['block'] is None and t['revert'] is None and
                      all(int(t['tokenDelta'][k]) == 0 for k in ('x', 'y')) and int(t['gasCostWei']) == int(t['holderEthDeltaWei']) == 0, 'noncanonical transaction effects/evidence', eid)
         # Balance arithmetic: final = before + the recorded effects of the wallet's own transactions.
         b, f = o['before'], o['final']
