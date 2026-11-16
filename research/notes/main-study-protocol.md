@@ -80,9 +80,11 @@ Framing: this is a measurement study. The evidence layer and the quorum arm are 
   a block, matching mainnet's 12 s slot. Block timestamps and wall-clock times are both recorded.
   - **Deviation from the pilots (16 Nov):** the October sweeps, the 14 Nov sweep, the small pilot and the G1 gates used
     `--idle-block-ms=30000` (a stress-test clock). Main-study results are not pooled with those runs.
-  - **Effect on reorg depth:** with a 12 s idle clock and the 12 s reorg floor, an idle block is normally mined between
-    the critical transaction and the next-send trigger, so realized depth is usually at least 2 (at 30 s it was often 1).
-    Depth is reported as recorded; K = 2 confirmations can therefore be reached before a reorg (the harsh cells test this).
+  - **Effect on reorg depth:** with a 12 s idle clock and the 12 s reorg floor, an idle block is mined between the
+    critical transaction and the next-send trigger whenever the next send comes more than 12 s after the last block, so
+    realized depth is 2 or more more often than at 30 s. In the 16 Nov mock gate (naive agent) the full arm's reorgs had
+    depth 2 and the other arms' depth 1 (their repeat came sooner). Depth is reported as recorded, by arm; when depth ≥ 2,
+    K = 2 confirmations can be reached before the reorg.
   - **Layer constants at 12 s (checked, unchanged):** K = 2 needs one block after inclusion (≤ 12 s, was ≤ 30 s); the
     60 s check budget spans about 5 slots (was 2), so a live head is not mistaken for a stalled one; 5 s checks sample
     each slot about twice; 6 unresolved rounds stay a bound on rounds, not on blocks. The 60 s hide/lag windows, the
@@ -357,9 +359,13 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
 - **H0 (primary, §8):** on the primary endpoint (safe success, five fault cells pooled, block A), full exceeds nonce_only,
   and full exceeds patient, in each model.
 - **H4:** full reduces false completions relative to none.
-- **H6 (patient):** patient gives 0 duplicates and matches full in the cells where the fault ends within its 300 s wait
-  and the transaction landed (receipt_hidden, rpc_stale); full exceeds patient on safe success in sale_dropped and the
-  reorg cells. Patient's wall-clock per wallet action is reported against full's (latency overhead).
+- **H6 (patient; secondary):** patient matches full (0 duplicates, goal reached) under rpc_stale, where the 60 s lag ends
+  inside its 300 s wait. Under receipt_hidden, patient does **not** match full: viem's stock wait rejects at once with
+  "Transaction receipt ... could not be found" when the transaction is visibly mined but its receipt is withheld, so the
+  timeout never applies (observed in the 16 Nov mock gate; a property of the stock client, not tuned). Full exceeds
+  patient on safe success pooled over the fault cells (H0). Patient's wall-clock per wallet action (up to 300 s) is
+  reported against full's. *This hypothesis was written after the mock gate (mock outcomes only, no live data); it is
+  flagged for the user's/advisor's review before freeze.*
 - **H5:** failure patterns hold across frameworks, though rates may differ. This is reported, not tested for equality.
 - **Not hypothesised; reported descriptively:** blocks E, F and G (the full_quorum comparison with full).
 
@@ -432,6 +438,10 @@ No paid call, launch or freeze is authorised by this revision; the source and ga
 11. **12 s idle blocks** (`--idle-block-ms=12000`) in FP, U8 and U9, replacing the 30 s stress clock used by every earlier
     pilot and gate (§3). U8 previously carried no idle flag, so its none and full arms would have defaulted to different
     clocks (0 and 30 s); it now passes 12000 explicitly. Layer constants unchanged (checked in §3).
+12a. **Mock gate for items 10–11 (16 Nov, $0):** `wsp-gate-1116`, ElizaOS D1 naive mock agent, S6, FP with 12 s blocks, arms
+    none, patient, nonce_only, full, 1 rep: all four audits PASS, tamper 23/23, 20/20, 20/20, 20/20 rejected. Duplicates: arm
+    none in receipt_hidden and rpc_stale; patient in receipt_hidden only; nonce_only and full in no cell. This motivated H6's
+    receipt_hidden wording. Plus a patient sale_dropped smoke (`wsp-smoke-pt`): PASS, 17/17, one 300 s wait observed.
 12. **One primary endpoint** with a power calculation (§8): safe success, five fault cells pooled, block A, full vs nonce_only
     and full vs patient per model, Bonferroni one-sided α = 0.025 each (the §9 Newcombe rule). Block A's 75 fault-cell
     episodes per arm per model are sufficient; repetitions unchanged. H0 (primary) and H6 (patient) added to §9.

@@ -61,8 +61,11 @@ The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
   `armEnv = {EVM_EVIDENCE_MODE: patient}` and `armReceiptTimeoutMs = 300000` (null for every other arm). The verifier
   checks arm, tag, environment, mode line and timeout; the generic "arm label changed" tamper case covers it, and
   "patient receipt timeout changed" is a patient-specific case.
-- **Expected (not tuned):** it should match `full` where the fault ends inside 300 s and the transaction landed
-  (receipt_hidden, rpc_stale); it cannot help when the sale never lands (sale_dropped: one 300 s wait, then a stock
+- **Expected (not tuned):** it should match `full` where the fault ends inside 300 s and the stock wait keeps polling
+  (rpc_stale: confirmed in the 16 Nov mock gate). It does **not** help under receipt_hidden: viem's
+  `waitForTransactionReceipt` rejects at once ("Transaction receipt ... could not be found") when the transaction is
+  visibly mined but the receipt is withheld, so the timeout is never reached (mock gate: a duplicate, as in none). It
+  cannot help when the sale never lands (sale_dropped: one 300 s wait, then a stock
   failure, and any re-send is a new stock transaction) or is rolled back after its receipt (reorg cells). It costs latency: each such
   wallet call blocks up to 300 s.
 
