@@ -462,3 +462,15 @@ No paid call, launch or freeze is authorised by this revision; the source and ga
 14. **Consequences for the gates:** the wallet source changed (patient mode, receipt-timeout helper at the stock send
     sites), so G1 must be rerun on the new source candidate, and the §5 model-to-code mapping review applies to it (the
     stock path's only change is the timeout value source; the full-layer path is untouched).
+
+## 12. Pre-results decisions (16 Nov 2026, committed before the fvn-pilot-1116 live results were read)
+Adopted on the advisor's recommendation, before any outcome of the running full-vs-nonce_only mini-pilot was seen. These supersede the conflicting text in §4, §8 and §9.
+1. **Primary endpoint stays "safe success"** (§8) and is fixed now. It is not chosen from the mini-pilot: that pilot uses a different model (luna), a 30 s clock, a delay-trigger reorg outside S6, and n = 15 per arm.
+2. **Key secondary: terminal-report consistency.** The agent's final declaration matches chain truth (the evidence-attribution / BDT "consistent" readout). The declared word is not primary, because the full arm's wallet text partly produces it.
+3. **New arm `pin_wait`** = nonce_only plus the 300 s receipt wait of `patient`. It is the baseline for "what does grading add over pinning the nonce and waiting longer?". `patient` (no pin) stays as a stock-wallet comparator. **The headline comparisons are full vs nonce_only and full vs pin_wait.** Implementation and a mock gate are required before the freeze.
+4. **Expected results, registered honestly from the mock.** full ties nonce_only on safe success in every S6 cell, and pin_wait is expected to tie as well. The power rows in §8 are **detectable effect sizes, not expectations**.
+5. **Multiplicity: Holm** over the two headline comparisons, per model: the smaller p at one-sided 0.025, then the other at one-sided 0.05. Equivalently, the first comparison needs its two-sided 95% Newcombe interval to exclude 0 and the second its two-sided 90% interval. The Newcombe interval decides; Fisher is reported alongside. **A claim that "full beats X" requires rejection in both models** (intersection-union); a single-model win is reported as such. CMH over tasks is a sensitivity check; p-values are approximate because episodes share tasks and run order.
+6. **Null rule.** If the headline comparisons are not supported, the paper reports that grading did not improve live safe success at these settings. The case for the layer then rests on the at-most-once guarantee, terminal-report consistency (secondary) and the comparison with no defence.
+7. **Development data.** The delay-trigger reorg (where full wins in the mock) and all D1 pilots are reported as exploratory development data, never pooled into the headline.
+8. **Paid tiers.** Any paid unit is re-costed by dated addendum, with cap ≥ estimate, before launch. Paid tiers are not part of the confirmatory analysis.
+9. **Pilot endpoint mismatch.** The mini-pilot's endpoint ("goal and no false completion") equals safe success only when duplicates and reserve breaches are 0 (true for pinned arms). Say so wherever the pilot is cited.
