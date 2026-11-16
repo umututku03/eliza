@@ -3,7 +3,7 @@
 `EvidenceLayer.tla` models the recovery protocol of `plugins/plugin-wallet/src/chains/evm/evidence.ts` and three
 baseline send policies, checked with TLC on small bounds. The top-level model follows the **hardened** wallet
 (Codex commits d5b0719ef5, 74a76f672a; `evidence.ts` at `origin/research/evidence-layer` eb42064d82, quorum mode
-excluded). `legacy/` keeps the model of the pre-hardening wallet (fc7ce03a5b) and the counterexamples it produced.
+excluded), updated on 16 November 2026 for e1c82ae7a3 (see "Re-check against the final source" below). `legacy/` keeps the model of the pre-hardening wallet (fc7ce03a5b) and the counterexamples it produced.
 
 These are bounded results: "holds" means no violation in the finite state space of the stated bounds, not a proof.
 
@@ -51,7 +51,7 @@ The saved safety runs use 8 to 10 workers; liveness runs use one worker.
   - `verify_binary`: `sendVerifyBinary`.
   - `none`: the stock send, where viem fills the nonce from the wallet's RPC, followed by the stock receipt wait.
 
-### Mapping (spec ↔ evidence.ts at eb42064d82)
+### Mapping (spec ↔ evidence.ts at eb42064d82, updated for e1c82ae7a3)
 
 | Spec | evidence.ts | Simplification |
 |---|---|---|
@@ -66,8 +66,8 @@ The saved safety runs use 8 to 10 workers; liveness runs use one worker.
 | `FindOpenFull` | `findOpenIntent()` (a confirmed record stays open until its outcome was reported: `rep`) | — |
 | `FullFirstSend` | `sendWithEvidence` first send: pin `pending` nonce, snapshot, reserve, send; any error ⇒ `pending`, EVIDENCE_PENDING | The prepare/snapshot/send sequence is atomic. |
 | `FullResend` | re-send with the pinned nonce and +12.5% fees; `classifySendError` (too low ⇒ landed, underpriced ⇒ pending, other ⇒ rethrow) | `Own()`: any pooled tx of the same intent at the pinned nonce is out-bid. |
-| `Poll` (`late`, `mid`) | check loop, polled every t until terminal or T | Time is abstract: `sendOld` means ≥ T since the last send, `hsOld` means head unchanged for ≥ T. `TimePasses` covers agent time between calls. |
-| `TxStatus` | `tx_status` → `checkOnce(latestIntent(), counted)` | — |
+| `Poll` (`late`, `mid`) | check loop, polled every t until terminal or T; then (e1c82ae7a3) `guard(…, afterDispatch)` when the last observation has no block and `nonceLatest < pinnedNonce` | Time is abstract: `sendOld` means ≥ T since the last send, `hsOld` means head unchanged for ≥ T. `TimePasses` covers agent time between calls. |
+| `TxStatus`, `LatestIntent` | `tx_status` → `checkOnce(latestIntent(), counted)`; `latestIntent` puts the lowest-nonce orphaned record first (e1c82ae7a3) | — |
 | `NORequest`, `WaitDone`/`WaitTimeout` | `sendNonceOnly`, `stockWait` | The wait watches one hash (viem's replacement detection is not modelled). |
 | `VBRequest`, `VBSend` | `sendVerifyBinary`, `binaryCheck` | — |
 | `NoneRequest` | stock send + `waitForTransactionReceipt` | — |
@@ -117,6 +117,9 @@ Liveness configs:
 - the agent stops after `ask_user`.
 
 ## Results (TLC2 2.19, distribution v1.7.4, 8–10 safety workers)
+
+These are the results for the eb42064d82 model. The 16 November re-check below gives the counts for the updated model;
+only `full / reorg` and `full / reincl` changed.
 
 Policy × scenario. A = AtMostOnce, F = NoFalseConfirm, O = NoActOnOrphan. The last column gives the full
 policy's distinct states and time; every other cell checked all three invariants. Minimal (BFS) counterexamples are in
@@ -222,3 +225,140 @@ retrospective cryptographic binding between a historical execution and its input
 at eb42064d82; later wallet changes require a fresh mapping review before these counts are quoted for another source.
 
 Authored-by: Codex (OpenAI).
+
+## Re-check against the final source, 16 November 2026
+
+Source: `evidence.ts` at faad400bd7 (branch `ws/tla2`). `git log eb42064d82..HEAD -- plugins/plugin-wallet/src/chains/evm/`
+lists one commit, e1c82ae7a3 ("surface orphaned dependencies after queued approval dispatch"). It changes `evidence.ts`
+(+19/−5) and adds tests C10 and two negatives to `evidence-formal.test.ts`. The other commit, 97077add94 ("reconcile a
+queued swap after its approval is orphaned"), touches only `research/agent-harness-v2/` (the harness control child and
+its test). It does not change wallet code.
+
+### Mapping review
+
+| Change (e1c82ae7a3) | Modelled? | Model update |
+|---|---|---|
+| `sendWithEvidence`: after the check loop, if the last observation has `receiptBlock = txBlock = null` and `nonceLatest < pinnedNonce`, call `guard(…, afterDispatch = true)`. A refusal throws EVIDENCE_UNRESOLVED **before** `closeRound` (no ask_user, not added to `reportedOutcomes`). Otherwise the guard's re-checks of other records persist and the round closes as before. | yes (send path, guard) | yes: `Poll` runs `GuardFull` with the same view when the round ends and `o.incl = 0 ∧ o.nonceLatest < r.pinned`. Refused: keep the guard's ledger, `pc` idle, no `CloseRound`, no report. Not refused: keep the guard's ledger, then close and report. |
+| `latestIntent`: the orphaned record with the lowest pinned nonce first (stable sort), else the latest unresolved, else the latest | yes (`tx_status`) | yes: `LatestIntent` |
+| `guard(…, afterDispatch)` message wording | no (wording only) | no |
+| `evidenceMessage` `wait_and_recheck`: new wording for a pending tx whose nonce is not yet used | no (wording only; `decide()` unchanged) | no |
+
+The fix is generic `sendWithEvidence`/`latestIntent` logic, so it is modelled. What stays outside the model is the
+approval-specific part:
+- allowance effects and the C10 fixture (a queued approval behind an orphaned sale);
+- the harness reconciliation of 97077add94;
+- quorum mode.
+
+In the model, the approval is just a second intent. `observe`, `decide`, `findOpenIntent`, nonce reservation, re-send
+and orphan rules did not change. Invariants, ghosts, fairness, `EnPoll` and every `MC_*.cfg` are unchanged:
+`gen_cfgs.py` regenerates them byte-identically.
+
+Model SHA-256 before: `49e5070a7145f1a53c4eeedc8179be904042060c2d4aaffec5d98859eda04763`. After:
+`d36725cf2d168ce5ecec1d7fe70784281742782c2770ecf068bbee6ae2226a34`.
+
+### Runs
+
+`run.sh` now takes `TLC_OUT`/`TLC_RESULTS`, so this run did not touch the saved `logs/`, `traces/` or `results.txt`.
+
+Output is in `runs/2026-11-16/`:
+- `results-2026-11-16.txt`: one line per property;
+- `traces/`: the condensed counterexamples and witnesses;
+- `logs/`: raw TLC logs, git-ignored because they contain local paths.
+
+The run used TLC2 2.19 (rev 5a47802) on Temurin 21.0.13, with 10 safety workers and 1 liveness worker, and took 578 s in
+total. It covered:
+- 60 safety configs: 15 per policy, including the `hidden_seq` configs present in the directory;
+- the 6 full liveness configs;
+- `MC_full_enabled_check`.
+
+There were no TLC errors.
+
+**Full policy, old (eb42064d82 model) vs new (distinct states; all hold):**
+
+| config | AtMostOnce / NoFalseConfirm / NoActOnOrphan | old states | new states |
+|---|---|---|---|
+| slowincl | holds | 91865 | 91865 |
+| hidden | holds | 561670 | 561670 |
+| hidden_seq | holds | 561670 | 561670 |
+| dropped | holds | 235781 | 235781 |
+| lostack | holds | 252780 | 252780 |
+| stale | holds | 306338 | 306338 |
+| **reorg** | holds | 526792 | **525449** |
+| **reincl** | holds | 723980 | **722869** |
+| hidden_reorg | holds | 2700886 | 2700886 |
+| stale_reorg | holds | 1294140 | 1294140 |
+| dropped_shared | holds | 235781 | 235781 |
+| stale_shared | holds | 306338 | 306338 |
+| nofault_any | holds | 213048 | 213048 |
+| hidden_any | holds | 1308298 | 1308298 |
+| dropped_shared_any | holds | 541580 | 541580 |
+| enabled_check (EnabledMatches) | holds | 818 | 818 |
+
+| liveness (full, NI = 1) | EventuallyResolved | EventuallyCorrect | old states | new states |
+|---|---|---|---|---|
+| live_hidden | holds | holds | 7028 | 7028 |
+| live_dropped | holds | holds | 3731 | 3731 |
+| live_lostack | holds | holds | 4767 | 4767 |
+| live_stale | holds | holds | 8258 | 8258 |
+| live_reorg | holds | holds | 12031 | 12031 |
+| live_reincl | holds | holds | 7859 | 7859 |
+
+**Baselines.** Every "holds" count of `nonce_only`, `verify_binary` and `none` equals the saved logs, as expected
+because `Poll` and `TxStatus` are full-only. The violated properties per cell are the same as in the table above:
+- `nonce_only`: O after a reorg (reorg, reincl, hidden_reorg, stale_reorg).
+- `verify_binary`: A on lostack, slowincl and every reorg config; O on every reorg config; F on dropped_shared_any.
+- `none`: A wherever the table says.
+- `hidden_seq` is not in the table above. It violates A for `verify_binary` and `none`, as the saved logs already
+  recorded, and holds for `nonce_only` and `full`.
+
+There is no new counterexample. Some baseline traces differ from the saved ones by one state, or have the same length
+with different steps (for example `nonce_only_reincl` O: 6 → 7, `verify_binary_reincl` O: 7 → 6). The baseline actions
+are unchanged, so this comes from multi-worker search order: with several workers, TLC's trace is not guaranteed to be
+the shortest. The saved `traces/` are kept as they were.
+
+**Reachability of the new branch.** `MCWitness`, a scratch module extending the model, checks two action properties on
+`MC_full_reorg` that are expected to be violated:
+- W1: a `Poll` step changes another ledger record. Violated (9 states).
+- W2: a `Poll` step ends the call and turns another record into `orphaned`, i.e. the guard refuses. Violated (10
+  states).
+
+Both traces are in `runs/2026-11-16/traces/witness_*`; the module is `runs/2026-11-16/MCWitness.tla` (run it with a copy of `EvidenceLayer.tla` and `MC_full_reorg.cfg` plus `PROPERTIES W1` or `W2`). W2 is the C10 situation:
+1. intent 1 is confirmed at K = 2;
+2. intent 2 is queued at nonce 1;
+3. a depth-2 reorg orphans intent 1;
+4. intent 2's round ends with `nonceLatest` 0 < 1, the guard re-checks intent 1, which becomes `orphaned`, and the call
+   ends with EVIDENCE_UNRESOLVED.
+
+The raw log of W2 (state 9 → 10) shows the change directly:
+- record 1 (intent 1, nonce 0) goes from `confirmed` to `orphaned`/`orphaned`;
+- record 2 (intent 2, nonce 1) is left `pending`/`wait_and_recheck` with `rounds` 1 and is not closed.
+
+`trace_summary.py` prints `ledger=[]` in all witness and saved traces, because its record regex expects `intent` as
+the first field and TLC prints `state` first. This was already true of the saved traces, and the tool is left unchanged.
+
+Before the change, that call ended with EVIDENCE_PENDING (`wait_and_recheck`). NoActOnOrphan held then too, because
+intent 2 was let through before the reorg.
+
+The witness needs a confirmed (K = 2) dependency to be orphaned while a later send is still queued, which takes a
+depth-2 reorg. That is consistent with only `reorg` and `reincl` changing while the depth-1 compound configs keep their
+counts. It is an inference: W1/W2 were not run on the depth-1 configs.
+
+**What the liveness configs do not exercise.** The liveness configs have NI = 1 and `MaxStatus` = 0, so the
+post-dispatch guard cannot refuse (there is no other intent) and `tx_status` is off. Their unchanged results therefore
+say nothing about the new refusal path. Liveness after an EVIDENCE_UNRESOLVED refusal, which gives no ask_user, is not
+checked.
+
+`runs/2026-11-16/SHA256SUMS` hashes the inputs and the raw logs, with relative names; the jar is listed by its bare
+filename. The hashes were taken after the run completed, not at launch.
+
+### Paper statements against the final source (within the stated bounds)
+
+- **Holds:** "full: AtMostOnce, NoFalseConfirm, NoActOnOrphan hold in all checked configs". This now covers all 15 full
+  safety configs on the updated model.
+- **Holds, with a caveat:** "liveness holds under the stated bound". The six configurations re-checked unchanged, but
+  they cannot reach the new refusal path (see above).
+- **Holds:** "nonce_only violates NoActOnOrphan after reorg".
+- **Holds:** "verify_binary duplicates on lost ack/reorg". It also duplicates on slow inclusion, as before.
+- **Not modelled:** approvals, allowance effects, quorum and the harness reconciliation (97077add94). The approval-path
+  scenario of e1c82ae7a3 (C10) is covered by `evidence-formal.test.ts`, not by the model. The model checks only the
+  generic post-dispatch recheck that e1c82ae7a3 added.
