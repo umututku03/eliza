@@ -81,10 +81,12 @@ Framing: this is a measurement study. The evidence layer and the quorum arm are 
   - **Deviation from the pilots (16 Nov):** the October sweeps, the 14 Nov sweep, the small pilot and the G1 gates used
     `--idle-block-ms=30000` (a stress-test clock). Main-study results are not pooled with those runs.
   - **Effect on reorg depth:** with a 12 s idle clock and the 12 s reorg floor, an idle block is mined between the
-    critical transaction and the next-send trigger whenever the next send comes more than 12 s after the last block, so
-    realized depth is 2 or more more often than at 30 s. In the 16 Nov mock gate (naive agent) the full arm's reorgs had
-    depth 2 and the other arms' depth 1 (their repeat came sooner). Depth is reported as recorded, by arm; when depth ≥ 2,
-    K = 2 confirmations can be reached before the reorg.
+    critical transaction and the next-send trigger whenever the next send comes more than 12 s after the last block, giving
+    depth ≥ 2. In the 16 Nov mock gate (naive agent) the full arm's reorgs had depth 2 and the other arms' depth 1 (their
+    next send came sooner, because they do not wait for K = 2). Full returned `confirmed` about 15 s after the sale (K = 2
+    reached via the idle block) and the depth-2 reorg fired on the next send 0.25 s later; full then reported `orphaned`
+    and made no unsafe step. **Validity threat:** realized depth differs by arm, so full faces deeper reorgs than its
+    comparators; depth is reported by arm and the reorg cells are interpreted with it.
   - **Layer constants at 12 s (checked, unchanged):** K = 2 needs one block after inclusion (≤ 12 s, was ≤ 30 s); the
     60 s check budget spans about 5 slots (was 2), so a live head is not mistaken for a stalled one; 5 s checks sample
     each slot about twice; 6 unresolved rounds stay a bound on rounds, not on blocks. The 60 s hide/lag windows, the
@@ -264,10 +266,15 @@ Block notes:
   5 reps), about 68 if 10% of faults do not fire (power at 68: 0.989, 0.985, 0.851 and 0.780 for rows 1, 3, 4, 5). The
   three named effect sizes need at most 43 per arm even with continuity correction at α = 0.025, so **block A is powered
   per model without changing repetitions or pooling**. Dilution is the main risk: full and nonce_only (or patient) are
-  expected to tie in some cells (e.g. receipt_hidden, rpc_stale for patient), so a large per-cell difference becomes a
+  expected to tie in some cells (e.g. rpc_stale for patient), so a large per-cell difference becomes a
   smaller pooled one, e.g. 0.4 vs 0.9 in two cells and a tie at 0.9 in three gives 0.7 vs 0.9 pooled (power 0.88 at 75).
   The smallest pooled effect powered at 0.8 per model is about 0.8 vs 0.95 (75 ≥ 71); smaller pooled effects rely on the
   model-pooled secondary analysis (n = 150; power 0.98 for 0.8 vs 0.95). Repetitions stay at 5.
+- **Caveat from the 16 Nov mock gate (naive mock agent, 1 rep, D1):** safe success over the five fault cells was full 4/5,
+  nonce_only 4/5 (a tie in every cell; they differed only in the declared word, which the endpoint ignores), patient 3/5
+  (differs from full only in receipt_hidden), none 2/5. The mock agent does not model how an LLM uses the evidence text,
+  so this does not estimate live effects, but it shows the endpoint may not capture what full adds over nonce_only
+  (truthful status and decisions). **The endpoint choice is flagged for the user's/advisor's review before freeze.**
 - **Limitations stated with the result:** episodes share three tasks and fixed run order, so they are not fully
   independent; the task-stratified CMH analysis is reported as a sensitivity check. The effect sizes above are planning
   assumptions, not pilot estimates of the held-out cells.
@@ -356,14 +363,15 @@ between the history checker and the outcome labels (P1, P2, P4) is an audit fail
   - verify_binary is expected to duplicate under rpc_stale; this is stated in its spec and is not tuned.
 - **H3:** in the reorg cells (reincluded and harsh, H1–H3, pooled over tasks), full completes more often than nonce_only.
   On H1, full also completes more often than verify_binary (block B against block A's H1 cohorts).
-- **H0 (primary, §8):** on the primary endpoint (safe success, five fault cells pooled, block A), full exceeds nonce_only,
+- **HP (primary, §8):** on the primary endpoint (safe success, five fault cells pooled, block A), full exceeds nonce_only,
   and full exceeds patient, in each model.
 - **H4:** full reduces false completions relative to none.
 - **H6 (patient; secondary):** patient matches full (0 duplicates, goal reached) under rpc_stale, where the 60 s lag ends
   inside its 300 s wait. Under receipt_hidden, patient does **not** match full: viem's stock wait rejects at once with
-  "Transaction receipt ... could not be found" when the transaction is visibly mined but its receipt is withheld, so the
-  timeout never applies (observed in the 16 Nov mock gate; a property of the stock client, not tuned). Full exceeds
-  patient on safe success pooled over the fault cells (H0). Patient's wall-clock per wallet action (up to 300 s) is
+  "Transaction receipt ... could not be found" when the transaction is visibly mined but its receipt is withheld (its
+  replacement check finds the transaction itself and re-asks once), so the timeout never applies (observed in the 16 Nov
+  mock gate and read in viem 2.56.9's source; a property of the stock client, not tuned). Full exceeds
+  patient on safe success pooled over the fault cells (HP). Patient's wall-clock per wallet action (up to 300 s) is
   reported against full's. *This hypothesis was written after the mock gate (mock outcomes only, no live data); it is
   flagged for the user's/advisor's review before freeze.*
 - **H5:** failure patterns hold across frameworks, though rates may differ. This is reported, not tested for equality.
@@ -444,7 +452,7 @@ No paid call, launch or freeze is authorised by this revision; the source and ga
     receipt_hidden wording. Plus a patient sale_dropped smoke (`wsp-smoke-pt`): PASS, 17/17, one 300 s wait observed.
 12. **One primary endpoint** with a power calculation (§8): safe success, five fault cells pooled, block A, full vs nonce_only
     and full vs patient per model, Bonferroni one-sided α = 0.025 each (the §9 Newcombe rule). Block A's 75 fault-cell
-    episodes per arm per model are sufficient; repetitions unchanged. H0 (primary) and H6 (patient) added to §9.
+    episodes per arm per model are sufficient; repetitions unchanged. HP (primary) and H6 (patient) added to §9.
 13. **Codex's seven corrections (claude-resume-audit-2026-11-15.md) verified as applied:** (1) G1 on QA seeds 1–20 and
     1001–1020 reserved — §6 block F notes and §10 G1; (2) reorg realized depth recorded, not "depth 1" — §3 reorg-depth
     bullet; (3) 250 ms is a sampling target, no one-sided-error claim — §8 false-hold caveats; (4) both cohort totals stated

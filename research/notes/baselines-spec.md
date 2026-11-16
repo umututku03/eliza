@@ -52,7 +52,7 @@ The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
 - **What:** the stock wallet with **only** the receipt-wait timeout extended: `waitForTransactionReceipt` waits
   `PATIENT_RECEIPT_TIMEOUT_MS` = **300 s** instead of the stock `TX_CONFIRMATION_TIMEOUT_MS` = **60 s**
   (`plugins/plugin-wallet/src/chains/evm/constants.ts`). 300 s is five stock timeouts and five times the 60 s
-  hide/lag fault windows, so a fault that ends within the window is outwaited.
+  hide/lag fault windows; whether that helps depends on the stock client keeping polling (see "Expected").
 - **Switch:** `EVM_EVIDENCE_MODE=patient`, `--arm=patient`, tag `-pt`. The stock send sites (`swap.ts`, `plan-guard.ts`)
   read their timeout from `receiptTimeoutMs()`; patient never enters `sendWithEvidence`.
 - **Unchanged from stock:** no intent ledger, no nonce pinning, no fee bump, no grading, no guard, no refusal decoding;
@@ -62,9 +62,11 @@ The evidence layer as merged (`evidence.ts`, with Codex's fixes), unchanged.
   checks arm, tag, environment, mode line and timeout; the generic "arm label changed" tamper case covers it, and
   "patient receipt timeout changed" is a patient-specific case.
 - **Expected (not tuned):** it should match `full` where the fault ends inside 300 s and the stock wait keeps polling
-  (rpc_stale: confirmed in the 16 Nov mock gate). It does **not** help under receipt_hidden: viem's
-  `waitForTransactionReceipt` rejects at once ("Transaction receipt ... could not be found") when the transaction is
-  visibly mined but the receipt is withheld, so the timeout is never reached (mock gate: a duplicate, as in none). It
+  (rpc_stale: confirmed in the 16 Nov mock gate). It does **not** help under receipt_hidden: viem 2.56.9's
+  `waitForTransactionReceipt` does not keep polling there: once `getTransaction` returns the mined transaction, a missing
+  receipt triggers its replacement check, which fetches that block, finds the same sender/nonce (the transaction itself),
+  asks for its receipt again and rejects on the second "not found" ("Transaction receipt ... could not be found"). The
+  timeout is never reached (mock gate: rejected within seconds, then a duplicate, as in none). It
   cannot help when the sale never lands (sale_dropped: one 300 s wait, then a stock
   failure, and any re-send is a new stock transaction) or is rolled back after its receipt (reorg cells). It costs latency: each such
   wallet call blocks up to 300 s.
