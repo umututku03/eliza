@@ -114,6 +114,23 @@ def check_chain_truth(ct, hold, o, sender, eid):
     scored = {(t['hash'].lower(), t['block'], t['status']) for t in o['transactions']
               if t['status'] != 'not_canonical' and t.get('block') is not None and base['number'] < t['block'] <= last}
     need(seen == scored, 'chain truth differs from the scored transactions', eid, sorted(seen ^ scored))
+    # Blocks orphaned before the last head (reorg cells): their transactions must be the sender's scored transactions, and their receipt statuses must agree with every decision line that observed a
+    # receipt for that hash. No other independent record of an orphaned receipt exists (16 Nov; tamper gap found in
+    # fvn-mock-1116), so a status that no decision line observed stays a monitor-only value and is reported as such.
+    orphan = {(t['hash'].lower(), b['hash'].lower()): t['status'] for b in blocks if b['hash'] not in canon for t in b['txs']}
+    # A transaction in an orphaned block may be re-included later under the same hash, so it need only be scored.
+    scored_h = {t['hash'].lower() for t in o['transactions']}
+    need({h for h, _ in orphan} <= scored_h, 'orphaned chain-truth transaction not among the scored transactions', eid, sorted({h for h, _ in orphan} - scored_h))
+    return orphan
+
+def check_orphan_observations(orphan, lines, eid):
+    """A decision line that saw a receipt for an orphaned transaction in its orphaned block must agree with the
+    chain-truth status recorded for it."""
+    for l in lines:
+        ob = json.loads(l).get('lastObservation') or {}
+        h, bh, st = (ob.get('hash') or '').lower(), (ob.get('receiptBlockHash') or '').lower(), ob.get('receiptStatus')
+        if st is not None and (h, bh) in orphan:
+            need(orphan[(h, bh)] == st, 'orphaned chain-truth receipt status differs from an observed receipt', eid, h)
 
 # WS-J random schedules (run-v2.ts --scenarios=...,random --schedule-seed=N|A-B; fork-rpc-proxy.ts generateSchedule). An
 # independent implementation of the generator: every recorded schedule must equal the one its seed produces.
@@ -674,12 +691,13 @@ def audit(folder):
             need(('chainTruth' in ep) == (hold is not None), 'chain truth recorded without (or missing under) hold instrumentation', eid)
             if hold is None: need(not lines, 'decision lines without hold instrumentation', eid)
             else:
-                check_chain_truth(ep['chainTruth'], hold, o, m['sender'], eid)
+                orphan = check_chain_truth(ep['chainTruth'], hold, o, m['sender'], eid)
                 for l in lines:
                     try: d = json.loads(l)
                     except ValueError: need(False, 'unparseable decision line', eid)
                     need(isinstance(d, dict) and set(d) == DECISION_KEYS and d['v'] == 1 and d['site'] in DECISION_SITES
                          and str(d['sender']).lower() == m['sender'].lower() and all(re.fullmatch(r'0x[0-9a-f]{64}', h) for h in d['hashes']), 'decision line fields', eid)
+                check_orphan_observations(orphan, lines, eid)
         else: need('chainTruth' not in ep, 'chain truth on a control', eid)
         # full_quorum: every secondary read proxy is fault-free (empty journal, fault none), no send went through it, and
         # once the wallet sent anything each proxy was consulted. Single-proxy arms record no per-proxy journals.

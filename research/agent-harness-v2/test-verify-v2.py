@@ -190,11 +190,30 @@ if AGENT == 'claudecode':
 # Hold instrumentation (run-v2.ts holdInstrumentation): forged chain truth, a removed record, and an extra field in a
 # decision line must be rejected.
 if man.get('holdInstrumentation'):
-    truth_ep = next((n for n in eps if any(t['status'] for b in json.loads((src / 'episodes' / f'{n}.json').read_text())['chainTruth']['blocks'] for t in b['txs'])), None)
+    # Status forgery targets a transaction canonical at the last head (independently checked against the outcome).
+    # Orphaned blocks have no independent receipt record; their transactions are checked by hash instead (case below).
+    def canonical_blocks(ct):
+        by = {b['hash']: b for b in ct['blocks']}; h = by[ct['heads'][-1]['hash']]; out = []
+        while h is not None and h is not ct['blocks'][0]: out.append(h); h = by.get(h['parentHash'])
+        return out
+    truth_ep = next((n for n in eps if any(t['status'] for b in canonical_blocks(json.loads((src / 'episodes' / f'{n}.json').read_text())['chainTruth']) for t in b['txs'])), None)
+    def has_orphan(n):
+        ct = json.loads((src / 'episodes' / f'{n}.json').read_text())['chainTruth']
+        canon = {b['hash'] for b in canonical_blocks(ct)}
+        return any(b['hash'] not in canon for b in ct['blocks'][1:])
+    orphan_ep = next((n for n in eps if has_orphan(n)), None)
+    if orphan_ep:
+        def fabricate_orphan_tx(p):
+            def mutate(d):
+                ct = d['chainTruth']; canon = {b['hash'] for b in canonical_blocks(ct)}
+                b = next(b for b in ct['blocks'][1:] if b['hash'] not in canon)
+                b['txs'].append({'hash': '0x' + 'ab' * 32, 'status': 'success'})
+            edit_json(p / 'episodes' / f'{orphan_ep}.json', mutate)
+        cases['orphaned chain-truth transaction fabricated'] = fabricate_orphan_tx
     if truth_ep:
         def forge_truth(p):
             def mutate(d):
-                t = next(t for b in d['chainTruth']['blocks'] for t in b['txs'] if t['status'])
+                t = next(t for b in canonical_blocks(d['chainTruth']) for t in b['txs'] if t['status'])
                 t['status'] = 'reverted' if t['status'] == 'success' else 'success'
             edit_json(p / 'episodes' / f'{truth_ep}.json', mutate)
         cases['chain-truth receipt status forged'] = forge_truth
