@@ -51,7 +51,7 @@ The saved safety runs use 8 to 10 workers; liveness runs use one worker.
   - `verify_binary`: `sendVerifyBinary`.
   - `none`: the stock send, where viem fills the nonce from the wallet's RPC, followed by the stock receipt wait.
 
-### Mapping (spec ↔ evidence.ts at eb42064d82)
+### Mapping (spec ↔ evidence.ts at eb42064d82, updated for e1c82ae7a3)
 
 | Spec | evidence.ts | Simplification |
 |---|---|---|
@@ -329,16 +329,27 @@ Both traces are in `runs/2026-11-16/traces/witness_*`; the module is `runs/2026-
 4. intent 2's round ends with `nonceLatest` 0 < 1, the guard re-checks intent 1, which becomes `orphaned`, and the call
    ends with EVIDENCE_UNRESOLVED.
 
-Before the change, that call ended with `wait_and_recheck`/ask_user. NoActOnOrphan held then too, because intent 2 was
-let through before the reorg.
+The raw log of W2 (state 9 → 10) shows the change directly:
+- record 1 (intent 1, nonce 0) goes from `confirmed` to `orphaned`/`orphaned`;
+- record 2 (intent 2, nonce 1) is left `pending`/`wait_and_recheck` with `rounds` 1 and is not closed.
 
-The branch needs a confirmed (K = 2) dependency to be orphaned while a later send is still queued. That takes a depth-2
-reorg, so only `reorg` and `reincl` change. The depth-1 compound configs keep their counts.
+`trace_summary.py` prints `ledger=[]` in all witness and saved traces, because its record regex expects `intent` as
+the first field and TLC prints `state` first. This was already true of the saved traces, and the tool is left unchanged.
+
+Before the change, that call ended with EVIDENCE_PENDING (`wait_and_recheck`). NoActOnOrphan held then too, because
+intent 2 was let through before the reorg.
+
+The witness needs a confirmed (K = 2) dependency to be orphaned while a later send is still queued, which takes a
+depth-2 reorg. That is consistent with only `reorg` and `reincl` changing while the depth-1 compound configs keep their
+counts. It is an inference: W1/W2 were not run on the depth-1 configs.
 
 **What the liveness configs do not exercise.** The liveness configs have NI = 1 and `MaxStatus` = 0, so the
 post-dispatch guard cannot refuse (there is no other intent) and `tx_status` is off. Their unchanged results therefore
 say nothing about the new refusal path. Liveness after an EVIDENCE_UNRESOLVED refusal, which gives no ask_user, is not
 checked.
+
+`runs/2026-11-16/SHA256SUMS` hashes the inputs and the raw logs, with relative names; the jar is listed by its bare
+filename. The hashes were taken after the run completed, not at launch.
 
 ### Paper statements against the final source (within the stated bounds)
 
