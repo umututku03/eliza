@@ -1397,8 +1397,16 @@ async function preEpisode(scenario: string) {
   return null;
 }
 let baseSnap = await anvil.rpc("evm_snapshot");
+// evm_revert restores state but not Anvil's txpool: a transaction queued behind an orphaned nonce (e.g. an approval
+// sent just after a reorg) would otherwise survive the reset and mine in the next episode (G1, 16 Nov). Drop the pool
+// and require it empty, so every episode and control starts isolated.
 async function resetChain() {
+  await anvil.rpc("anvil_dropAllTransactions");
   await anvil.rpc("evm_revert", [baseSnap]);
+  await anvil.rpc("anvil_dropAllTransactions");
+  const pool = await anvil.rpc("txpool_status");
+  if (BigInt(pool?.pending ?? 0) !== 0n || BigInt(pool?.queued ?? 0) !== 0n)
+    throw new Error(`txpool not empty after reset: ${JSON.stringify(pool)}`);
   baseSnap = await anvil.rpc("evm_snapshot");
 }
 // Step 2 of a swap2 task (the random family's "followup" target): the agent's X->Y swap on the router.

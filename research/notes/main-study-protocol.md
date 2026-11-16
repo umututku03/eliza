@@ -142,7 +142,7 @@ Wall-clock time depends on M1/M2 throughput and is measured in G5.
 The committed cohort files spell FP out.
 
 **Scenario sets:**
-- **S6** = `normal,receipt_hidden,sale_dropped,rpc_stale,sale_reorged_reincluded,sale_reorged`;
+- **S6** = `normal,receipt_hidden,sale_dropped,rpc_stale,sale_reorged,sale_reorged_reincluded` (run-v2.ts requires its predeclared order; corrected 16 Nov after G1);
 - **S5** = S6 without `sale_reorged_reincluded`.
 
 | Unit | Block | Cohort lines (`task model stock scenarios reps opts`) | Cohorts × eps | Episodes | Est. USD | Cap USD | Lanes | Port base |
