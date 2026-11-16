@@ -1,0 +1,255 @@
+MC_full_reorg | TypeOK | holds | 525449 distinct | 24 s
+MC_full_reorg | AtMostOnce | holds | 525449 distinct | 24 s
+MC_full_reorg | NoFalseConfirm | holds | 525449 distinct | 24 s
+MC_full_reorg | NoActOnOrphan | holds | 525449 distinct | 24 s
+MC_full_reincl | TypeOK | holds | 722869 distinct | 21 s
+MC_full_reincl | AtMostOnce | holds | 722869 distinct | 21 s
+MC_full_reincl | NoFalseConfirm | holds | 722869 distinct | 21 s
+MC_full_reincl | NoActOnOrphan | holds | 722869 distinct | 21 s
+MC_full_hidden_reorg | TypeOK | holds | 2700886 distinct | 117 s
+MC_full_hidden_reorg | AtMostOnce | holds | 2700886 distinct | 117 s
+MC_full_hidden_reorg | NoFalseConfirm | holds | 2700886 distinct | 117 s
+MC_full_hidden_reorg | NoActOnOrphan | holds | 2700886 distinct | 117 s
+MC_full_stale_reorg | TypeOK | holds | 1294140 distinct | 62 s
+MC_full_stale_reorg | AtMostOnce | holds | 1294140 distinct | 62 s
+MC_full_stale_reorg | NoFalseConfirm | holds | 1294140 distinct | 62 s
+MC_full_stale_reorg | NoActOnOrphan | holds | 1294140 distinct | 62 s
+MC_full_dropped_shared_any | TypeOK | holds | 541580 distinct | 24 s
+MC_full_dropped_shared_any | AtMostOnce | holds | 541580 distinct | 24 s
+MC_full_dropped_shared_any | NoFalseConfirm | holds | 541580 distinct | 24 s
+MC_full_dropped_shared_any | NoActOnOrphan | holds | 541580 distinct | 24 s
+MC_full_dropped_shared | TypeOK | holds | 235781 distinct | 9 s
+MC_full_dropped_shared | AtMostOnce | holds | 235781 distinct | 9 s
+MC_full_dropped_shared | NoFalseConfirm | holds | 235781 distinct | 9 s
+MC_full_dropped_shared | NoActOnOrphan | holds | 235781 distinct | 9 s
+MC_full_dropped | TypeOK | holds | 235781 distinct | 11 s
+MC_full_dropped | AtMostOnce | holds | 235781 distinct | 11 s
+MC_full_dropped | NoFalseConfirm | holds | 235781 distinct | 11 s
+MC_full_dropped | NoActOnOrphan | holds | 235781 distinct | 11 s
+MC_full_hidden_any | TypeOK | holds | 1308298 distinct | 89 s
+MC_full_hidden_any | AtMostOnce | holds | 1308298 distinct | 89 s
+MC_full_hidden_any | NoFalseConfirm | holds | 1308298 distinct | 89 s
+MC_full_hidden_any | NoActOnOrphan | holds | 1308298 distinct | 89 s
+MC_full_hidden_seq | TypeOK | holds | 561670 distinct | 30 s
+MC_full_hidden_seq | AtMostOnce | holds | 561670 distinct | 30 s
+MC_full_hidden_seq | NoFalseConfirm | holds | 561670 distinct | 30 s
+MC_full_hidden_seq | NoActOnOrphan | holds | 561670 distinct | 30 s
+MC_full_hidden | TypeOK | holds | 561670 distinct | 29 s
+MC_full_hidden | AtMostOnce | holds | 561670 distinct | 29 s
+MC_full_hidden | NoFalseConfirm | holds | 561670 distinct | 29 s
+MC_full_hidden | NoActOnOrphan | holds | 561670 distinct | 29 s
+MC_full_lostack | TypeOK | holds | 252780 distinct | 8 s
+MC_full_lostack | AtMostOnce | holds | 252780 distinct | 8 s
+MC_full_lostack | NoFalseConfirm | holds | 252780 distinct | 8 s
+MC_full_lostack | NoActOnOrphan | holds | 252780 distinct | 8 s
+MC_full_nofault_any | TypeOK | holds | 213048 distinct | 10 s
+MC_full_nofault_any | AtMostOnce | holds | 213048 distinct | 10 s
+MC_full_nofault_any | NoFalseConfirm | holds | 213048 distinct | 10 s
+MC_full_nofault_any | NoActOnOrphan | holds | 213048 distinct | 10 s
+MC_full_slowincl | TypeOK | holds | 91865 distinct | 4 s
+MC_full_slowincl | AtMostOnce | holds | 91865 distinct | 4 s
+MC_full_slowincl | NoFalseConfirm | holds | 91865 distinct | 4 s
+MC_full_slowincl | NoActOnOrphan | holds | 91865 distinct | 4 s
+MC_full_stale_shared | TypeOK | holds | 306338 distinct | 13 s
+MC_full_stale_shared | AtMostOnce | holds | 306338 distinct | 13 s
+MC_full_stale_shared | NoFalseConfirm | holds | 306338 distinct | 13 s
+MC_full_stale_shared | NoActOnOrphan | holds | 306338 distinct | 13 s
+MC_full_stale | TypeOK | holds | 306338 distinct | 14 s
+MC_full_stale | AtMostOnce | holds | 306338 distinct | 14 s
+MC_full_stale | NoFalseConfirm | holds | 306338 distinct | 14 s
+MC_full_stale | NoActOnOrphan | holds | 306338 distinct | 14 s
+MC_nonce_only_dropped_shared_any | TypeOK | holds | 1130 distinct | 0 s
+MC_nonce_only_dropped_shared_any | AtMostOnce | holds | 1130 distinct | 0 s
+MC_nonce_only_dropped_shared_any | NoFalseConfirm | holds | 1130 distinct | 0 s
+MC_nonce_only_dropped_shared_any | NoActOnOrphan | holds | 1130 distinct | 0 s
+MC_nonce_only_dropped_shared | TypeOK | holds | 405 distinct | 1 s
+MC_nonce_only_dropped_shared | AtMostOnce | holds | 405 distinct | 1 s
+MC_nonce_only_dropped_shared | NoFalseConfirm | holds | 405 distinct | 1 s
+MC_nonce_only_dropped_shared | NoActOnOrphan | holds | 405 distinct | 1 s
+MC_nonce_only_dropped | TypeOK | holds | 405 distinct | 1 s
+MC_nonce_only_dropped | AtMostOnce | holds | 405 distinct | 1 s
+MC_nonce_only_dropped | NoFalseConfirm | holds | 405 distinct | 1 s
+MC_nonce_only_dropped | NoActOnOrphan | holds | 405 distinct | 1 s
+MC_nonce_only_hidden_any | TypeOK | holds | 1462 distinct | 1 s
+MC_nonce_only_hidden_any | AtMostOnce | holds | 1462 distinct | 1 s
+MC_nonce_only_hidden_any | NoFalseConfirm | holds | 1462 distinct | 1 s
+MC_nonce_only_hidden_any | NoActOnOrphan | holds | 1462 distinct | 1 s
+MC_nonce_only_hidden_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 312 distinct explored | 1 s
+MC_nonce_only_hidden_reorg | TypeOK | holds | 5477 distinct | 1 s
+MC_nonce_only_hidden_reorg | AtMostOnce | holds | 5477 distinct | 1 s
+MC_nonce_only_hidden_reorg | NoFalseConfirm | holds | 5477 distinct | 1 s
+MC_nonce_only_hidden_seq | TypeOK | holds | 14908 distinct | 0 s
+MC_nonce_only_hidden_seq | AtMostOnce | holds | 14908 distinct | 0 s
+MC_nonce_only_hidden_seq | NoFalseConfirm | holds | 14908 distinct | 0 s
+MC_nonce_only_hidden_seq | NoActOnOrphan | holds | 14908 distinct | 0 s
+MC_nonce_only_hidden | TypeOK | holds | 862 distinct | 0 s
+MC_nonce_only_hidden | AtMostOnce | holds | 862 distinct | 0 s
+MC_nonce_only_hidden | NoFalseConfirm | holds | 862 distinct | 0 s
+MC_nonce_only_hidden | NoActOnOrphan | holds | 862 distinct | 0 s
+MC_nonce_only_lostack | TypeOK | holds | 1003 distinct | 1 s
+MC_nonce_only_lostack | AtMostOnce | holds | 1003 distinct | 1 s
+MC_nonce_only_lostack | NoFalseConfirm | holds | 1003 distinct | 1 s
+MC_nonce_only_lostack | NoActOnOrphan | holds | 1003 distinct | 1 s
+MC_nonce_only_nofault_any | TypeOK | holds | 188 distinct | 1 s
+MC_nonce_only_nofault_any | AtMostOnce | holds | 188 distinct | 1 s
+MC_nonce_only_nofault_any | NoFalseConfirm | holds | 188 distinct | 1 s
+MC_nonce_only_nofault_any | NoActOnOrphan | holds | 188 distinct | 1 s
+MC_nonce_only_reincl | NoActOnOrphan | VIOLATED (trace 7 states) | 179 distinct explored | 1 s
+MC_nonce_only_reincl | TypeOK | holds | 1350 distinct | 0 s
+MC_nonce_only_reincl | AtMostOnce | holds | 1350 distinct | 0 s
+MC_nonce_only_reincl | NoFalseConfirm | holds | 1350 distinct | 0 s
+MC_nonce_only_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 206 distinct explored | 0 s
+MC_nonce_only_reorg | TypeOK | holds | 1181 distinct | 1 s
+MC_nonce_only_reorg | AtMostOnce | holds | 1181 distinct | 1 s
+MC_nonce_only_reorg | NoFalseConfirm | holds | 1181 distinct | 1 s
+MC_nonce_only_slowincl | TypeOK | holds | 2930 distinct | 1 s
+MC_nonce_only_slowincl | AtMostOnce | holds | 2930 distinct | 1 s
+MC_nonce_only_slowincl | NoFalseConfirm | holds | 2930 distinct | 1 s
+MC_nonce_only_slowincl | NoActOnOrphan | holds | 2930 distinct | 1 s
+MC_nonce_only_stale_reorg | NoActOnOrphan | VIOLATED (trace 7 states) | 312 distinct explored | 1 s
+MC_nonce_only_stale_reorg | TypeOK | holds | 6824 distinct | 1 s
+MC_nonce_only_stale_reorg | AtMostOnce | holds | 6824 distinct | 1 s
+MC_nonce_only_stale_reorg | NoFalseConfirm | holds | 6824 distinct | 1 s
+MC_nonce_only_stale_shared | TypeOK | holds | 1460 distinct | 1 s
+MC_nonce_only_stale_shared | AtMostOnce | holds | 1460 distinct | 1 s
+MC_nonce_only_stale_shared | NoFalseConfirm | holds | 1460 distinct | 1 s
+MC_nonce_only_stale_shared | NoActOnOrphan | holds | 1460 distinct | 1 s
+MC_nonce_only_stale | TypeOK | holds | 1460 distinct | 1 s
+MC_nonce_only_stale | AtMostOnce | holds | 1460 distinct | 1 s
+MC_nonce_only_stale | NoFalseConfirm | holds | 1460 distinct | 1 s
+MC_nonce_only_stale | NoActOnOrphan | holds | 1460 distinct | 1 s
+MC_none_dropped_shared_any | TypeOK | holds | 746 distinct | 1 s
+MC_none_dropped_shared_any | AtMostOnce | holds | 746 distinct | 1 s
+MC_none_dropped_shared_any | NoFalseConfirm | holds | 746 distinct | 1 s
+MC_none_dropped_shared_any | NoActOnOrphan | holds | 746 distinct | 1 s
+MC_none_dropped_shared | TypeOK | holds | 405 distinct | 1 s
+MC_none_dropped_shared | AtMostOnce | holds | 405 distinct | 1 s
+MC_none_dropped_shared | NoFalseConfirm | holds | 405 distinct | 1 s
+MC_none_dropped_shared | NoActOnOrphan | holds | 405 distinct | 1 s
+MC_none_dropped | TypeOK | holds | 405 distinct | 0 s
+MC_none_dropped | AtMostOnce | holds | 405 distinct | 0 s
+MC_none_dropped | NoFalseConfirm | holds | 405 distinct | 0 s
+MC_none_dropped | NoActOnOrphan | holds | 405 distinct | 0 s
+MC_none_hidden_any | AtMostOnce | VIOLATED (trace 7 states) | 211 distinct explored | 1 s
+MC_none_hidden_any | TypeOK | holds | 1842 distinct | 1 s
+MC_none_hidden_any | NoFalseConfirm | holds | 1842 distinct | 1 s
+MC_none_hidden_any | NoActOnOrphan | holds | 1842 distinct | 1 s
+MC_none_hidden_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 208 distinct explored | 1 s
+MC_none_hidden_reorg | AtMostOnce | VIOLATED (trace 7 states) | 256 distinct explored | 0 s
+MC_none_hidden_reorg | TypeOK | holds | 7994 distinct | 1 s
+MC_none_hidden_reorg | NoFalseConfirm | holds | 7994 distinct | 1 s
+MC_none_hidden_seq | AtMostOnce | VIOLATED (trace 6 states) | 146 distinct explored | 1 s
+MC_none_hidden_seq | TypeOK | holds | 5472 distinct | 1 s
+MC_none_hidden_seq | NoFalseConfirm | holds | 5472 distinct | 1 s
+MC_none_hidden_seq | NoActOnOrphan | holds | 5472 distinct | 1 s
+MC_none_hidden | AtMostOnce | VIOLATED (trace 7 states) | 219 distinct explored | 1 s
+MC_none_hidden | TypeOK | holds | 1072 distinct | 0 s
+MC_none_hidden | NoFalseConfirm | holds | 1072 distinct | 0 s
+MC_none_hidden | NoActOnOrphan | holds | 1072 distinct | 0 s
+MC_none_lostack | AtMostOnce | VIOLATED (trace 5 states) | 151 distinct explored | 0 s
+MC_none_lostack | TypeOK | holds | 1189 distinct | 1 s
+MC_none_lostack | NoFalseConfirm | holds | 1189 distinct | 1 s
+MC_none_lostack | NoActOnOrphan | holds | 1189 distinct | 1 s
+MC_none_nofault_any | TypeOK | holds | 188 distinct | 1 s
+MC_none_nofault_any | AtMostOnce | holds | 188 distinct | 1 s
+MC_none_nofault_any | NoFalseConfirm | holds | 188 distinct | 1 s
+MC_none_nofault_any | NoActOnOrphan | holds | 188 distinct | 1 s
+MC_none_reincl | NoActOnOrphan | VIOLATED (trace 6 states) | 198 distinct explored | 1 s
+MC_none_reincl | AtMostOnce | VIOLATED (trace 11 states) | 1021 distinct explored | 0 s
+MC_none_reincl | TypeOK | holds | 1163 distinct | 1 s
+MC_none_reincl | NoFalseConfirm | holds | 1163 distinct | 1 s
+MC_none_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 163 distinct explored | 1 s
+MC_none_reorg | AtMostOnce | VIOLATED (trace 10 states) | 739 distinct explored | 1 s
+MC_none_reorg | TypeOK | holds | 1101 distinct | 1 s
+MC_none_reorg | NoFalseConfirm | holds | 1101 distinct | 1 s
+MC_none_slowincl | AtMostOnce | VIOLATED (trace 6 states) | 136 distinct explored | 0 s
+MC_none_slowincl | TypeOK | holds | 1224 distinct | 1 s
+MC_none_slowincl | NoFalseConfirm | holds | 1224 distinct | 1 s
+MC_none_slowincl | NoActOnOrphan | holds | 1224 distinct | 1 s
+MC_none_stale_reorg | AtMostOnce | VIOLATED (trace 7 states) | 294 distinct explored | 1 s
+MC_none_stale_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 254 distinct explored | 1 s
+MC_none_stale_reorg | TypeOK | holds | 35279 distinct | 1 s
+MC_none_stale_reorg | NoFalseConfirm | holds | 35279 distinct | 1 s
+MC_none_stale_shared | AtMostOnce | VIOLATED (trace 7 states) | 315 distinct explored | 1 s
+MC_none_stale_shared | TypeOK | holds | 6448 distinct | 1 s
+MC_none_stale_shared | NoFalseConfirm | holds | 6448 distinct | 1 s
+MC_none_stale_shared | NoActOnOrphan | holds | 6448 distinct | 1 s
+MC_none_stale | AtMostOnce | VIOLATED (trace 7 states) | 255 distinct explored | 0 s
+MC_none_stale | TypeOK | holds | 6448 distinct | 1 s
+MC_none_stale | NoFalseConfirm | holds | 6448 distinct | 1 s
+MC_none_stale | NoActOnOrphan | holds | 6448 distinct | 1 s
+MC_verify_binary_dropped_shared_any | NoFalseConfirm | VIOLATED (trace 8 states) | 305 distinct explored | 1 s
+MC_verify_binary_dropped_shared_any | TypeOK | holds | 666 distinct | 1 s
+MC_verify_binary_dropped_shared_any | AtMostOnce | holds | 666 distinct | 1 s
+MC_verify_binary_dropped_shared_any | NoActOnOrphan | holds | 666 distinct | 1 s
+MC_verify_binary_dropped_shared | TypeOK | holds | 405 distinct | 1 s
+MC_verify_binary_dropped_shared | AtMostOnce | holds | 405 distinct | 1 s
+MC_verify_binary_dropped_shared | NoFalseConfirm | holds | 405 distinct | 1 s
+MC_verify_binary_dropped_shared | NoActOnOrphan | holds | 405 distinct | 1 s
+MC_verify_binary_dropped | TypeOK | holds | 405 distinct | 0 s
+MC_verify_binary_dropped | AtMostOnce | holds | 405 distinct | 0 s
+MC_verify_binary_dropped | NoFalseConfirm | holds | 405 distinct | 0 s
+MC_verify_binary_dropped | NoActOnOrphan | holds | 405 distinct | 0 s
+MC_verify_binary_hidden_any | TypeOK | holds | 1462 distinct | 1 s
+MC_verify_binary_hidden_any | AtMostOnce | holds | 1462 distinct | 1 s
+MC_verify_binary_hidden_any | NoFalseConfirm | holds | 1462 distinct | 1 s
+MC_verify_binary_hidden_any | NoActOnOrphan | holds | 1462 distinct | 1 s
+MC_verify_binary_hidden_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 275 distinct explored | 1 s
+MC_verify_binary_hidden_reorg | AtMostOnce | VIOLATED (trace 10 states) | 1171 distinct explored | 1 s
+MC_verify_binary_hidden_reorg | TypeOK | holds | 5662 distinct | 1 s
+MC_verify_binary_hidden_reorg | NoFalseConfirm | holds | 5662 distinct | 1 s
+MC_verify_binary_hidden_seq | AtMostOnce | VIOLATED (trace 6 states) | 178 distinct explored | 0 s
+MC_verify_binary_hidden_seq | TypeOK | holds | 8342 distinct | 1 s
+MC_verify_binary_hidden_seq | NoFalseConfirm | holds | 8342 distinct | 1 s
+MC_verify_binary_hidden_seq | NoActOnOrphan | holds | 8342 distinct | 1 s
+MC_verify_binary_hidden | TypeOK | holds | 862 distinct | 1 s
+MC_verify_binary_hidden | AtMostOnce | holds | 862 distinct | 1 s
+MC_verify_binary_hidden | NoFalseConfirm | holds | 862 distinct | 1 s
+MC_verify_binary_hidden | NoActOnOrphan | holds | 862 distinct | 1 s
+MC_verify_binary_lostack | AtMostOnce | VIOLATED (trace 5 states) | 105 distinct explored | 1 s
+MC_verify_binary_lostack | TypeOK | holds | 1599 distinct | 1 s
+MC_verify_binary_lostack | NoFalseConfirm | holds | 1599 distinct | 1 s
+MC_verify_binary_lostack | NoActOnOrphan | holds | 1599 distinct | 1 s
+MC_verify_binary_nofault_any | TypeOK | holds | 188 distinct | 1 s
+MC_verify_binary_nofault_any | AtMostOnce | holds | 188 distinct | 1 s
+MC_verify_binary_nofault_any | NoFalseConfirm | holds | 188 distinct | 1 s
+MC_verify_binary_nofault_any | NoActOnOrphan | holds | 188 distinct | 1 s
+MC_verify_binary_reincl | NoActOnOrphan | VIOLATED (trace 6 states) | 155 distinct explored | 0 s
+MC_verify_binary_reincl | AtMostOnce | VIOLATED (trace 11 states) | 996 distinct explored | 1 s
+MC_verify_binary_reincl | TypeOK | holds | 1246 distinct | 1 s
+MC_verify_binary_reincl | NoFalseConfirm | holds | 1246 distinct | 1 s
+MC_verify_binary_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 163 distinct explored | 1 s
+MC_verify_binary_reorg | AtMostOnce | VIOLATED (trace 10 states) | 757 distinct explored | 1 s
+MC_verify_binary_reorg | TypeOK | holds | 1101 distinct | 0 s
+MC_verify_binary_reorg | NoFalseConfirm | holds | 1101 distinct | 0 s
+MC_verify_binary_slowincl | AtMostOnce | VIOLATED (trace 6 states) | 130 distinct explored | 1 s
+MC_verify_binary_slowincl | TypeOK | holds | 1854 distinct | 1 s
+MC_verify_binary_slowincl | NoFalseConfirm | holds | 1854 distinct | 1 s
+MC_verify_binary_slowincl | NoActOnOrphan | holds | 1854 distinct | 1 s
+MC_verify_binary_stale_reorg | NoActOnOrphan | VIOLATED (trace 6 states) | 407 distinct explored | 1 s
+MC_verify_binary_stale_reorg | AtMostOnce | VIOLATED (trace 10 states) | 2525 distinct explored | 1 s
+MC_verify_binary_stale_reorg | TypeOK | holds | 16491 distinct | 1 s
+MC_verify_binary_stale_reorg | NoFalseConfirm | holds | 16491 distinct | 1 s
+MC_verify_binary_stale_shared | TypeOK | holds | 3307 distinct | 0 s
+MC_verify_binary_stale_shared | AtMostOnce | holds | 3307 distinct | 0 s
+MC_verify_binary_stale_shared | NoFalseConfirm | holds | 3307 distinct | 0 s
+MC_verify_binary_stale_shared | NoActOnOrphan | holds | 3307 distinct | 0 s
+MC_verify_binary_stale | TypeOK | holds | 3643 distinct | 1 s
+MC_verify_binary_stale | AtMostOnce | holds | 3643 distinct | 1 s
+MC_verify_binary_stale | NoFalseConfirm | holds | 3643 distinct | 1 s
+MC_verify_binary_stale | NoActOnOrphan | holds | 3643 distinct | 1 s
+MC_full_live_dropped | EventuallyResolved | holds | 3731 distinct | 2 s
+MC_full_live_dropped | EventuallyCorrect | holds | 3731 distinct | 1 s
+MC_full_live_hidden | EventuallyResolved | holds | 7028 distinct | 2 s
+MC_full_live_hidden | EventuallyCorrect | holds | 7028 distinct | 2 s
+MC_full_live_lostack | EventuallyResolved | holds | 4767 distinct | 2 s
+MC_full_live_lostack | EventuallyCorrect | holds | 4767 distinct | 1 s
+MC_full_live_reincl | EventuallyResolved | holds | 7859 distinct | 3 s
+MC_full_live_reincl | EventuallyCorrect | holds | 7859 distinct | 3 s
+MC_full_live_reorg | EventuallyResolved | holds | 12031 distinct | 4 s
+MC_full_live_reorg | EventuallyCorrect | holds | 12031 distinct | 4 s
+MC_full_live_stale | EventuallyResolved | holds | 8258 distinct | 3 s
+MC_full_live_stale | EventuallyCorrect | holds | 8258 distinct | 3 s
+MC_full_enabled_check | EnabledMatches | holds | 818 distinct | 16 s
+witness_MC_full_reorg | W1 | VIOLATED-as-expected | 9 states
+witness_MC_full_reorg | W2 | VIOLATED-as-expected | 10 states
