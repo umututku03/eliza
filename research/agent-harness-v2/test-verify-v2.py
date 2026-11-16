@@ -146,6 +146,9 @@ if 'arm' in man:
         else:
             edit_json(req, lambda d: d['body'].update(system=v.ARM_PROMPT))
     cases['arm prompt presence changed'] = prompt_presence
+    # patient: its recorded receipt timeout set back to the stock 60 s (or recorded on another arm) must be rejected.
+    cases['patient receipt timeout changed'] = lambda p: edit_json(p / 'manifest.json', lambda d: d.update(
+        armReceiptTimeoutMs=60000 if d.get('armReceiptTimeoutMs') == v.PATIENT_RECEIPT_TIMEOUT_MS else v.PATIENT_RECEIPT_TIMEOUT_MS))
 # full_quorum (WS-Q): a fault event on a secondary read proxy, the scenario's fault moved to another proxy, or a missing
 # per-proxy journal must be rejected.
 if man.get('arm') == 'full_quorum':

@@ -18,7 +18,7 @@
 // --agent=claudecode runs Claude Code headless (claudecode-child.ts) with only the MCP wallet server's four tools
 // (mcp-wallet-server.ts, agent2's tools and gate): stock condition and Anthropic models only; tag "cc".
 //        [--evidence [--evidence-ablate=none|no_nonce_pin|no_grading|no_refusal_decode]] [--mock-agent=scripted|naive]
-//        [--idle-block-ms=N] [--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style|full_quorum]
+//        [--idle-block-ms=N] [--arm=none|prompt_only|nonce_only|verify_binary|full|pace_style|full_quorum|patient]
 //        [--quorum-proxies=K]
 //        [--scenarios=...,random --schedule-seed=N|A-B [--schedule-size=1|2|3]]
 //
@@ -30,7 +30,7 @@
 // against them. swap2 tasks with the stock condition only.
 //
 // --arm selects one named baseline (research/notes/baselines-spec.md), recorded as manifest.arm; episode ids carry
-// its tag (-none, -po, -no, -vb, -ev, -ps, -fq). --evidence is --arm=full. Everything else is equal across arms.
+// its tag (-none, -po, -no, -vb, -ev, -ps, -fq, -pt). --evidence is --arm=full. Everything else is equal across arms.
 // --arm=full_quorum (WS-Q): the full layer with quorum reads (EVM_EVIDENCE_MODE=full_quorum; quorum reads as in ethers
 // FallbackProvider / eRPC consensus, applied inside the evidence layer). The parent starts K fork-RPC proxies
 // (--quorum-proxies, default 2) in front of the same Anvil. Proxy 0 ("primary") is the wallet's RPC, as in every
@@ -99,6 +99,7 @@ import {
   type SaleCandidate,
 } from "./fork-rpc-proxy";
 import { decodeRedemption } from "./plan-setup";
+import { PATIENT_RECEIPT_TIMEOUT_MS } from "../../plugins/plugin-wallet/src/chains/evm/constants";
 
 const HERE = import.meta.dir,
   REPO = join(HERE, "../..");
@@ -296,7 +297,8 @@ if (!EVIDENCE_ABLATIONS.includes(EVIDENCE_ABLATE))
 const EVIDENCE =
   process.argv.includes("--evidence") || arg("evidence-ablate") !== undefined || arg("arm") === "full";
 // Named baselines: one switch. prompt_only appends ARM_PROMPT to ElizaOS's character system text (stock wallet);
-// nonce_only, verify_binary and pace_style set the wallet's EVM_EVIDENCE_MODE; full is the evidence layer.
+// nonce_only, verify_binary, pace_style and patient set the wallet's EVM_EVIDENCE_MODE; full is the evidence layer.
+// patient is the stock wallet with only the receipt-wait timeout extended (PATIENT_RECEIPT_TIMEOUT_MS, recorded).
 export const ARM_TAGS: Record<string, string> = {
   none: "none",
   prompt_only: "po",
@@ -305,6 +307,7 @@ export const ARM_TAGS: Record<string, string> = {
   full: "ev",
   pace_style: "ps",
   full_quorum: "fq",
+  patient: "pt",
 };
 const ARM = arg("arm") ?? (EVIDENCE ? "full" : "none");
 if (!ARM_TAGS[ARM]) throw new Error(`Unknown --arm=${ARM}`);
@@ -536,7 +539,7 @@ const HOLD_INSTRUMENTATION = ARM === "full" ? { version: 1, decisionLog: "child-
 const ARM_ENV: Record<string, string> =
   ARM === "full"
     ? { EVM_EVIDENCE_LAYER: "1", EVM_EVIDENCE_ABLATE: EVIDENCE_ABLATE, EVM_EVIDENCE_DECISION_LOG: "1" }
-    : ["nonce_only", "verify_binary", "pace_style"].includes(ARM)
+    : ["nonce_only", "verify_binary", "pace_style", "patient"].includes(ARM)
       ? {
           EVM_EVIDENCE_MODE: ARM,
           ...(ARM === "pace_style" ? { EVM_PACE_POLICY: JSON.stringify(PACE_POLICY) } : {}),
@@ -600,6 +603,7 @@ const manifest = {
   armEnv: ARM_ENV,
   controlReferencePolicy: "stock_reconciliation",
   ...(HOLD_INSTRUMENTATION ? { holdInstrumentation: HOLD_INSTRUMENTATION } : {}),
+  armReceiptTimeoutMs: ARM === "patient" ? PATIENT_RECEIPT_TIMEOUT_MS : null,
   armPrompt: ARM === "prompt_only" ? ARM_PROMPT : null,
   armPromptPosition: ARM === "prompt_only" ? "ElizaOS character.system (the first section of the canonical system prompt)" : null,
   mockAgent: MOCK_AGENT,

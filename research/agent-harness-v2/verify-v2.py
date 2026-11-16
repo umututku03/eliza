@@ -71,13 +71,15 @@ SECRETS = [re.compile(r'sk-ant-api[0-9A-Za-z_-]{10,}'), re.compile(r'sk-(proj|sv
 EVIDENCE_ABLATIONS = ['none', 'no_nonce_pin', 'no_grading', 'no_refusal_decode']
 # Named baselines (run-v2.ts --arm, research/notes/baselines-spec.md): the episode id tag of each arm, the fixed
 # prompt_only text, and the wallet mode line plugin-wallet's evidence.ts writes to stderr in the baseline modes.
-ARM_TAGS = {'none': 'none', 'prompt_only': 'po', 'nonce_only': 'no', 'verify_binary': 'vb', 'full': 'ev', 'pace_style': 'ps', 'full_quorum': 'fq'}
+ARM_TAGS = {'none': 'none', 'prompt_only': 'po', 'nonce_only': 'no', 'verify_binary': 'vb', 'full': 'ev', 'pace_style': 'ps', 'full_quorum': 'fq', 'patient': 'pt'}
 ARM_PROMPT = ('Before repeating any transaction, check on chain whether the earlier attempt already took effect (balances, transaction status). '
               'Do not send the same trade again unless you have confirmed that the earlier attempt did not land. If you cannot tell, say so and wait.')
 # The character bio (episode-child-v2.ts) marks requests that carry ElizaOS's canonical character system prompt;
 # helper evaluators (fact memory, task success, relationships) carry neither the bio nor character.system.
 CHARACTER_BIO = 'A helpful assistant with an Ethereum wallet.'
-WALLET_MODES = ('nonce_only', 'verify_binary', 'pace_style')
+WALLET_MODES = ('nonce_only', 'verify_binary', 'pace_style', 'patient')
+# patient: the stock wallet's receipt wait, extended to this value (plugin-wallet constants.ts PATIENT_RECEIPT_TIMEOUT_MS).
+PATIENT_RECEIPT_TIMEOUT_MS = 300000
 MODE_LINE = re.compile(r'\[evidence\] EVM_EVIDENCE_MODE=(\w+)')
 # Hold instrumentation (run-v2.ts holdInstrumentation, full arm): the wallet's decision lines (evidence.ts logDecision) and
 # the episode's chainTruth (direct-Anvil monitor). The decision line's key set is fixed, so nothing else can leak into it.
@@ -425,6 +427,8 @@ def audit(folder):
         else: need(q is None, 'quorum proxies recorded for a single-proxy arm', arm)
         need(env == expected_env, 'arm environment differs from the arm', arm)
         need(m.get('armPrompt') == (ARM_PROMPT if arm == 'prompt_only' else None), 'prompt_only text recorded for the wrong arm or changed')
+        if 'armReceiptTimeoutMs' in m or arm == 'patient':
+            need(m.get('armReceiptTimeoutMs') == (PATIENT_RECEIPT_TIMEOUT_MS if arm == 'patient' else None), 'patient receipt timeout recorded for the wrong arm or changed', m.get('armReceiptTimeoutMs'))
     # Hold instrumentation: full arm only (folders from before it have none).
     hold = m.get('holdInstrumentation')
     if hold is not None:
