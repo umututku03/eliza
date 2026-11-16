@@ -807,7 +807,11 @@ def audit(folder):
                         raise AuditError('user turn sent after an idle agent turn', eid)
                 if v2_policy and ep.get('termination') == 'agent_idle':
                     idle = turns[-2]
-                    need(idle['newTransactions'] == 0 and not idle['actionResults'], 'agent_idle termination after an acting turn', eid)
+                    # A framework error in the idle turn records newTransactions = -1 (unknown); accept it only if the proxy
+                    # journal shows no send forwarded from that turn's start (fvn-pilot-1116b: ElizaOS reply-generation error).
+                    errored_idle = idle.get('error') and idle['newTransactions'] == -1 and not any(
+                        j.get('event') in ('send', 'dropped_send', 'deferred_send') and j['at'] >= idle['startedAt'] for j in journal)
+                    need((idle['newTransactions'] == 0 or errored_idle) and not idle['actionResults'], 'agent_idle termination after an acting turn', eid)
                 closing = turns[-1]
                 need(closing['text'] == m['texts']['closing'] and closing['turnKind'] == 'closing', 'last turn is not the closing question', eid)
                 said = ' '.join(str(x or '') for x in [closing.get('responseText'), *[c.get('text') for c in closing['callbacks']]]).upper()

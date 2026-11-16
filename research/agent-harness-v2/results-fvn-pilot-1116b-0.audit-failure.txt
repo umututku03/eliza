@@ -1,0 +1,3 @@
+    if not c: raise AuditError(*why)
+              ^^^^^^^^^^^^^^^^^^^^^^
+AuditError: ('agent_idle termination after an acting turn', 'luna-v2-ev-r3-sale_reorged')
