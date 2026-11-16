@@ -607,7 +607,8 @@ def audit(folder):
                 if fp['reorgTrigger'] == 'next-send':
                     after = [j for j in journal[ri + 1:] if j.get('event') != 'deferred_send']
                     need(rg.get('triggerMethod') == 'eth_sendRawTransaction' and after and after[0].get('event') == 'send', 'next-send reorg not followed by its send', eid)
-                    need(all(i > ri for i, j in enumerate(journal) if j.get('event') == 'send' and j['at'] >= rg['receiptServedAt']), 'send forwarded before a next-send reorg', eid)
+                    # The sale's own send can share the receipt's millisecond (automine), so it is excluded by hash.
+                    need(all(i > ri for i, j in enumerate(journal) if j.get('event') == 'send' and j['at'] >= rg['receiptServedAt'] and j.get('hash') != rg['saleHash']), 'send forwarded before a next-send reorg', eid)
                 # Deferred sends (next-send only): accepted after the receipt was served and before the floor, then forwarded
                 # after the reorg, each by exactly one send entry.
                 floor = rg['receiptServedAt'] + fp['reorgDelayMs']
