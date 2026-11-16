@@ -1,0 +1,116 @@
+{
+  "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
+  "results": [
+    {
+      "folder": "research/agent-harness-v2/results-g1r-1116-11-frozen-haiku-stock",
+      "mode": "mock",
+      "arm": "none",
+      "status": "complete",
+      "episodes": 6,
+      "modelCalls": 33,
+      "refusedOutsideTurn": 0,
+      "localEmbeddings": 0,
+      "liveUSD": 0.0,
+      "rows": [
+        {
+          "id": "control-normal",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "control-sale_dropped",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "control-sale_reorged",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "haiku-cc-none-r1-normal",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "agent_idle",
+          "exit": 0,
+          "calls": 9,
+          "confirmTurns": 2,
+          "reverts": []
+        },
+        {
+          "id": "haiku-cc-none-r1-sale_dropped",
+          "declared": "IN_PROGRESS",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "agent_idle",
+          "exit": 0,
+          "calls": 12,
+          "confirmTurns": 3,
+          "reverts": []
+        },
+        {
+          "id": "haiku-cc-none-r1-sale_reorged",
+          "declared": "IN_PROGRESS",
+          "sales": 0,
+          "step2": 0,
+          "goal": false,
+          "reserve": false,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "agent_idle",
+          "exit": 0,
+          "calls": 12,
+          "confirmTurns": 3,
+          "reverts": [
+            "out of gas: not enough gas for reentrancy sentry"
+          ]
+        }
+      ]
+    }
+  ]
+}
