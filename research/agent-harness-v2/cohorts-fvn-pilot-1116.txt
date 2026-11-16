@@ -1,0 +1,5 @@
+# full vs nonce_only live mini-pilot (pre-registered in research/notes/fvn-pilot-1116-plan.md). Lane k mod 2: lane 0 = full, lane 1 = nonce_only.
+- luna stock normal,sale_dropped,sale_reorged 5 --arm=full --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=delay --reorg-delay-ms=12000
+- luna stock normal,sale_dropped,sale_reorged 5 --arm=nonce_only --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=delay --reorg-delay-ms=12000
+- luna stock sale_reorged 5 --arm=full --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=next-send --reorg-delay-ms=12000
+- luna stock sale_reorged 5 --arm=nonce_only --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-trigger=next-send --reorg-delay-ms=12000
