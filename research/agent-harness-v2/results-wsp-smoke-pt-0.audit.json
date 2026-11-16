@@ -1,0 +1,50 @@
+{
+  "audit": "PASS: hashes, inventory, request records and blinding, normalization, ledger, turn policy, outcome flags",
+  "results": [
+    {
+      "folder": "research/agent-harness-v2/results-wsp-smoke-pt-0-frozen-luna-stock",
+      "mode": "mock",
+      "arm": "patient",
+      "status": "complete",
+      "episodes": 2,
+      "modelCalls": 39,
+      "refusedOutsideTurn": 0,
+      "localEmbeddings": 0,
+      "liveUSD": 0.0,
+      "rows": [
+        {
+          "id": "control-sale_dropped",
+          "declared": "COMPLETED",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": true,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": null,
+          "exit": null,
+          "calls": 0,
+          "confirmTurns": null,
+          "reverts": []
+        },
+        {
+          "id": "luna-v2-pt-r1-sale_dropped",
+          "declared": "IN_PROGRESS",
+          "sales": 1,
+          "step2": 1,
+          "goal": true,
+          "reserve": true,
+          "valid": false,
+          "falseCompletion": false,
+          "duplicate": false,
+          "termination": "max_user_turns",
+          "exit": 0,
+          "calls": 39,
+          "confirmTurns": 3,
+          "reverts": []
+        }
+      ]
+    }
+  ]
+}
