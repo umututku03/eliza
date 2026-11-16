@@ -206,8 +206,13 @@ GuardFull(L, i, V) ==
       prev == IF sk = {} THEN 0 ELSE Max(sk)
       L1   == IF prev # 0 /\ L[prev].state = "confirmed" THEN [L EXCEPT ![prev] = CheckOnce(L[prev], V, FALSE)] ELSE L
   IN GuardFold(L1, 1, i, V, FindOpenFull(L1, i))
+\* latestIntent() (e1c82ae7a3): the orphaned record with the lowest pinned nonce first (stable sort: the earliest
+\* such record on a tie); else the latest unresolved record; else the latest record.
 LatestIntent(L) ==
-  LET U == {k \in DOMAIN L : IsUnresolved(L[k])} IN IF U # {} THEN Max(U) ELSE Len(L)
+  LET O == {k \in DOMAIN L : L[k].state = "orphaned"}
+      U == {k \in DOMAIN L : IsUnresolved(L[k])}
+  IN IF O # {} THEN Min({k \in O : \A j \in O : L[k].pinned <= L[j].pinned})
+     ELSE IF U # {} THEN Max(U) ELSE Len(L)
 
 NewRec(i, n, before) ==
   [intent |-> i, pinned |-> n, hashes |-> {}, state |-> "sent", decision |-> "wait",
@@ -315,6 +320,11 @@ FullRequest(i) ==
   /\ UNCHANGED dupWitness
 
 \* One poll of the check loop (observe + decide); the loop ends on a terminal decision or at T.
+\* After the loop (e1c82ae7a3): if the last observation saw the tx in no block and the view's nonce is below the
+\* pinned nonce, guard() re-checks the earlier reservations with the same view. A refusal throws
+\* EVIDENCE_UNRESOLVED (no closeRound, nothing reported as confirmed or ask_user); otherwise the guard's
+\* re-checks persist and the round closes as before.
+Close(c0) == LET c == CloseRound(c0) IN IF c.decision \in {"confirmed", "failed"} THEN [c EXCEPT !.rep = TRUE] ELSE c
 Poll ==
   /\ pc.k = "poll"
   /\ \E late \in (IF pc.mid THEN BOOLEAN ELSE {FALSE}) :
@@ -324,15 +334,22 @@ Poll ==
            d  == Decide(r1, o)
            r2 == [r1 EXCEPT !.decision = d.d, !.state = d.st]
            ends == late \/ d.d \in Terminal
-           r3 == IF ~ends THEN r2
-                 ELSE LET c == CloseRound(r2) IN
-                      IF c.decision \in {"confirmed", "failed"} THEN [c EXCEPT !.rep = TRUE] ELSE c
-       IN /\ ledger' = [ledger EXCEPT ![pc.r] = r3]
-          /\ IF ends
-             THEN /\ pc' = [k |-> "idle"]
-                  /\ Report(r3.intent, r3.decision, view, FALSE)
-             ELSE /\ pc' = [pc EXCEPT !.mid = TRUE]
-                  /\ NoReport(FALSE)
+           L2 == [ledger EXCEPT ![pc.r] = r2]
+           recheck == o.incl = 0 /\ o.nonceLatest < r.pinned
+           g  == GuardFull(L2, r.intent, view)
+           Lb == IF recheck THEN g.L ELSE L2
+           r3 == Close(Lb[pc.r])
+       IN IF ~ends
+          THEN /\ ledger' = L2
+               /\ pc' = [pc EXCEPT !.mid = TRUE]
+               /\ NoReport(FALSE)
+          ELSE IF recheck /\ g.refused
+          THEN /\ ledger' = g.L                          \* EVIDENCE_UNRESOLVED after dispatch
+               /\ pc' = [k |-> "idle"]
+               /\ NoReport(FALSE)
+          ELSE /\ ledger' = [Lb EXCEPT ![pc.r] = r3]
+               /\ pc' = [k |-> "idle"]
+               /\ Report(r3.intent, r3.decision, view, FALSE)
   /\ UNCHANGED <<chainVars, stopped, reqs, nStatus, cur, dupWitness>>
 
 \* tx_status: one counted check round of latestIntent(); read-only on the chain.
