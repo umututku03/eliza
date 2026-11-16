@@ -1,0 +1,4 @@
+# Small live pilot 1115 (research/notes/small-pilot-1115-plan.md): ElizaOS, frozen dev task D1, stock wallet.
+# Same fault options on both arms; only --arm differs. Cohort 0 = baseline (lane 0), cohort 1 = recovery layer (lane 1).
+- luna stock normal,rpc_stale 5 --arm=none --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-delay-ms=12000
+- luna stock normal,rpc_stale 5 --arm=full --idle-block-ms=30000 --hide-ms=60000 --lag-ms=60000 --reorg-delay-ms=12000
